@@ -1,0 +1,13 @@
+﻿.env
+.env.*
+
+data/
+*.sqlite
+*.sqlite3
+
+node_modules/
+dist/
+build/
+
+.DS_Store
+.vscode/
