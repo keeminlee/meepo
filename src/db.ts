@@ -23,6 +23,22 @@ export function getDb(): Database.Database {
   const schema = fs.readFileSync(schemaPath, "utf8");
   db.exec(schema);
 
+  // Apply migrations
+  applyMigrations(db);
+
   dbSingleton = db;
   return dbSingleton;
+}
+
+function applyMigrations(db: Database.Database) {
+  // Migration: Add form_id to npc_instances (Day 7)
+  const columns = db.pragma("table_info(npc_instances)");
+  const hasFormId = columns.some((col: any) => col.name === "form_id");
+  
+  if (!hasFormId) {
+    console.log("Migrating: Adding form_id to npc_instances");
+    db.exec("ALTER TABLE npc_instances ADD COLUMN form_id TEXT NOT NULL DEFAULT 'meepo'");
+  }
+
+// (Future migrations can go here)
 }

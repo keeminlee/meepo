@@ -1,8 +1,9 @@
 ﻿import { Collection, type Client } from "discord.js";
 import { ping } from "./ping.js";
 import { meepo } from "./meepo.js";
+import { session } from "./session.js";
 
-export const commandList = [ping, meepo];
+export const commandList = [ping, meepo, session];
 
 export const commandMap = new Collection(
   commandList.map((c: any) => [c.data.name, c])

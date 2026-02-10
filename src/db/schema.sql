@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS npc_instances (
   guild_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
   persona_seed TEXT,
+  form_id TEXT NOT NULL DEFAULT 'meepo',
   created_at_ms INTEGER NOT NULL,
   is_active INTEGER NOT NULL DEFAULT 1
 );
