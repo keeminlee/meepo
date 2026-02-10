@@ -11,12 +11,13 @@ if (!token || !clientId || !guildId) {
   process.exit(1);
 }
 
+// TypeScript doesn't narrow types after the guard, so assert they're defined
 const rest = new REST({ version: "10" }).setToken(token);
 
 async function main() {
   const body = commandList.map((c) => c.data.toJSON());
   console.log("Registering " + body.length + " commands to guild " + guildId + "...");
-  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
+  await rest.put(Routes.applicationGuildCommands(clientId!, guildId!), { body });
   console.log("Guild commands registered.");
 }
 

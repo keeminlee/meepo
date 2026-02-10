@@ -15,6 +15,7 @@ CREATE INDEX IF NOT EXISTS idx_npc_instances_guild_channel
 ON npc_instances(guild_id, channel_id);
 
 -- Ledger v1 (append-only)
+-- Phase 0: Voice + Narrative Authority extension
 CREATE TABLE IF NOT EXISTS ledger_entries (
   id TEXT PRIMARY KEY,
   guild_id TEXT NOT NULL,
@@ -24,7 +25,16 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
   author_name TEXT NOT NULL,
   timestamp_ms INTEGER NOT NULL,
   content TEXT NOT NULL,
-  tags TEXT NOT NULL DEFAULT 'public'
+  tags TEXT NOT NULL DEFAULT 'public',
+  
+  -- Voice/narrative extensions (Phase 0)
+  source TEXT NOT NULL DEFAULT 'text',              -- 'text' | 'voice' | 'system'
+  narrative_weight TEXT NOT NULL DEFAULT 'secondary', -- 'primary' | 'secondary' | 'elevated'
+  speaker_id TEXT,                                   -- Discord user_id for voice attribution
+  audio_chunk_path TEXT,                             -- Only if STT_SAVE_AUDIO=true
+  t_start_ms INTEGER,                                -- Voice segment start time
+  t_end_ms INTEGER,                                  -- Voice segment end time
+  confidence REAL                                    -- STT confidence (0.0-1.0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ledger_scope_time
@@ -58,6 +68,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_guild_active
 ON sessions(guild_id, ended_at_ms);
 
--- Optional hardening for ledger idempotency
+-- Ledger idempotency: unique constraint scoped to text messages only
+-- (Voice/system use synthetic message_ids that don't need deduplication)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_unique_message
-ON ledger_entries(message_id);
+ON ledger_entries(guild_id, channel_id, message_id)
+WHERE source = 'text';

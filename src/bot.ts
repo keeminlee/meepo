@@ -8,6 +8,12 @@ import { isAddressed } from "./meepo/triggers.js";
 import { chat } from "./llm/client.js";
 import { buildMeepoPrompt, buildUserMessage } from "./llm/prompts.js";
 import { setBotNicknameForPersona } from "./meepo/nickname.js";
+import { acquireLock } from "./pidlock.js";
+
+// PID lock: prevent multiple instances
+if (!acquireLock()) {
+  process.exit(1);
+}
 
 const client = new Client({
   intents: [
@@ -32,6 +38,8 @@ client.on("messageCreate", async (message: any) => {
       JSON.stringify(message.content)
     );
     if (!message.guildId) return;
+    
+    // Response gate: Never respond to bot's own messages (prevents re-entrancy)
     if (message.author?.bot) return;
 
     const content = (message.content ?? "").toString();
@@ -140,8 +148,38 @@ client.on("messageCreate", async (message: any) => {
       transformTarget = "meepo";
     }
 
-    // If transform detected and it's different from current form
-    if (transformTarget && transformTarget !== active.form_id) {
+    // If transform detected
+    if (transformTarget) {
+      // Already in target form - acknowledge without re-transforming
+      if (transformTarget === active.form_id) {
+        console.log("Already in form:", transformTarget, "- acknowledging without transform");
+        
+        let ackMessage: string;
+        if (transformTarget === "xoblob") {
+          ackMessage = "... can't unwrap what's already unwrapped... Xoblob IS Xoblob IS Xoblob... *eight legs tapping*...";
+        } else {
+          ackMessage = "Meepo is Meepo, meep!";
+        }
+        
+        const reply = await message.reply(ackMessage);
+        
+        // Log bot's acknowledgement
+        appendLedgerEntry({
+          guild_id: message.guildId,
+          channel_id: message.channelId,
+          message_id: reply.id,
+          author_id: client.user!.id,
+          author_name: client.user!.username,
+          timestamp_ms: reply.createdTimestamp,
+          content: ackMessage,
+          tags: `npc,${transformTarget},spoken`,
+        });
+        
+        // Don't fall through to LLM - transform intent is handled
+        return;
+      }
+      
+      // Different form - execute transform
       console.log("Chat transform detected:", active.form_id, "→", transformTarget);
 
       const result = transformMeepo(message.guildId, transformTarget);

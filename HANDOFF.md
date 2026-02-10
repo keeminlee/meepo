@@ -61,7 +61,15 @@ npc_instances
 ledger_entries
   - id, guild_id, channel_id, message_id
   - author_id, author_name, timestamp_ms, content
-  - tags (human | npc,meepo,spoken)
+  - tags (human | npc,meepo,spoken | system,<event_type>)
+  
+  -- Voice & Narrative Authority (Phase 0)
+  - source (text | voice | system)
+  - narrative_weight (primary | secondary | elevated)
+  - speaker_id (Discord user_id for voice attribution)
+  - audio_chunk_path (nullable, only if STT_SAVE_AUDIO=true)
+  - t_start_ms, t_end_ms (voice segment timestamps)
+  - confidence (STT confidence 0.0-1.0)
 
 sessions
   - session_id, guild_id
@@ -76,6 +84,44 @@ latches
 - `message_id` has unique index → deduplication (silent ignore on conflict)
 - One active NPC per guild
 - Sessions auto-start on wake, auto-end on sleep
+
+---
+
+## Narrative Authority System (Day 8 - Phase 0)
+
+### Philosophy: One Ledger, Narrative Primacy
+
+**Core Principle:** The Omniscient Ledger captures EVERYTHING (voice + text + system events), but voice is the **primary narrative source** reflecting D&D as played at the table. Text is secondary unless explicitly elevated.
+
+This is **not** about data capture (everything is stored), but about **narrative authority** (what counts as "the session").
+
+### Source Types
+- **`text`** - Discord text messages (default for existing messages)
+- **`voice`** - STT transcriptions from voice chat (primary narrative)
+- **`system`** - Bot-generated events (session markers, wake/sleep/transform)
+
+### Narrative Weight
+- **`primary`** - Default for voice/system (used in recaps, NPC Mind)
+- **`secondary`** - Default for text (stored but not primary narrative)
+- **`elevated`** - Text explicitly marked important by DM (future: `/mark-important`)
+
+### Default Behavior
+- Recaps consume `narrative_weight IN ('primary', 'elevated')` by default
+- DM can use `--full` flag to see all sources including secondary text
+- NPC Mind (future) will filter to primary narrative + locality gating
+
+### Privacy & Storage
+- **No audio persistence by default** - Stream → transcribe → discard
+- `audio_chunk_path` only populated if `STT_SAVE_AUDIO=true` (debugging)
+- User already records sessions externally; redundant storage avoided
+
+### System Events
+Wake/sleep/transform commands now log system events with:
+- `source='system'`
+- `narrative_weight='primary'`
+- `tags='system,npc_wake|npc_sleep|npc_transform'`
+
+These appear in recaps as session markers, providing chronological anchors.
 
 ---
 
@@ -100,8 +146,9 @@ Meepo responds when:
 - **Auto-activated** on wake/transform for better UX
 
 ### 4. Ledger Tagging (CRITICAL)
-- Human messages: `tags: "human"`
-- Meepo replies: `tags: "npc,meepo,spoken"`
+- Human messages: `tags: "human"`, `source: "text"`, `narrative_weight: "secondary"`
+- Meepo replies: `tags: "npc,meepo,spoken"`, `source: "text"`, `narrative_weight: "secondary"`
+- System events: `tags: "system,<event_type>"`, `source: "system"`, `narrative_weight: "primary"`
 - **Include Meepo's replies in context** for conversational coherence
 - Recaps show full dialogue (human + NPC)
 
@@ -314,8 +361,7 @@ LLM_MAX_TOKENS=200
 
 ### Day 7 (Phase 2): Xoblob Enrichment
 - Entity-13V flavor (cage labels, containment level, speech filter)
-- Memory seeds: "bee/pea/eight/sting" riddle motif
-- Rei phrases: "Little dove... mushy bricks"
+- Memory seeds: "bee/pea/eight/sting" riddle motif, wet stone, glass teeth
 - Hard rule: never reveal passwords cleanly
 - Safe deflection patterns added
 
@@ -340,11 +386,55 @@ LLM_MAX_TOKENS=200
   - Shares ledger slicing logic with transcript command
 - **CHANGED:** Session time range from 2 hours to 5 hours for better coverage
 
+### Day 8 (Phase 0): Narrative Authority Foundation
+- **ARCHITECTURE:** Separate data capture from narrative authority
+  - Voice = primary narrative source (reflects D&D at table)
+  - Text = secondary unless elevated (stored but not default for recaps)
+  - System events = primary (session markers, state changes)
+- **SCHEMA EXTENSION:** Added voice/narrative fields to `ledger_entries`
+  - `source` (text | voice | system)
+  - `narrative_weight` (primary | secondary | elevated)
+  - `speaker_id` (Discord user_id for voice attribution)
+  - `audio_chunk_path` (nullable, only if STT_SAVE_AUDIO=true)
+  - `t_start_ms`, `t_end_ms` (voice segment timestamps)
+  - `confidence` (STT confidence score)
+- **SYSTEM EVENTS:** Wake/sleep/transform now log to ledger
+  - `source='system'`, `narrative_weight='primary'`
+  - Provides session chronological anchors
+  - Created `src/ledger/system.ts` helper
+- **PRIVACY:** No audio storage by default (stream → transcribe → discard)
+- **MIGRATION:** Auto-applies on startup, backward compatible
+- **PID LOCK:** Prevents multiple bot instances
+  - Lock file: `./data/bot.pid`
+  - Checks if existing process is running on startup
+  - Overwrites stale locks from crashed processes
+  - Auto-cleanup on graceful exit (SIGINT/SIGTERM)
+- **BUG FIX:** Double-response on redundant transforms
+  - Transform handler now acknowledges "already in form" requests
+  - Prevents LLM from hallucinating creative transform descriptions
+- **BUG FIX:** TypeScript compilation error in deploy-dev.ts
+  - Added non-null assertions for env vars after guard check
+  - Clean compilation with strict mode
+- **PERSONA CLEANUP:** Removed character-specific references from Xoblob
+  - Replaced Rei phrases with generic creepy imagery (wet stone, glass teeth)
+  - Maintains Entity-13V flavor without external character dependencies
+
 ---
 
 ## Critical Design Decisions
 
-### 1. Ledger Includes Bot Replies (FINAL)
+### 1. Narrative Authority vs Data Capture (Day 8 - Phase 0)
+**Decision:** One omniscient ledger with narrative weight tiers.
+
+**Rationale:**
+- Voice is primary because D&D is played at the table (diegetic primacy)
+- Text is secondary chatter unless explicitly elevated
+- Everything is captured (omniscient), but primacy defines "the session"
+- Recaps/NPC Mind default to primary narrative (voice + system + elevated text)
+- DM can query full ledger for diagnostics (omniscient view)
+- No audio persistence by default (user already records sessions)
+
+### 2. Ledger Includes Bot Replies (FINAL)
 **Decision:** Log Meepo's replies with `npc,meepo,spoken` tags and include in context.
 
 **Rationale:**
@@ -354,7 +444,7 @@ LLM_MAX_TOKENS=200
 - NPC Mind (future) will filter Meepo's words from belief formation
 - 15-message limit prevents runaway feedback loops
 
-### 2. Transform is Mimicry, Not Omniscience
+### 3. Transform is Mimicry, Not Omniscience
 **Decision:** Transformation changes speech style only; no new knowledge granted.
 
 **Diegetic Rules:**
@@ -363,7 +453,7 @@ LLM_MAX_TOKENS=200
 - Guardrails remain absolute across all forms
 - Persona memory seeds are "fixed fragments," not omniscience
 
-### 3. Auto-Latch on Wake/Transform
+### 4. Auto-Latch on Wake/Transform
 **Decision:** Automatically activate latch after wake/transform commands.
 
 **Rationale:**
@@ -372,7 +462,7 @@ LLM_MAX_TOKENS=200
 - Still bound to channel (no omnipresence)
 - Can be cleared with `/meepo hush`
 
-### 4. Session Auto-Tracking
+### 5. Session Auto-Tracking
 **Decision:** Sessions start on `/meepo wake`, end on `/meepo sleep`.
 
 **Rationale:**
@@ -399,6 +489,15 @@ Applied via `getDb()` in src/db.ts on startup:
 ```typescript
 // Migration: Add form_id to npc_instances (Day 7)
 ALTER TABLE npc_instances ADD COLUMN form_id TEXT NOT NULL DEFAULT 'meepo'
+
+// Migration: Add voice/narrative fields to ledger_entries (Day 8 - Phase 0)
+ALTER TABLE ledger_entries ADD COLUMN source TEXT NOT NULL DEFAULT 'text';
+ALTER TABLE ledger_entries ADD COLUMN narrative_weight TEXT NOT NULL DEFAULT 'secondary';
+ALTER TABLE ledger_entries ADD COLUMN speaker_id TEXT;
+ALTER TABLE ledger_entries ADD COLUMN audio_chunk_path TEXT;
+ALTER TABLE ledger_entries ADD COLUMN t_start_ms INTEGER;
+ALTER TABLE ledger_entries ADD COLUMN t_end_ms INTEGER;
+ALTER TABLE ledger_entries ADD COLUMN confidence REAL;
 ```
 
 Future migrations follow same pattern - check column existence, apply if missing.
@@ -421,35 +520,86 @@ npm run dev:deploy     # Re-register slash commands
 1. /meepo wake persona:grumpy scout
 2. Send "hi" (no prefix) → Meepo responds (auto-latch works)
 3. Natural conversation for 90s
-4. /meepo transform xoblob
-5. Send "what do you know?" → Xoblob riddly response
-6. /session recap since_start
-```
+4. /Voice Integration Roadmap (Next Phase)
+
+**Phase 1: Voice Presence**
+- `/meepo join` / `/meepo leave` commands
+- Voice connection via `@discordjs/voice`
+- `/stt on|off|status` commands (toggle transcription)
+
+**Phase 2: STT → Ledger**
+- Per-user audio streams from Discord (speaker attribution built-in)
+- Chunking (silence detection preferred, fixed-window fallback)
+- OpenAI Whisper API integration (matches LLM pattern: kill switch, API key)
+- Append to ledger with `source='voice'`, `narrative_weight='primary'`
+- Stream → transcribe → discard (no audio storage by default)
+
+**Phase 3: Narrative-Aware Recaps**
+- `/session recap` defaults to primary narrative only
+- Add `--full` flag for omniscient view (all sources)
+- DM recap includes diagnostics (coverage %, unknown speakers, low-confidence warnings)
+
+**Phase 4: Text Elevation**
+- `/mark-important <message_id>` (DM-only) → Sets `narrative_weight='elevated'`
+- Auto-elevate: commands, transforms, NPC state changes
+- Optional: Auto-elevate text addressed to Meepo when in voice
+
+**Phase 5: TTS Output**
+- Meepo speaks responses in voice when joined
+- Persona-specific voices (OpenAI TTS or ElevenLabs)
+- FalVoice/Narrative Migration:** Old databases get voice/narrative fields added with safe defaults (`source='text'`, `narrative_weight='secondary'`)
+
+6. **Latch Scope:** Currently guild+channel key. Could be refactored to channel-only if multi-guild support needed.
+
+8. **Transform vs Persona Seed:**
+   - `form_id`: Which persona definition to use (meepo, xoblob)
+   - `persona_seed`: Optional custom traits from `/meepo wake [persona]`
+   - Both can coexist: transform changes base persona, seed adds flavor
+
+9. **System Events:** Wake/sleep/transform now create ledger entries (visible in transcripts/recaps as session markers)
 
 ---
 
-## Known Issues & Future Work
+## File Locations Reference
 
-### Week 2+ Roadmap
-- **Voice integration:** Join voice channel, audio stream capture
-- **STT:** OpenAI Whisper for transcription with speaker attribution
-- **TTS:** Voice output for Meepo replies
-- **NPC Mind:** Locality-gated knowledge system (separate from Ledger)
-- **Multi-session support:** Schema ready, needs UI commands
-- **Party-facing recap:** Separate from DM recap, filters meta/secrets
-
-### Current Limitations
-- No voice/STT (text-only)
-- One NPC per guild (multi-NPC future)
-- Guild-scoped latches (could be channel-scoped)
-- No semantic search (uses recent N messages)
-- Recap file attachments can't be paginated in Discord UI
+**Schema:** `src/db/schema.sql`  
+**Migrations:** `src/db.ts` (inline)  
+**Main Loop:** `src/bot.ts` messageCreate handler  
+**Personas:** `src/personas/*.ts`  
+**Commands:** `src/commands/*.ts`  
+**Ledger:** `src/ledger/ledger.ts` (core), `src/ledger/system.ts` (system events)  
+**Docs:** `README.md`, `.env.example`
 
 ---
+
+## Next Chat Starting Point
+
+**You are picking up a Discord bot project in working MVP state.**
+
+**Current Status:** 
+- **Text-only MVP complete** with LLM-powered persona system and session recap
+- **Phase 0 (Narrative Authority) complete** - Schema extended for voice integration
+- **Ready for voice implementation** - Data model supports voice, just needs STT/TTS
+
+**Architecture Highlights:**
+- One omniscient ledger with narrative weight tiers (voice primary, text secondary)
+- System events logged (wake/sleep/transform appear in recaps)
+- No audio persistence by default (privacy-first)
+- Per-user voice attribution ready (schema supports Discord user IDs)
+
+**Next Steps - Choose Direction:**
+- **Voice Integration (Phase 1-6):** Implement STT pipeline, narrative-aware recaps, TTS output
+- **More Personas:** Add new character forms with unique speech patterns
+- **NPC Mind:** Locality-gated knowledge system (belief formation from perceived events)
+- **Party-facing Recap:** Variant that filters meta/secrets for players
+- **Text Elevation Tools:** `/mark-important` command for DMs
+- **Bug fixes or UX improvements**
 
 ## Gotchas & Important Notes
 
-1. **Message Content Intent:** Must be enabled in Discord Developer Portal or bot can't read messages
+1. **PID Lock:** Bot uses `./data/bot.pid` to prevent multiple instances. If you see "Bot already running" on startup, either kill the existing process or delete the stale lock file if the process crashed.
+
+2. **Message Content Intent:** Must be enabled in Discord Developer Portal or bot can't read messages
 
 2. **View Channel Permission:** Bot must have "View Channel" permission to receive events
 

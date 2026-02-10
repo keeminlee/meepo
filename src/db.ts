@@ -32,13 +32,39 @@ export function getDb(): Database.Database {
 
 function applyMigrations(db: Database.Database) {
   // Migration: Add form_id to npc_instances (Day 7)
-  const columns = db.pragma("table_info(npc_instances)");
-  const hasFormId = columns.some((col: any) => col.name === "form_id");
+  const npcColumns = db.pragma("table_info(npc_instances)") as any[];
+  const hasFormId = npcColumns.some((col: any) => col.name === "form_id");
   
   if (!hasFormId) {
     console.log("Migrating: Adding form_id to npc_instances");
     db.exec("ALTER TABLE npc_instances ADD COLUMN form_id TEXT NOT NULL DEFAULT 'meepo'");
   }
 
-// (Future migrations can go here)
+  // Migration: Add voice/narrative fields to ledger_entries (Day 8 - Phase 0)
+  const ledgerColumns = db.pragma("table_info(ledger_entries)") as any[];
+  const hasSource = ledgerColumns.some((col: any) => col.name === "source");
+  
+  if (!hasSource) {
+    console.log("Migrating: Adding voice and narrative authority fields to ledger_entries");
+    db.exec(`
+      ALTER TABLE ledger_entries ADD COLUMN source TEXT NOT NULL DEFAULT 'text';
+      ALTER TABLE ledger_entries ADD COLUMN narrative_weight TEXT NOT NULL DEFAULT 'secondary';
+      ALTER TABLE ledger_entries ADD COLUMN speaker_id TEXT;
+      ALTER TABLE ledger_entries ADD COLUMN audio_chunk_path TEXT;
+      ALTER TABLE ledger_entries ADD COLUMN t_start_ms INTEGER;
+      ALTER TABLE ledger_entries ADD COLUMN t_end_ms INTEGER;
+      ALTER TABLE ledger_entries ADD COLUMN confidence REAL;
+    `);
+    
+    // Update unique index to be scoped to text messages only
+    console.log("Migrating: Updating unique constraint to scope to text messages");
+    db.exec(`
+      DROP INDEX IF EXISTS idx_ledger_unique_message;
+      CREATE UNIQUE INDEX idx_ledger_unique_message
+      ON ledger_entries(guild_id, channel_id, message_id)
+      WHERE source = 'text';
+    `);
+  }
+
+  // (Future migrations can go here)
 }

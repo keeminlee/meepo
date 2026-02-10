@@ -4,6 +4,7 @@ import { clearLatch, setLatch } from "../latch/latch.js";
 import { getAvailableForms, getPersona } from "../personas/index.js";
 import { setBotNicknameForPersona } from "../meepo/nickname.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
+import { logSystemEvent } from "../ledger/system.js";
 
 export const meepo = {
   data: new SlashCommandBuilder()
@@ -70,6 +71,16 @@ export const meepo = {
         personaSeed: persona,
       });
 
+      // Log system event (narrative primary)
+      logSystemEvent({
+        guildId,
+        channelId,
+        eventType: "npc_wake",
+        content: `Meepo awakens${persona ? ` with persona: ${persona}` : ""}.`,
+        authorId: interaction.user.id,
+        authorName: interaction.user.username,
+      });
+
       // Reset nickname to default Meepo on wake
       if (interaction.guild) {
         await setBotNicknameForPersona(interaction.guild, "meepo");
@@ -91,7 +102,19 @@ export const meepo = {
 
     if (sub === "sleep") {
       const active = getActiveMeepo(guildId);
-      if (active) clearLatch(guildId, active.channel_id);
+      if (active) {
+        clearLatch(guildId, active.channel_id);
+        
+        // Log system event (narrative primary)
+        logSystemEvent({
+          guildId,
+          channelId: active.channel_id,
+          eventType: "npc_sleep",
+          content: "Meepo goes dormant.",
+          authorId: interaction.user.id,
+          authorName: interaction.user.username,
+        });
+      }
 
       const changes = sleepMeepo(guildId);
 
@@ -159,6 +182,16 @@ export const meepo = {
           await interaction.reply({ content: result.error ?? "Transform failed.", ephemeral: true });
           return;
         }
+
+        // Log system event (narrative primary)
+        logSystemEvent({
+          guildId,
+          channelId: active.channel_id,
+          eventType: "npc_transform",
+          content: `Meepo transforms into ${persona.displayName}.`,
+          authorId: interaction.user.id,
+          authorName: interaction.user.username,
+        });
 
         // Update bot nickname to match persona
         if (interaction.guild) {
