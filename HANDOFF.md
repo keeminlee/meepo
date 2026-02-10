@@ -1,6 +1,6 @@
 # Meepo Bot - Context Handoff Document
 **Date:** February 10, 2026  
-**Status:** Week 1 Complete + Transform MVP
+**Status:** MVP Complete - Text-Only Baseline with LLM Recap
 
 ## Project Overview
 
@@ -40,10 +40,10 @@ src/
 ├── llm/
 │   ├── client.ts            # OpenAI API wrapper with kill switch
 │   └── prompts.ts           # System prompt builder (persona-driven)
-└── personas/
+├── personas/
     ├── meepo.ts             # Default form: baby celestial, ends with "meep"
     ├── xoblob.ts            # Mimic form: riddles, Entity-13V flavor
-    └── index.ts             # Persona registry + type definitions
+    └── index.ts             # Persona registry + StyleSpec system
 ```
 
 ---
@@ -123,8 +123,22 @@ type Persona = {
   memory?: string;             // Canonical fragments (optional)
   speechStyle: string;         // How they speak
   personalityTone: string;     // Tone and safe patterns
+  styleGuard: string;          // Strict style rules for isolation
+  styleSpec: StyleSpec;        // Compact spec for generating styleGuard
+}
+
+type StyleSpec = {
+  name: string;
+  voice: "gentle" | "neutral" | "chaotic";
+  punctuation: "low" | "medium" | "high";
+  caps: "never" | "allowed";
+  end_sentence_tag?: string;   // e.g., "meep"
+  motifs_allowed?: string[];   // Phrases this persona CAN use
+  motifs_forbidden?: string[]; // Phrases this persona NEVER uses
 }
 ```
+
+**StyleSpec System:** Clean, maintainable persona definitions using compact specs that compile into consistent style firewall text via `compileStyleGuard()`.
 
 ### Current Personas
 
@@ -217,11 +231,29 @@ Context (last 15 ledger messages)
 - **Auto-activates latch** for immediate response
 - Flavor text: "Meepo curls up... and becomes an echo of Old Xoblob."
 
-### `/session recap <range>` (DM-only)
-- Ranges: `since_start`, `last_2h`, `today`
-- Queries ledger by timestamp
-- Returns chronological list (currently text dump, LLM summarization future)
+### `/session transcript <range>` (DM-only)
+- **NEW:** Display raw session transcript from ledger
+- Ranges: `since_start`, `last_5h`, `today`
+- Outputs chronological dialogue with timestamps
+- No summarization - verbatim ledger slice
 - DM-only via `DM_ROLE_ID` env check
+
+### `/session recap <range>` (DM-only)
+- **NEW:** LLM-generated session summary
+- Uses **same ledger slice logic** as transcript
+- Ranges: `since_start`, `last_5h`, `today`
+- Summarizes via GPT with structured format:
+  - Overview (3-6 sentences)
+  - Chronological Beats
+  - NPCs & Factions
+  - Player Decisions & Consequences
+  - Conflicts & Resolutions
+  - Clues, Loot, & Lore
+  - Open Threads / To Follow Up
+- **Auto-sends as .md file** if summary exceeds 1950 characters
+- DM-only via `DM_ROLE_ID` env check
+
+**Architecture:** `recap = summarize(transcript(slice))` - single source of truth for ledger slicing.
 
 ---
 
@@ -254,7 +286,7 @@ LLM_MAX_TOKENS=200
 
 ---
 
-## Recent Changes (Days 5-7)
+## Recent Changes (Days 5-8)
 
 ### Day 5: LLM Integration
 - OpenAI SDK installed
@@ -280,12 +312,33 @@ LLM_MAX_TOKENS=200
 - Auto-latch on wake/transform for better UX
 - Meepo identity updated to understand transformation
 
-### Day 7 (Latest): Xoblob Enrichment
+### Day 7 (Phase 2): Xoblob Enrichment
 - Entity-13V flavor (cage labels, containment level, speech filter)
 - Memory seeds: "bee/pea/eight/sting" riddle motif
 - Rei phrases: "Little dove... mushy bricks"
 - Hard rule: never reveal passwords cleanly
 - Safe deflection patterns added
+
+### Day 8: MVP Cleanup & Session Recap System
+- **REMOVED:** Style bleed feature completely (experimental feature removed for clean MVP)
+  - Deleted `src/meepo/bleed.ts`
+  - Removed `pending_style_reset` database field and migration
+  - Removed `/meepo bleed` command
+  - Removed conditional bleed overlays from prompts
+- **ADDED:** StyleSpec system for clean persona definitions
+  - Compact specs with voice/punctuation/caps/motifs fields
+  - `compileStyleGuard()` generates consistent style firewalls
+  - Easier to maintain and extend
+- **ADDED:** `/session transcript` command
+  - Raw ledger output with timestamps
+  - Three time ranges: `since_start`, `last_5h`, `today`
+  - Verbatim dialogue display
+- **UPGRADED:** `/session recap` command
+  - LLM-powered summarization using GPT
+  - Structured output format (Overview, Beats, NPCs, Decisions, etc.)
+  - Auto-sends as `.md` file attachment if > 1950 characters
+  - Shares ledger slicing logic with transcript command
+- **CHANGED:** Session time range from 2 hours to 5 hours for better coverage
 
 ---
 
@@ -382,15 +435,15 @@ npm run dev:deploy     # Re-register slash commands
 - **STT:** OpenAI Whisper for transcription with speaker attribution
 - **TTS:** Voice output for Meepo replies
 - **NPC Mind:** Locality-gated knowledge system (separate from Ledger)
-- **LLM Recap:** Replace text dump with GPT-4 summarization (DM vs party modes)
 - **Multi-session support:** Schema ready, needs UI commands
+- **Party-facing recap:** Separate from DM recap, filters meta/secrets
 
 ### Current Limitations
-- Recap is chronological dump (no LLM summarization yet)
 - No voice/STT (text-only)
 - One NPC per guild (multi-NPC future)
 - Guild-scoped latches (could be channel-scoped)
 - No semantic search (uses recent N messages)
+- Recap file attachments can't be paginated in Discord UI
 
 ---
 
@@ -426,14 +479,15 @@ npm run dev:deploy     # Re-register slash commands
 
 ## Next Chat Starting Point
 
-**You are picking up a Discord bot project in working state.**
+**You are picking up a Discord bot project in working MVP state.**
 
-**Current Focus:** Week 1 complete (text-only baseline). Ready for Week 2 (voice/STT) or Day 7+ polish (LLM recap, NPC Mind foundations).
+**Current Status:** Text-only baseline complete with LLM-powered persona system and session recap. Clean MVP ready for voice integration or feature expansion.
 
 **Ask the user:**
-- Continue with voice integration?
-- Polish recap system with LLM summarization?
+- Continue with voice integration (STT/TTS)?
 - Add more personas/forms?
+- Implement NPC Mind (locality-gated knowledge)?
+- Party-facing recap variant?
 - Bug fixes or UX improvements?
 
 **Key Commands to Know:**
@@ -445,13 +499,24 @@ npm run dev:deploy     # Register commands
 **Test in Discord:**
 ```
 /meepo wake
+hi                     # Auto-latch works, Meepo responds
 /meepo transform xoblob
-/session recap since_start
+what do you know?      # Xoblob riddles
+/session transcript last_5h
+/session recap last_5h # LLM summary (may be file attachment)
 ```
+
+**Recent Major Changes:**
+- Style bleed feature removed (clean MVP)
+- Session recap now LLM-powered with structured output
+- Session transcript shows raw ledger
+- StyleSpec system for maintainable personas
+- File attachment support for long summaries
 
 **Read This First:**
 - README.md (user-facing docs)
 - This file (developer handoff)
 - src/personas/*.ts (to understand identity system)
+- src/commands/session.ts (recap implementation)
 
 Good luck! 🎲
