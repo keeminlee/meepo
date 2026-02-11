@@ -17,8 +17,9 @@ import { isMeepoSpeaking, speakInGuild } from "./speaker.js";
 import { getTtsProvider } from "./tts/provider.js";
 import { buildMeepoPrompt, buildUserMessage } from "../llm/prompts.js";
 import { chat } from "../llm/client.js";
-import { getLedgerInRange } from "../ledger/ledger.js";
+import { getLedgerInRange, getVoiceAwareContext } from "../ledger/ledger.js";
 import { logSystemEvent } from "../ledger/system.js";
+import { applyPostTtsFx } from "./audioFx.js";
 
 const DEBUG_VOICE = process.env.DEBUG_VOICE === "true";
 
@@ -84,30 +85,17 @@ export async function respondToVoiceUtterance({
   guildLastVoiceReply.set(guildId, now);
 
   try {
-    // Pull context from ledger (primary-only, last LLM_VOICE_CONTEXT_MS)
-    const contextWindowMs = Number(process.env.LLM_VOICE_CONTEXT_MS ?? "120000"); // 120s default
-    const startMs = now - contextWindowMs;
-    
-    const entries = getLedgerInRange({
+    // Task 4.7: Use shared voice-aware context function
+    const { context: recentContext, hasVoice } = getVoiceAwareContext({
       guildId,
-      startMs,
-      endMs: now,
-      limit: 20,
-      primaryOnly: true,
+      channelId,
     });
-
-    // Format context from ledger entries
-    const recentContext = entries
-      .map((e) => {
-        const t = new Date(e.timestamp_ms).toISOString();
-        return `[${t}] ${e.author_name}: ${e.content}`;
-      })
-      .join("\n");
 
     // Build system prompt with persona
     const systemPrompt = buildMeepoPrompt({
       meepo: active,
       recentContext: recentContext || undefined,
+      hasVoiceContext: hasVoice,
     });
 
     // Build user message
@@ -129,12 +117,15 @@ export async function respondToVoiceUtterance({
 
     // TTS synthesize
     const ttsProvider = await getTtsProvider();
-    const mp3Buffer = await ttsProvider.synthesize(responseText);
+    let mp3Buffer = await ttsProvider.synthesize(responseText);
 
     if (mp3Buffer.length === 0) {
       console.warn(`[VoiceReply] TTS returned empty buffer`);
       return false;
     }
+
+    // Apply post-TTS audio effects (if enabled)
+    mp3Buffer = await applyPostTtsFx(mp3Buffer, "mp3");
 
     // Queue playback
     speakInGuild(guildId, mp3Buffer, {

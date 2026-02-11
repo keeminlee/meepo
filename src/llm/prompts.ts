@@ -5,12 +5,18 @@ import { getPersona } from "../personas/index.js";
 export function buildMeepoPrompt(opts: {
   meepo: MeepoInstance;
   recentContext?: string;
+  hasVoiceContext?: boolean; // Task 4.7: Indicates voice entries in context
 }): string {
   const persona = getPersona(opts.meepo.form_id);
   console.log("Using persona:", persona.displayName, `(${opts.meepo.form_id})`);
   
   const customPersona = opts.meepo.persona_seed
     ? `\nAdditional character context:\n${opts.meepo.persona_seed}`
+    : "";
+
+  // Task 4.7: Add voice context hint when voice entries are present
+  const voiceHint = opts.hasVoiceContext
+    ? "\nRecent dialogue was spoken aloud in the room. Respond naturally, briefly, and as if replying in conversation.\n"
     : "";
 
   const context = opts.recentContext
@@ -25,7 +31,7 @@ export function buildMeepoPrompt(opts: {
     console.warn(`Warning: Persona ${opts.meepo.form_id} missing styleGuard`);
   }
 
-  // Order matters: Guardrails → Identity → Memory → Speech Style → Personality → Style Guard → Custom → Context
+  // Order matters: Guardrails → Identity → Memory → Speech Style → Personality → Style Guard → Voice Hint → Custom → Context
   return (
     persona.systemGuardrails +
     "\n" +
@@ -37,6 +43,7 @@ export function buildMeepoPrompt(opts: {
     persona.personalityTone +
     "\n" +
     styleGuard +
+    voiceHint +
     customPersona +
     context
   );

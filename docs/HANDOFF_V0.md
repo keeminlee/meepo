@@ -80,11 +80,17 @@ ledger_entries
   - audio_chunk_path (nullable, only if STT_SAVE_AUDIO=true)
   - t_start_ms, t_end_ms (voice segment timestamps)
   - confidence (STT confidence 0.0-1.0)
+  
+  -- Session Grouping (UUID-based invariant)
+  - session_id (nullable, references sessions.session_id UUID)
 
 sessions
-  - session_id, guild_id
+  - session_id (TEXT PRIMARY KEY) - Generated UUID (the invariant)
+  - guild_id
+  - label (nullable) - User-provided metadata (e.g., "C2E03" for reference)
   - started_at_ms, ended_at_ms
   - started_by_id, started_by_name
+  - source ('live' default | 'ingest-media')
 
 latches
   - key, guild_id, channel_id, expires_at_ms
@@ -289,17 +295,23 @@ Context (last 15 ledger messages)
 - Flavor text: "Meepo curls up... and becomes an echo of Old Xoblob."
 
 ### `/session transcript <range>` (DM-only)
-- **NEW:** Display raw session transcript from ledger
-- Ranges: `since_start`, `last_5h`, `today`
-- Outputs chronological dialogue with timestamps
+- **Display raw session transcript from ledger**
+- Ranges: `since_start`, `last_5h`, `today`, `recording` (latest ingested session)
+- Outputs chronological dialogue with timestamps and source/weight annotation: `[ISO8601] (source/narrative_weight) Author: content`
+- `primary` flag filters to primary + elevated narrative only (voice-first content)
 - No summarization - verbatim ledger slice
+- `range=recording` uses `getLatestIngestedSession()` for offline ingestion sessions
+- **Auto-sends as .txt file** if transcript exceeds 1950 characters
 - DM-only via `DM_ROLE_ID` env check
 
-### `/session recap <range>` (DM-only)
-- **NEW:** LLM-generated session summary
-- Uses **same ledger slice logic** as transcript
-- Ranges: `since_start`, `last_5h`, `today`
-- Summarizes via GPT with structured format:
+### `/session recap <range> [mode]` (DM-only)
+- **LLM-generated session summary** with multiple output formats
+- Ranges: `since_start`, `last_5h`, `today`, `recording` (latest ingested session)
+- Mode options:
+  - `primary` (default): Voice + elevated text only (DM-important narrative)
+  - `full`: All narrative entries (full context with secondary messages)
+  - `meecap`: Structured scenes/beats + character arc tracking (narrative summary with story shape)
+- Output structure (for primary/full modes):
   - Overview (3-6 sentences)
   - Chronological Beats
   - NPCs & Factions
@@ -307,7 +319,9 @@ Context (last 15 ledger messages)
   - Conflicts & Resolutions
   - Clues, Loot, & Lore
   - Open Threads / To Follow Up
+- **Meecap mode** (`generateMeecapStub`): Produces beat-based structure optimized for D&D narrative arcs
 - **Auto-sends as .md file** if summary exceeds 1950 characters
+- `range=recording` uses `getLatestIngestedSession()` (guild-scoped, with fallback to global)
 - DM-only via `DM_ROLE_ID` env check
 
 **Architecture:** `recap = summarize(transcript(slice))` - single source of truth for ledger slicing.
@@ -342,10 +356,39 @@ LLM_MAX_TOKENS=200
 
 # Voice & STT
 STT_PROVIDER=noop                 # noop | debug | openai
+STT_LANGUAGE=en
+STT_NORMALIZE_NAMES=true
+STT_SAVE_AUDIO=false              # Save WAV files to data/audio/ (debugging)
+STT_PROMPT=                       # Optional vocab hints for OpenAI Whisper
+STT_OPENAI_MODEL=gpt-4o-mini-transcribe  # Can upgrade to gpt-4o-transcribe
+
+# TTS & Audio
+TTS_ENABLED=true
+TTS_PROVIDER=openai
+TTS_VOICE=alloy
+TTS_MAX_CHARS_PER_CHUNK=350
+
+# Audio FX (Post-TTS Effects Pipeline)
+AUDIO_FX_ENABLED=false            # Enable pitch shift + reverb post-processing
+AUDIO_FX_PITCH=1.0                # Pitch multiplier (1.0 = no shift)
+AUDIO_FX_REVERB=false             # Enable reverb (requires FFmpeg)
+AUDIO_FX_REVERB_WET=0.3           # Wet signal gain (0-1)
+AUDIO_FX_REVERB_DELAY_MS=20       # Delay in milliseconds
+AUDIO_FX_REVERB_DECAY=0.4         # Echo fade amount (0-1)
+
+# Voice/LLM
+VOICE_REPLY_COOLDOWN_MS=5000
+LLM_VOICE_CONTEXT_MS=120000       # Voice context window (120s default)
+
+# Debug
 DEBUG_VOICE=false                 # Verbose voice logging
-STT_LANGUAGE=en                   # (Future: for Whisper)
-STT_SAVE_AUDIO=false              # (Future: save audio chunks to data/audio/)
 ```
+
+**System Requirements:**
+- Node.js 16+
+- SQLite (bundled with `better-sqlite3`)
+- FFmpeg (optional; required only if `AUDIO_FX_ENABLED=true`)
+  - Install: `apt install ffmpeg` (Linux), `brew install ffmpeg` (macOS), `choco install ffmpeg` (Windows)
 
 ---
 
@@ -741,9 +784,39 @@ OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
     - Async, non-blocking voice reply handler
     - All preconditions checked inside handler
 
-**Backlog (Not Started):**
-- **Task 4.7** — LLM Voice Context (personas see recent voice utterances in system prompt)
-- **Task 4.8** — Voice-First Recap Polish (filter system events, voice-primary narrative)
+**Completed (Tasks 4.7-4.8):**
+- **Task 4.7** — LLM Voice Context
+  - **Function:** `getVoiceAwareContext()` in `src/ledger/ledger.ts`
+  - Pulls entries from last `LLM_VOICE_CONTEXT_MS` (default 120s)
+  - Prefers `source='voice'`, `narrative_weight IN ('primary', 'elevated')`
+  - Filters out system events (noise)
+  - Returns formatted context with speaker attribution: `Name (voice): content`
+  - **Integration:** Updated `buildMeepoPrompt()` to accept `hasVoiceContext` flag
+  - Adds hint: "Recent dialogue was spoken aloud in the room. Respond naturally, briefly..."
+  - Both `bot.ts` (text replies) and `voiceReply.ts` (voice replies) use shared function
+- **Task 4.8** — Voice-First Recap Polish
+  - System state events marked as `narrative_weight='secondary'`:
+    - `npc_wake`, `npc_sleep` (state changes)
+    - `voice_join`, `voice_leave` (technical state)
+    - `stt_toggle` (technical state)
+  - Narrative-significant events remain `primary`:
+    - `npc_transform` (character transformation)
+    - `tts_say`, `voice_reply` (Meepo speaking)
+  - `/session recap` defaults to `primaryOnly=true` (voice + elevated text)
+  - `getVoiceAwareContext()` explicitly excludes system tags
+- **Audio FX Pipeline** (Post-TTS Effects)
+  - **Module:** `src/voice/audioFx.ts` - FFmpeg-based optional audio processing
+  - **Feature:** Pitch shift (rubberband filter) + reverb (aecho filter)
+  - **Env Vars:**
+    - `AUDIO_FX_ENABLED=true|false` (default: false)
+    - `AUDIO_FX_PITCH=1.05` (default: 1.0, no shift)
+    - `AUDIO_FX_REVERB=true|false` (default: false) — **⚠️ In backlog for tuning**
+    - `AUDIO_FX_REVERB_WET=0.3` (wet gain, default: 0.3)
+    - `AUDIO_FX_REVERB_DELAY_MS=20` (delay in ms, default: 20)
+    - `AUDIO_FX_REVERB_DECAY=0.4` (decay amount, default: 0.4)
+  - **Integration:** Integrated into both `/meepo say` and voice reply pipeline (applies before playback)
+  - **Error Handling:** Fail-safe — returns original audio on any FFmpeg error, never blocks playback
+  - **Status:** Pitch shift working; reverb tuning deferred to backlog
 
 ### ⏳ Phase 5: Text Elevation
 - `/mark-important <message_id>` (DM-only) → Sets `narrative_weight='elevated'`
@@ -817,15 +890,16 @@ OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
   - ✅ Fixed prompt contamination bug
   - ⏳ Backlog: Audio persistence (3.6), Smoke test (3.7)
 
-- **Phase 4 (TTS & Voice Loop Closure) Mostly Complete**
+- **Phase 4 (TTS & Voice Loop Closure) Complete**
   - ✅ Task 4.1: TTS provider interface (mirrors STT architecture)
   - ✅ Task 4.2: OpenAI TTS provider with sentence-boundary chunking
   - ✅ Task 4.3: Voice speaker pipeline (AudioPlayer + per-guild queue + meepo-speaking tracking)
   - ✅ Task 4.4: `/meepo say` command (DM-only manual TTS test harness)
   - ✅ Task 4.5: Feedback loop protection (isMeepoSpeaking gate + robust logging)
   - ✅ Task 4.6: Wake-word voice reply (STT → LLM → TTS closed loop with address detection)
-  - ⏳ Task 4.7: LLM voice context (personas see recent utterances in system prompt)
-  - ⏳ Task 4.8: Voice-first recap polish (narrative filtering)
+  - ✅ Task 4.7: LLM voice context (personas see recent utterances in system prompt)
+  - ✅ Task 4.8: Voice-first recap polish (narrative filtering)
+  - ✅ Audio FX Pipeline: Post-TTS pitch shift + optional reverb (pitch working; reverb in backlog)
 
 **Architecture Highlights:**
 - One omniscient ledger with narrative weight tiers
@@ -838,26 +912,29 @@ OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
 - Meepo-speaking tracking for feedback loop protection (isMeepoSpeaking gate)
 - No audio persistence by default (privacy-first)
 
-**What's Complete (Phase 3 + Phase 4.1-4.6):**
+**What's Complete (Phase 3 + Phase 4 complete):**
 - ✅ Phase 3 complete: Real STT (OpenAI Whisper) live with domain normalization
-- ✅ Phase 4.1-4.6 complete: TTS provider + speaker pipeline + `/meepo say` + feedback loop protection + wake-word voice reply
+- ✅ Phase 4 complete (Tasks 4.1-4.8): Full voice I/O closed loop
+  - TTS provider + speaker pipeline + `/meepo say` manual test
+  - Feedback loop protection (isMeepoSpeaking gate)
+  - Wake-word voice reply (address detection → LLM → TTS → queue)
+  - LLM voice context awareness (voice-first prompt context)
+  - Voice-primary recap filtering (system noise marked secondary)
+  - Post-TTS audio FX pipeline (pitch shift working; reverb tuning deferred)
 
-**What's Left (Phase 4.7-4.8 + Phase 5+):**
-- Task 4.7: LLM voice context (personas see recent voice utterances in system prompt)
-- Task 4.8: Voice-first recap polish (narrative filtering, remove noise events)
-- (Phase 5+) Text elevation tools, NPC mind, more personas, audio persistence option
+**What's Left (Phase 5+ and Backlog):**
+- (Phase 5) Text elevation tools (`/mark-important` for DMs)
+- (Phase 5+) NPC mind, more personas, advanced features
+- 🔄 **Backlog:** Audio FX reverb tuning (aecho decay calibration)
 
 
-**Next Steps - Immediate:**
-- **Task 4.7:** Voice context in LLM prompts (personalities aware of recent voice utterances)
-- **Task 4.8:** Recap filtering (voice-primary narrative, system event polish)
-- (Phase 5) Text elevation marks (`/mark-important` for DMs)
+**Next Steps - Phase 5:**
+- **Text Elevation:** `/mark-important` command (DM-only, sets `narrative_weight='elevated'`)
+- **Auto-elevation:** Commands, transforms, text addressed to Meepo in voice
+- **NPC Mind:** Personas maintain memory across sessions
 
-
-**Next Steps - Immediate Priorities:**
-- **Task 4.5-4.6:** Complete wake-word voice reply loop with feedback protection (connects STT→LLM→TTS)
-- **Task 4.7:** Voice context in LLM prompts (personas respond to what they hear)
-- **Task 4.8:** Recap filtering (voice-primary narrative by default)
+**Backlog (Lower Priority):**
+- Audio FX reverb parameter tuning (currently using conservative defaults; may need calibration for perceptual taste)
 
 **Test Manual TTS (Task 4.4) — Ready to deploy:**
 ```bash
@@ -940,6 +1017,51 @@ what do you know?      # Xoblob riddles
 /meepo stt off
 /meepo leave
 ```
+
+**Recent Major Changes (Day 11 - Session Architecture & Recording Support):**
+
+#### Session ID Invariant Fix (Critical)
+- ✅ **Problem:** Session ID was user input (`args.sessionLabel`), causing collision risk on re-ingestion
+- ✅ **Solution:** 
+  - Session ID now **generated as UUID** (immutable invariant, `sessions.session_id`)
+  - User metadata stored separately as `sessions.label` (e.g., "C2E03")
+  - Prevents silent merges/overwrites when re-ingesting same label (e.g., "C2E03" vs "C2E03-fixed")
+- ✅ **Implementation:**
+  - Added `label TEXT` column to sessions table
+  - Updated `startSession()` signature: `opts: { label?, source? }` (options object for extensibility)
+  - UUID generation via `randomUUID()` in both `startSession()` and ingestion tool
+  - Ledger entries now reference session_id (UUID), not label
+  - All queries use `getLedgerForSession(sessionId)` with UUID parameter
+
+#### Recording Range Support (Offline Ingestion)
+- ✅ **Feature:** `/session recap range=recording` and `/session transcript range=recording`
+- ✅ **Use Case:** Query sessions created via offline ingestion tool (media files)
+- ✅ **Implementation:**
+  - `getLatestIngestedSession(guildId)` helper: finds most recent session with `source='ingest-media'`
+  - Two-tier fallback: guild-scoped first, then global (supports offline_test guild)
+  - Query via `getLedgerForSession()` (session_id UUID-based, no time-window ambiguity)
+  - Settable via `startSession({ label, source: 'ingest-media' })`
+
+#### Ingestion Tool Updates
+- ✅ Updated `tools/ingest-media.ts` schema to match main bot schema
+- ✅ `createSessionRecord()` now generates UUID, returns it for ledger entries
+- ✅ `writeLedgerEntries()` accepts `sessionId: string` parameter
+- ✅ Reordered in main pipeline: create session first (generates UUID), then write ledger with that UUID
+- ✅ All ingested entries properly grouped by session_id invariant
+
+#### DM Command UX Polish
+- ✅ Mode options renamed for clarity:
+  - `primary` → Voice + elevated text (focus on DM-important beats)
+  - `full` → All narrative entries (full transcript context)
+  - `meecap` → Structured scenes/beats with character arcs (narrative summary)
+- ✅ Mode selection via dropdown in Discord slash command
+
+#### Gotchas Fixed
+1. ✅ **SQLite DEFAULT doesn't backfill existing rows**: Added explicit `UPDATE` statement in migration
+2. ✅ **Time-window ambiguity for recording sessions**: Shifted to session_id (UUID) based queries
+3. ✅ **Guild scoping for offline sessions**: Added fallback query for global session lookup
+
+---
 
 **Recent Major Changes (Day 10 - Phase 2 Complete):**
 - ✅ Phase 2 Task 3 complete: STT provider interface (pluggable, testable)

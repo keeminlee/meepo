@@ -66,5 +66,85 @@ function applyMigrations(db: Database.Database) {
     `);
   }
 
+  // Migration: Add content_norm to ledger_entries (Phase 1C)
+  const hasContentNorm = ledgerColumns.some((col: any) => col.name === "content_norm");
+  
+  if (!hasContentNorm) {
+    console.log("Migrating: Adding content_norm to ledger_entries (Phase 1C)");
+    db.exec(`
+      ALTER TABLE ledger_entries ADD COLUMN content_norm TEXT;
+    `);
+  }
+
+  // Migration: Add session_id to ledger_entries (Phase 1 - ingestion support)
+  const hasSessionId = ledgerColumns.some((col: any) => col.name === "session_id");
+  
+  if (!hasSessionId) {
+    console.log("Migrating: Adding session_id to ledger_entries (Phase 1)");
+    db.exec(`
+      ALTER TABLE ledger_entries ADD COLUMN session_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_ledger_session ON ledger_entries(session_id);
+    `);
+  }
+
+  // Migration: Add meecaps table (Phase 1)
+  const tables = db.pragma("table_list") as any[];
+  const hasMeecapsTable = tables.some((t: any) => t.name === "meecaps");
+  
+  if (!hasMeecapsTable) {
+    console.log("Migrating: Creating meecaps table (Phase 1)");
+    db.exec(`
+      CREATE TABLE meecaps (
+        session_id TEXT PRIMARY KEY,
+        meecap_json TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      );
+    `);
+  }
+
+  // Migration: Add source to sessions table (Phase 1 - ingestion support)
+  const sessionColumns = db.pragma("table_info(sessions)") as any[];
+  const hasSessionSource = sessionColumns.some((col: any) => col.name === "source");
+  
+  if (!hasSessionSource) {
+    console.log("Migrating: Adding source to sessions table (Phase 1)");
+    db.exec(`
+      ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'live';
+    `);
+    
+    // Backfill: SQLite sets new column to NULL on existing rows, so explicit backfill is needed
+    console.log("Migrating: Backfilling source='live' for existing sessions");
+    db.prepare("UPDATE sessions SET source = 'live' WHERE source IS NULL").run();
+  }
+
+  // Migration: Add label to sessions table (Phase 1 - ingestion metadata)
+  const hasSessionLabel = sessionColumns.some((col: any) => col.name === "label");
+  
+  if (!hasSessionLabel) {
+    console.log("Migrating: Adding label to sessions table (Phase 1)");
+    db.exec(`
+      ALTER TABLE sessions ADD COLUMN label TEXT;
+    `);
+  }
+
+  // Migration: Add created_at_ms to sessions table (Phase 1 - reliable ordering for "latest ingested")
+  const hasCreatedAtMs = sessionColumns.some((col: any) => col.name === "created_at_ms");
+  
+  if (!hasCreatedAtMs) {
+    console.log("Migrating: Adding created_at_ms to sessions table (Phase 1)");
+    db.exec(`
+      ALTER TABLE sessions ADD COLUMN created_at_ms INTEGER;
+    `);
+    
+    // Backfill: Use started_at_ms as created_at_ms for existing sessions (best guess)
+    console.log("Migrating: Backfilling created_at_ms from started_at_ms for existing sessions");
+    db.prepare("UPDATE sessions SET created_at_ms = started_at_ms WHERE created_at_ms IS NULL").run();
+    
+    // After backfill, make it NOT NULL going forward
+    // Note: SQLite doesn't support ALTER COLUMN, so we accept it as nullable for now
+    // New sessions will always populate created_at_ms in startSession()
+  }
+
   // (Future migrations can go here)
 }

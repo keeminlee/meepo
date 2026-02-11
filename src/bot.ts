@@ -2,7 +2,8 @@
 import { Client, GatewayIntentBits } from "discord.js";
 import { registerHandlers } from "./commands/index.js";
 import { getActiveMeepo, wakeMeepo, transformMeepo } from "./meepo/state.js";
-import { appendLedgerEntry, getRecentLedgerText } from "./ledger/ledger.js";
+import { getActiveSession } from "./sessions/sessions.js";
+import { appendLedgerEntry, getVoiceAwareContext } from "./ledger/ledger.js";
 import { isLatchActive, setLatch } from "./latch/latch.js";
 import { isAddressed } from "./meepo/triggers.js";
 import { chat } from "./llm/client.js";
@@ -46,6 +47,9 @@ client.on("messageCreate", async (message: any) => {
     const content = (message.content ?? "").toString();
     if (!content.trim()) return;
 
+    // Get active session if one exists (for session_id tracking)
+    const activeSession = getActiveSession(message.guildId);
+
     // 1) LEDGER: log every message in the guild that Meepo can see
     appendLedgerEntry({
       guild_id: message.guildId,
@@ -56,6 +60,7 @@ client.on("messageCreate", async (message: any) => {
       timestamp_ms: message.createdTimestamp ?? Date.now(),
       content,
       tags: "human",
+      session_id: activeSession?.session_id ?? null,
     });
 
     // 2) WAKE-ON-NAME: Auto-wake Meepo if message contains "meepo" and Meepo is not active
@@ -272,15 +277,16 @@ client.on("messageCreate", async (message: any) => {
     }
 
     try {
-      const recentContext = getRecentLedgerText({
+      // Task 4.7: Use voice-aware context (prefers voice, falls back to text)
+      const { context: recentContext, hasVoice } = getVoiceAwareContext({
         guildId: message.guildId,
         channelId: message.channelId,
-        limit: 15,
       });
 
       const systemPrompt = buildMeepoPrompt({
         meepo: active,
         recentContext,
+        hasVoiceContext: hasVoice,
       });
 
       const userMessage = buildUserMessage({

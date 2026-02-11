@@ -35,17 +35,43 @@ function sleep(ms: number): Promise<void> {
 
 export class OpenAiSttProvider implements SttProvider {
   private model: string;
-  private language?: string;
+  private language: string;
+  private prompt?: string;
 
   constructor() {
     this.model = process.env.STT_OPENAI_MODEL ?? "gpt-4o-mini-transcribe";
-    this.language = process.env.STT_LANGUAGE;
+    this.language = process.env.STT_LANGUAGE ?? "en";
+    this.prompt = process.env.STT_PROMPT;
 
     if (process.env.DEBUG_VOICE === "true") {
       console.log(
-        `[STT] OpenAI provider initialized: model=${this.model}, language=${this.language ?? "not set"}`
+        `[STT] OpenAI provider initialized: model=${this.model}, language=${this.language}${this.prompt ? ", prompt enabled" : ""}`
       );
     }
+  }
+
+  /**
+   * Downmix stereo PCM to mono by averaging L and R channels.
+   * Improves STT clarity on speech models.
+   */
+  private downmixToMono(pcm: Buffer, originalChannels: number): Buffer {
+    if (originalChannels === 1) return pcm;
+
+    // Assuming 16-bit samples (2 bytes per sample)
+    const samples = pcm.length / 2;
+    const monoBuffer = Buffer.alloc(samples);
+
+    for (let i = 0; i < samples; i += originalChannels) {
+      let sum = 0;
+      for (let ch = 0; ch < originalChannels; ch++) {
+        const idx = (i + ch) * 2;
+        sum += pcm.readInt16LE(idx);
+      }
+      const avg = Math.round(sum / originalChannels);
+      monoBuffer.writeInt16LE(Math.max(-32768, Math.min(32767, avg)), (i / originalChannels) * 2);
+    }
+
+    return monoBuffer;
   }
 
   async transcribePcm(
@@ -57,22 +83,31 @@ export class OpenAiSttProvider implements SttProvider {
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
+        // Downmix stereo to mono for better STT clarity
+        // Discord sends stereo, but speech models are often clearer with mono
+        const monoPcm = this.downmixToMono(pcm, 2);
+
         // Convert PCM to WAV (mono, 16-bit)
-        const wavBuffer = pcmToWav(pcm, sampleRate, 1);
+        const wavBuffer = pcmToWav(monoPcm, sampleRate, 1);
 
         // Wrap WAV buffer as proper File object for OpenAI API
         const file = await toFile(wavBuffer, "utterance.wav", { type: "audio/wav" });
 
         const client = getOpenAIClient();
 
-        // Call OpenAI Audio API
-        // Note: prompt is intentionally omitted. Whisper treats it as preceding text,
-        // not vocabulary hints. On short/ambiguous audio, it echoes the prompt back.
-        const response = await client.audio.transcriptions.create({
+        // Build transcription request with language + vocab hints
+        const transcribeRequest: any = {
           file,
           model: this.model,
           language: this.language,
-        });
+        };
+
+        // Add prompt if configured (guides vocabulary/style)
+        if (this.prompt) {
+          transcribeRequest.prompt = this.prompt;
+        }
+
+        const response = await client.audio.transcriptions.create(transcribeRequest);
 
         // Extract and clean text
         const text = response.text?.trim() ?? "";

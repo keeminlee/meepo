@@ -3,6 +3,7 @@
 .env.*
 
 data/
+out/
 *.sqlite
 *.sqlite3
 

@@ -78,7 +78,7 @@ Clears the conversation latch, forcing Meepo to be silent until addressed again.
 ### `/session recap <range>` (DM-only)
 Generates a session recap from the ledger.
 - `since_start`: Everything since session began
-- `last_2h`: Last 2 hours
+- `last_5h`: Last 5 hours
 - `today`: Since midnight UTC
 
 ## Behavior

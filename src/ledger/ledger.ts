@@ -38,6 +38,8 @@ export type LedgerEntry = {
   author_name: string;
   timestamp_ms: number;
   content: string;
+  content_norm: string | null;     // Phase 1C: Normalized content
+  session_id: string | null;       // Phase 1: Session this entry belongs to
   tags: string;
   
   // Voice & Narrative Authority (Phase 0)
@@ -51,8 +53,10 @@ export type LedgerEntry = {
 };
 
 export function appendLedgerEntry(
-  e: Omit<LedgerEntry, "id" | "tags" | "source" | "narrative_weight" | "speaker_id" | "audio_chunk_path" | "t_start_ms" | "t_end_ms" | "confidence"> & {
+  e: Omit<LedgerEntry, "id" | "tags" | "source" | "narrative_weight" | "speaker_id" | "audio_chunk_path" | "t_start_ms" | "t_end_ms" | "confidence" | "content_norm" | "session_id"> & {
     tags?: string;
+    content_norm?: string | null;
+    session_id?: string | null;
     source?: "text" | "voice" | "system";
     narrative_weight?: "primary" | "secondary" | "elevated";
     speaker_id?: string | null;
@@ -76,9 +80,9 @@ export function appendLedgerEntry(
     db.prepare(
       `INSERT INTO ledger_entries (
         id, guild_id, channel_id, message_id, author_id, author_name, 
-        timestamp_ms, content, tags, source, narrative_weight, speaker_id, 
+        timestamp_ms, content, content_norm, session_id, tags, source, narrative_weight, speaker_id, 
         audio_chunk_path, t_start_ms, t_end_ms, confidence
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       e.guild_id,
@@ -88,6 +92,8 @@ export function appendLedgerEntry(
       e.author_name,
       e.timestamp_ms,
       e.content,
+      e.content_norm ?? null,
+      e.session_id ?? null,
       tags,
       source,
       narrative_weight,
@@ -155,4 +161,85 @@ export function getLedgerInRange(opts: {
   const rows = db.prepare(query).all(opts.guildId, opts.startMs, endMs, limit) as LedgerEntry[];
 
   return rows;
+}
+
+export function getLedgerForSession(opts: {
+  sessionId: string;
+  primaryOnly?: boolean; // Filter to narrative_weight IN ('primary', 'elevated')
+}): LedgerEntry[] {
+  const db = getDb();
+  const primaryOnly = opts.primaryOnly ?? false;
+
+  let query = "SELECT * FROM ledger_entries WHERE session_id = ?";
+  
+  if (primaryOnly) {
+    query += " AND narrative_weight IN ('primary', 'elevated')";
+  }
+  
+  query += " ORDER BY timestamp_ms ASC, id ASC";
+
+  const rows = db.prepare(query).all(opts.sessionId) as LedgerEntry[];
+
+  return rows;
+}
+
+/**
+ * Task 4.7: Voice-aware context for LLM prompts
+ * 
+ * Pulls recent ledger entries with voice-first prioritization:
+ * - Prefers source='voice' and narrative_weight IN ('primary', 'elevated')
+ * - Falls back to recent text if voice context is sparse
+ * - Returns formatted string with speaker attribution
+ * 
+ * Designed for use in buildMeepoPrompt() to make personas aware of spoken conversation.
+ */
+export function getVoiceAwareContext(opts: {
+  guildId: string;
+  channelId: string;
+  windowMs?: number; // Time window (default: LLM_VOICE_CONTEXT_MS env or 120s)
+  limit?: number;    // Max entries to return (default: 20)
+}): { context: string; hasVoice: boolean } {
+  const db = getDb();
+  const now = Date.now();
+  const windowMs = opts.windowMs ?? Number(process.env.LLM_VOICE_CONTEXT_MS ?? "120000");
+  const limit = opts.limit ?? 20;
+  const startMs = now - windowMs;
+
+  // Pull primary/elevated narrative entries within time window
+  // Excludes system noise (wake/join/leave already marked secondary)
+  const query = `
+    SELECT author_name, content, source, timestamp_ms 
+    FROM ledger_entries 
+    WHERE guild_id = ? 
+      AND channel_id = ? 
+      AND timestamp_ms >= ? 
+      AND narrative_weight IN ('primary', 'elevated')
+      AND tags NOT LIKE '%system%'
+    ORDER BY timestamp_ms ASC 
+    LIMIT ?
+  `;
+
+  const rows = db.prepare(query).all(
+    opts.guildId,
+    opts.channelId,
+    startMs,
+    limit
+  ) as { author_name: string; content: string; source: string; timestamp_ms: number }[];
+
+  if (rows.length === 0) {
+    return { context: "", hasVoice: false };
+  }
+
+  // Check if any voice entries exist
+  const hasVoice = rows.some((r) => r.source === "voice");
+
+  // Format entries with speaker attribution and source indicator
+  const formatted = rows
+    .map((r) => {
+      const sourceTag = r.source === "voice" ? " (voice)" : "";
+      return `${r.author_name}${sourceTag}: ${r.content}`;
+    })
+    .join("\n");
+
+  return { context: formatted, hasVoice };
 }

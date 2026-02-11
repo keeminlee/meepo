@@ -6,7 +6,7 @@ import { appendLedgerEntry } from "./ledger.js";
  * 
  * System events have:
  * - source = 'system'
- * - narrative_weight = 'primary' (always part of narrative)
+ * - narrative_weight = configurable (defaults to 'primary')
  * - tags = 'system,<event_type>'
  * - message_id = synthetic UUID (no Discord message)
  */
@@ -18,6 +18,7 @@ export function logSystemEvent(opts: {
   content: string;
   authorId?: string;
   authorName?: string;
+  narrativeWeight?: "primary" | "secondary";  // Defaults to "primary"
 }) {
   appendLedgerEntry({
     guild_id: opts.guildId,
@@ -29,6 +30,6 @@ export function logSystemEvent(opts: {
     content: opts.content,
     tags: `system,${opts.eventType}`,
     source: "system",
-    narrative_weight: "primary",
+    narrative_weight: opts.narrativeWeight ?? "primary",
   });
 }

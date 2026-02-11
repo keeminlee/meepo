@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
   author_name TEXT NOT NULL,
   timestamp_ms INTEGER NOT NULL,
   content TEXT NOT NULL,
+  content_norm TEXT,                                 -- Phase 1C: Normalized content with canonical names
+  session_id TEXT,                                   -- Phase 1: Session this entry belongs to
   tags TEXT NOT NULL DEFAULT 'public',
   
   -- Voice/narrative extensions (Phase 0)
@@ -43,6 +45,9 @@ ON ledger_entries(guild_id, channel_id, timestamp_ms);
 CREATE INDEX IF NOT EXISTS idx_ledger_message
 ON ledger_entries(message_id);
 
+CREATE INDEX IF NOT EXISTS idx_ledger_session
+ON ledger_entries(session_id);
+
 -- Latches (per guild + channel)
 CREATE TABLE IF NOT EXISTS latches (
   key TEXT PRIMARY KEY,
@@ -59,14 +64,25 @@ ON latches(guild_id, channel_id);
 CREATE TABLE IF NOT EXISTS sessions (
   session_id TEXT PRIMARY KEY,
   guild_id TEXT NOT NULL,
-  started_at_ms INTEGER NOT NULL,
+  label TEXT,                              -- User-provided label (e.g., "C2E03") for reference
+  created_at_ms INTEGER NOT NULL,          -- When this session record was created (immutable timestamp)
+  started_at_ms INTEGER NOT NULL,          -- When the session's content began (may differ for ingested sessions)
   ended_at_ms INTEGER,
   started_by_id TEXT,
-  started_by_name TEXT
+  started_by_name TEXT,
+  source TEXT NOT NULL DEFAULT 'live'  -- 'live' | 'ingest-media' (for offline ingested sessions)
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_guild_active
 ON sessions(guild_id, ended_at_ms);
+
+-- Meecaps: structured session summaries (Phase 1+)
+CREATE TABLE IF NOT EXISTS meecaps (
+  session_id TEXT PRIMARY KEY,
+  meecap_json TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
 
 -- Ledger idempotency: unique constraint scoped to text messages only
 -- (Voice/system use synthetic message_ids that don't need deduplication)

@@ -1,8 +1,10 @@
 import { SlashCommandBuilder, AttachmentBuilder } from "discord.js";
-import { getActiveSession } from "../sessions/sessions.js";
-import { getLedgerInRange } from "../ledger/ledger.js";
+import { getActiveSession, getLatestIngestedSession } from "../sessions/sessions.js";
+import { getLedgerInRange, getLedgerForSession } from "../ledger/ledger.js";
 import type { LedgerEntry } from "../ledger/ledger.js";
 import { chat } from "../llm/client.js";
+import { generateMeecapStub } from "../sessions/meecap.js";
+import { getDb } from "../db.js";
 
 /**
  * Shared ledger slice logic for both transcript and recap commands
@@ -14,27 +16,32 @@ function getLedgerSlice(opts: {
 }): LedgerEntry[] | { error: string } {
   const { guildId, range, primaryOnly } = opts;
   const now = Date.now();
-  let startMs: number;
+  let entries: LedgerEntry[] | null = null;
 
   if (range === "since_start") {
     const activeSession = getActiveSession(guildId);
     if (!activeSession) {
       return { error: "No active session found. Use /meepo wake to start one." };
     }
-    startMs = activeSession.started_at_ms;
-  } else if (range === "last_2h") {
-    startMs = now - 5 * 60 * 60 * 1000;
+    entries = getLedgerInRange({ guildId, startMs: activeSession.started_at_ms, endMs: now, primaryOnly });
+  } else if (range === "recording") {
+    const ingestedSession = getLatestIngestedSession(guildId);
+    if (!ingestedSession) {
+      return { error: "No ingested recording sessions found. Use the ingestion tool first." };
+    }
+    // Query by session_id for bulletproof slicing (no time-window ambiguity)
+    entries = getLedgerForSession({ sessionId: ingestedSession.session_id, primaryOnly });
+  } else if (range === "last_5h") {
+    entries = getLedgerInRange({ guildId, startMs: now - 5 * 60 * 60 * 1000, endMs: now, primaryOnly });
   } else if (range === "today") {
     const todayUtc = new Date();
     todayUtc.setUTCHours(0, 0, 0, 0);
-    startMs = todayUtc.getTime();
+    entries = getLedgerInRange({ guildId, startMs: todayUtc.getTime(), endMs: now, primaryOnly });
   } else {
     return { error: "Unknown range." };
   }
 
-  const entries = getLedgerInRange({ guildId, startMs, endMs: now, primaryOnly });
-
-  if (entries.length === 0) {
+  if (!entries || entries.length === 0) {
     return { error: `No ledger entries found for range: ${range}` };
   }
 
@@ -56,8 +63,9 @@ export const session = {
             .setRequired(true)
             .addChoices(
               { name: "Since session start", value: "since_start" },
-              { name: "Last 5 hours", value: "last_2h" },
-              { name: "Today (UTC)", value: "today" }
+              { name: "Last 5 hours", value: "last_5h" },
+              { name: "Today (UTC)", value: "today" },
+              { name: "Latest ingested recording", value: "recording" }
             )
         )
         .addBooleanOption((opt) =>
@@ -78,15 +86,21 @@ export const session = {
             .setRequired(true)
             .addChoices(
               { name: "Since session start", value: "since_start" },
-              { name: "Last 5 hours", value: "last_2h" },
-              { name: "Today (UTC)", value: "today" }
+              { name: "Last 5 hours", value: "last_5h" },
+              { name: "Today (UTC)", value: "today" },
+              { name: "Latest ingested recording", value: "recording" }
             )
         )
-        .addBooleanOption((opt) =>
+        .addStringOption((opt) =>
           opt
-            .setName("full")
-            .setDescription("Include secondary narrative (normal text chat). Default: primary only.")
+            .setName("mode")
+            .setDescription("Output format: primary, full, or meecap (scenes + beats).")
             .setRequired(false)
+            .addChoices(
+              { name: "primary", value: "primary" },
+              { name: "full", value: "full" },
+              { name: "meecap", value: "meecap" }
+            )
         )
     ),
 
@@ -134,22 +148,38 @@ export const session = {
       const mode = primaryOnly ? "primary" : "full";
       const header = `**Session transcript (${range}, mode: ${mode}):**\n`;
 
-      // Truncate to fit Discord message limit (2000 chars)
-      if (transcript.length > 1900) {
-        transcript = transcript.slice(0, 1900) + "\n…(truncated)";
-      }
+      // Discord has a 2000 character limit per message
+      // If transcript is too long, send as file attachment instead
+      const maxMessageLength = 1900;
 
-      await interaction.reply({
-        content: `${header}\`\`\`\n${transcript}\n\`\`\``,
-        ephemeral: true,
-      });
+      if (transcript.length > maxMessageLength) {
+        // Send as file attachment
+        const buffer = Buffer.from(transcript, 'utf-8');
+        const attachment = new AttachmentBuilder(buffer, { 
+          name: `session-transcript-${range}-${Date.now()}.txt` 
+        });
+        
+        await interaction.reply({
+          content: `${header}(Transcript was too long for Discord, attached as file)`,
+          files: [attachment],
+          ephemeral: true,
+        });
+      } else {
+        // Send as normal message
+        await interaction.reply({
+          content: `${header}\`\`\`\n${transcript}\n\`\`\``,
+          ephemeral: true,
+        });
+      }
       return;
     }
 
     if (sub === "recap") {
       const range = interaction.options.getString("range", true);
-      const includeFull = interaction.options.getBoolean("full") ?? false;
-      const primaryOnly = !includeFull; // Default to primary only
+      const mode = interaction.options.getString("mode") ?? "primary";
+      
+      // Determine primaryOnly based on mode
+      const primaryOnly = mode === "primary"; // primary = primary only, full/meecap = include all
       
       const result = getLedgerSlice({ guildId, range, primaryOnly });
 
@@ -161,7 +191,7 @@ export const session = {
       // Defer reply since LLM summarization may take time
       await interaction.deferReply({ ephemeral: true });
 
-      // Build transcript for summarization
+      // Build transcript for summarization (raw)
       const transcript = result
         .map((e) => {
           const t = new Date(e.timestamp_ms).toISOString();
@@ -169,9 +199,58 @@ export const session = {
         })
         .join("\n");
 
-      const mode = primaryOnly ? "primary" : "full";
+      // Build normalized transcript if available (Phase 1C)
+      const transcriptNorm = result
+        .map((e) => {
+          const t = new Date(e.timestamp_ms).toISOString();
+          const content = e.content_norm ?? e.content;
+          return `[${t}] ${e.author_name}: ${content}`;
+        })
+        .join("\n");
 
-      // Summarize using LLM
+      // Handle meecap mode first (different code path)
+      if (mode === "meecap") {
+        const activeSession = getActiveSession(guildId);
+        const sessionId = activeSession?.session_id ?? `adhoc_${Date.now()}`;
+
+        try {
+          const meecapResult = await generateMeecapStub({
+            sessionId,
+            transcript,
+            transcriptNorm,
+          });
+
+          // Persist to database if meecap was generated
+          if (meecapResult.meecap) {
+            const db = getDb();
+            const now = Date.now();
+            
+            db.prepare(`
+              INSERT INTO meecaps (session_id, meecap_json, created_at_ms, updated_at_ms)
+              VALUES (?, ?, ?, ?)
+              ON CONFLICT(session_id) DO UPDATE SET
+                meecap_json = excluded.meecap_json,
+                updated_at_ms = excluded.updated_at_ms
+            `).run(
+              sessionId,
+              JSON.stringify(meecapResult.meecap),
+              now,
+              now
+            );
+          }
+
+          await interaction.editReply({ content: meecapResult.text });
+          return;
+        } catch (err: any) {
+          console.error("Meecap generation error:", err);
+          await interaction.editReply({
+            content: "Failed to generate meecap. Error: " + (err.message ?? "Unknown"),
+          });
+          return;
+        }
+      }
+
+      // For summary and narrative modes, use LLM summarization
       const systemPrompt = `You are a D&D session recorder for the DM. You will be given a session transcript (raw dialogue and events). Produce a structured DM recap that is detailed, skimmable, and strictly grounded in the transcript.
 
 HARD RULES (DO NOT VIOLATE):
@@ -223,7 +302,8 @@ STYLE:
         // If summary is too long, send as file attachment instead
         const maxMessageLength = 1950;
         
-        const modeHeader = `**Session recap (${range}, mode: ${mode}):**\n`;
+        const modeLabel = mode === "primary" ? "primary" : "full";
+        const modeHeader = `**Session recap (${range}, mode: ${modeLabel}):**\n`;
         
         if (summary.length > maxMessageLength) {
           // Send as file attachment

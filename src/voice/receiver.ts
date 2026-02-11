@@ -4,12 +4,18 @@ import { pipeline } from "node:stream";
 import prism from "prism-media";
 import { getSttProvider } from "./stt/provider.js";
 import { normalizeTranscript } from "./stt/normalize.js";
+import { normalizeText } from "../registry/normalizeText.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
 import { isMeepoSpeaking } from "./speaker.js";
 import { isAddressedToMeepo } from "./wakeword.js";
 import { respondToVoiceUtterance } from "./voiceReply.js";
 import { getActiveMeepo } from "../meepo/state.js";
+import { getActiveSession } from "../sessions/sessions.js";
 import { randomBytes } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { pcmToWav } from "./stt/wav.js";
+import { log } from "../utils/logger.js";
 
 /**
  * Phase 2 Task 1-2: Speaking detection + PCM capture pipeline
@@ -20,7 +26,7 @@ import { randomBytes } from "node:crypto";
  * - Filter click/noise by counting "active" PCM frames (20ms frames with energy)
  */
 
-const DEBUG_VOICE = process.env.DEBUG_VOICE === "true";
+const voiceLog = log.withScope("voice");
 
 // PCM format assumptions (Decoder configured as 48kHz, 2ch, 16-bit LE)
 const RATE = 48000;
@@ -91,6 +97,45 @@ const pcmCaptures = new Map<string, Map<string, PcmCapture>>();
 const userCooldowns = new Map<string, Map<string, number>>();
 
 /**
+ * Save audio chunk to disk if STT_SAVE_AUDIO=true
+ * Creates: data/audio/{guildId}/{startedAt}/{userId}_{displayName}.wav
+ * Returns: path relative to workspace, or null if saving disabled
+ */
+async function saveAudioChunk(
+  guildId: string,
+  userId: string,
+  displayName: string,
+  wavBuffer: Buffer,
+  startedAt: number
+): Promise<string | null> {
+  const shouldSave = (process.env.STT_SAVE_AUDIO ?? "false").toLowerCase() === "true";
+  if (!shouldSave) {
+    return null;
+  }
+
+  try {
+    // Create directory structure: data/audio/{guildId}/{timestamp}/
+    const dirPath = join("data", "audio", guildId, String(startedAt));
+    await mkdir(dirPath, { recursive: true });
+
+    // Sanitize displayName for filename (replace non-alphanumeric)
+    const safeName = displayName.replace(/[^\w-]/g, "_");
+    const filename = `${userId}_${safeName}.wav`;
+    const filePath = join(dirPath, filename);
+
+    // Write WAV file
+    await writeFile(filePath, wavBuffer);
+
+    voiceLog.debug(`💾 Audio saved: ${filePath} (${wavBuffer.length} bytes)`);
+
+    return filePath;
+  } catch (err) {
+    voiceLog.error(`Failed to save audio: ${err}`);
+    return null;
+  }
+}
+
+/**
  * Handle transcription and ledger emission for accepted audio.
  * Called serially per guild via promise chaining (see call site).
  */
@@ -112,42 +157,34 @@ async function handleTranscription(
     
     // Memory safety check
     if (pcmBuffer.length > MAX_PCM_BYTES) {
-      console.warn(
-        `[STT] PCM buffer too large (${pcmBuffer.length} bytes), truncating to ${MAX_PCM_BYTES}`
+      voiceLog.warn(
+        `PCM buffer too large (${pcmBuffer.length} bytes), truncating to ${MAX_PCM_BYTES}`
       );
       // Transcribe anyway with truncated buffer (better than failing silently)
     }
 
+    // Convert PCM to WAV and save to disk if enabled
+    const pcmToTranscribe = pcmBuffer.length > MAX_PCM_BYTES ? pcmBuffer.subarray(0, MAX_PCM_BYTES) : pcmBuffer;
+    const wavBuffer = pcmToWav(pcmToTranscribe, RATE, CHANNELS);
+    const audioPath = await saveAudioChunk(guildId, userId, displayName, wavBuffer, cap.startedAt);
+
     // Transcribe
-    const result = await sttProvider.transcribePcm(
-      pcmBuffer.length > MAX_PCM_BYTES ? pcmBuffer.subarray(0, MAX_PCM_BYTES) : pcmBuffer,
-      RATE
-    );
-
-    // Task 3.8: Post-STT domain normalization (canonicalize entity names)
-    const shouldNormalize = (process.env.STT_NORMALIZE_NAMES ?? "true").toLowerCase() !== "false";
-    let normalizedText = result.text;
-
-    if (shouldNormalize) {
-      normalizedText = normalizeTranscript(result.text);
-
-      if (DEBUG_VOICE && normalizedText !== result.text) {
-        const rawPreview = result.text.substring(0, 120);
-        const normPreview = normalizedText.substring(0, 120);
-        console.log(
-          `[STT] Normalized: "${rawPreview}${result.text.length > 120 ? "..." : ""}" → "${normPreview}${normalizedText.length > 120 ? "..." : ""}"`
-        );
-      }
-    }
+    const result = await sttProvider.transcribePcm(pcmToTranscribe, RATE);
 
     // Discard empty transcriptions silently
-    if (!normalizedText || normalizedText.trim() === "") {
+    if (!result.text || result.text.trim() === "") {
       return;
     }
+
+    // Phase 1C: Normalize with registry (for content_norm field)
+    const contentNorm = normalizeText(result.text);
 
     // Generate unique message ID with random suffix to prevent millisecond collisions
     const randomSuffix = randomBytes(4).toString("hex");
     const messageId = `voice_${userId}_${cap.startedAt}_${randomSuffix}`;
+
+    // Get active session if one exists (for session_id tracking)
+    const activeSession = getActiveSession(guildId);
 
     // Emit to ledger - voice is primary narrative by default
     appendLedgerEntry({
@@ -157,7 +194,8 @@ async function handleTranscription(
       author_id: userId,
       author_name: displayName, // Use member.displayName instead of fallback
       timestamp_ms: Date.now(),
-      content: normalizedText,
+      content: result.text,      // Raw STT (truth)
+      content_norm: contentNorm, // Registry-normalized (Phase 1C)
       tags: "human",
       source: "voice",
       narrative_weight: "primary",
@@ -165,44 +203,46 @@ async function handleTranscription(
       t_start_ms: cap.startedAt,
       t_end_ms: Date.now(),
       confidence: result.confidence ?? null,
+      audio_chunk_path: audioPath ?? null,
+      session_id: activeSession?.session_id ?? null,
     });
 
-    console.log(
-      `[STT] 📝 Ledger: ${displayName} (${userId}), text="${normalizedText}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
+    voiceLog.info(
+      `📝 Ledger: ${displayName} (${userId}), text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
     );
 
     // Task 4.6: Check if addressed to Meepo and generate voice reply if conditions met
     const meepo = getActiveMeepo(guildId);
-    if (meepo && isAddressedToMeepo(normalizedText, meepo.form_id)) {
+    if (meepo && isAddressedToMeepo(contentNorm, meepo.form_id)) {
       // Async, non-blocking—reply handler checks all preconditions internally
       respondToVoiceUtterance({
         guildId,
         channelId,
         speakerName: displayName,
-        utterance: normalizedText,
+        utterance: contentNorm, // Use normalized for downstream processing
       }).catch((err) => {
-        console.error(`[VoiceReply] Unhandled error:`, err);
+        voiceLog.error(`VoiceReply unhandled error:`, { err });
       });
     }
   } catch (err) {
-    console.error(`[STT] Transcription failed for userId=${userId}:`, err);
+    voiceLog.error(`Transcription failed for userId=${userId}:`, { err });
   }
 }
 
 export function startReceiver(guildId: string): void {
   const state = getVoiceState(guildId);
   if (!state) {
-    console.warn(`[Receiver] No voice state for guild ${guildId}`);
+    voiceLog.warn(`No voice state for guild ${guildId}`);
     return;
   }
   if (!state.sttEnabled) {
-    console.warn(`[Receiver] STT not enabled for guild ${guildId}`);
+    voiceLog.warn(`STT not enabled for guild ${guildId}`);
     return;
   }
 
   // Idempotent: don't register twice
   if (receiverHandlers.has(guildId)) {
-    if (DEBUG_VOICE) console.log(`[Receiver] Receiver already active for guild ${guildId}`);
+    voiceLog.debug(`Receiver already active for guild ${guildId}`);
     return;
   }
 
@@ -213,7 +253,7 @@ export function startReceiver(guildId: string): void {
   if (!pcmCaptures.has(guildId)) pcmCaptures.set(guildId, new Map());
   if (!userCooldowns.has(guildId)) userCooldowns.set(guildId, new Map());
 
-  console.log(`[Receiver] Starting receiver for guild ${guildId}, channel ${channelId}`);
+  voiceLog.info(`Starting receiver for guild ${guildId}, channel ${channelId}`);
 
   const onStart = async (userId: string) => {
     const speakers = activeSpeakers.get(guildId);
@@ -222,7 +262,7 @@ export function startReceiver(guildId: string): void {
 
     // Prevent duplicate subscriptions if Discord fires "start" repeatedly
     if (captures.has(userId)) {
-      if (DEBUG_VOICE) console.log(`[Receiver] (dup start ignored) userId=${userId}`);
+      voiceLog.debug(`(dup start ignored) userId=${userId}`);
       return;
     }
 
@@ -234,18 +274,16 @@ export function startReceiver(guildId: string): void {
         displayName = member.displayName ?? member.user?.username ?? displayName;
       }
     } catch (err: any) {
-      if (DEBUG_VOICE) console.log(`[Receiver] Could not fetch member display name for ${userId}:`, err.message);
+      voiceLog.debug(`Could not fetch member display name for ${userId}:`, { error: err.message });
       // displayName stays as fallback
     }
 
     const startedAt = Date.now();
     speakers.set(userId, { userId, guildId, channelId, startedAt });
 
-    if (DEBUG_VOICE) {
-      console.log(
-        `[Receiver] 🎤 Speaking started: ${displayName} (${userId}), guild=${guildId}, channel=${channelId}`
-      );
-    }
+    voiceLog.debug(
+      `🎤 Speaking started: ${displayName} (${userId}), guild=${guildId}, channel=${channelId}`
+    );
 
     // Create a capture record first
     captures.set(userId, {
@@ -350,15 +388,15 @@ export function startReceiver(guildId: string): void {
         if (shouldAccept) {
           // Task 4.5: Feedback loop protection - skip STT if Meepo is currently speaking
           if (isMeepoSpeaking(guildId)) {
-            console.log(
-              `[Receiver] 🔕 Gated (meepo-speaking): ${cap.displayName} (${userId})`
+            voiceLog.info(
+              `🔕 Gated (meepo-speaking): ${cap.displayName} (${userId})`
             );
             return;
           }
 
           userCooldowns.get(guildId)?.set(userId, now);
-          console.log(
-            `[Receiver] 🔇 Speaking ended: ${cap.displayName} (${userId}), wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
+          voiceLog.info(
+            `🔇 Speaking ended: ${cap.displayName} (${userId}), wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
           );
 
           // Queue transcription via promise chain (ensures serial, FIFO execution per guild)
@@ -366,17 +404,17 @@ export function startReceiver(guildId: string): void {
           const newChain = currentChain
             .then(() => handleTranscription(guildId, channelId, userId, cap.displayName, cap))
             .catch((err) => {
-              console.error(`[Receiver] handleTranscription error for userId=${userId}:`, err);
+              voiceLog.error(`handleTranscription error for userId=${userId}:`, { err });
             });
           guildSttChain.set(guildId, newChain);
-        } else if (DEBUG_VOICE) {
-          console.log(
-            `[Receiver] 🚫 Gated: userId=${userId}, reason=${gateReason}, wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
+        } else {
+          voiceLog.debug(
+            `🚫 Gated: userId=${userId}, reason=${gateReason}, wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
           );
         }
 
-        if (err && DEBUG_VOICE) {
-          console.error(`[Receiver] finalize reason=${reason} userId=${userId}`, err);
+        if (err) {
+          voiceLog.debug(`finalize reason=${reason} userId=${userId}`, { err });
         }
       } finally {
         // ALWAYS cleanup to prevent duplicates/leaks
@@ -409,11 +447,11 @@ export function startReceiver(guildId: string): void {
 export function stopReceiver(guildId: string): void {
   const state = getVoiceState(guildId);
   if (!state) {
-    console.log(`[Receiver] No voice state for guild ${guildId}, nothing to stop`);
+    voiceLog.debug(`No voice state for guild ${guildId}, nothing to stop`);
     return;
   }
 
-  console.log(`[Receiver] Stopping receiver for guild ${guildId}`);
+  voiceLog.info(`Stopping receiver for guild ${guildId}`);
 
   const handlers = receiverHandlers.get(guildId);
   if (handlers) {
@@ -422,7 +460,7 @@ export function stopReceiver(guildId: string): void {
     receiverHandlers.delete(guildId);
   } else {
     // Fallback: no known handlers; avoid nuking other listeners unexpectedly
-    if (DEBUG_VOICE) console.log(`[Receiver] No handler record for guild ${guildId}`);
+    voiceLog.debug(`No handler record for guild ${guildId}`);
   }
 
   activeSpeakers.get(guildId)?.clear();

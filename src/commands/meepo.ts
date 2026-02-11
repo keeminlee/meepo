@@ -11,6 +11,7 @@ import { startReceiver, stopReceiver } from "../voice/receiver.js";
 import { getSttProviderInfo } from "../voice/stt/provider.js";
 import { getTtsProvider } from "../voice/tts/provider.js";
 import { speakInGuild } from "../voice/speaker.js";
+import { applyPostTtsFx } from "../voice/audioFx.js";
 
 export const meepo = {
   data: new SlashCommandBuilder()
@@ -114,7 +115,7 @@ export const meepo = {
         personaSeed: persona,
       });
 
-      // Log system event (narrative primary)
+      // Log system event (narrative secondary - state change)
       logSystemEvent({
         guildId,
         channelId,
@@ -122,6 +123,7 @@ export const meepo = {
         content: `Meepo awakens${persona ? ` with persona: ${persona}` : ""}.`,
         authorId: interaction.user.id,
         authorName: interaction.user.username,
+        narrativeWeight: "secondary",
       });
 
       // Reset nickname to default Meepo on wake
@@ -148,7 +150,7 @@ export const meepo = {
       if (active) {
         clearLatch(guildId, active.channel_id);
         
-        // Log system event (narrative primary)
+        // Log system event (narrative secondary - state change)
         logSystemEvent({
           guildId,
           channelId: active.channel_id,
@@ -156,6 +158,7 @@ export const meepo = {
           content: "Meepo goes dormant.",
           authorId: interaction.user.id,
           authorName: interaction.user.username,
+          narrativeWeight: "secondary",
         });
       }
 
@@ -338,7 +341,7 @@ export const meepo = {
           connectedAt: Date.now(),
         });
 
-        // Log system event (narrative primary)
+        // Log system event (narrative secondary - state change)
         logSystemEvent({
           guildId,
           channelId: active.channel_id,
@@ -346,6 +349,7 @@ export const meepo = {
           content: `Meepo joins voice channel: ${userVoiceChannel.name}`,
           authorId: interaction.user.id,
           authorName: interaction.user.username,
+          narrativeWeight: "secondary",
         });
 
         // Resolve deferred interaction with success message
@@ -384,7 +388,7 @@ export const meepo = {
       
       leaveVoice(guildId);
 
-      // Log system event (narrative primary)
+      // Log system event (narrative secondary - state change)
       const active = getActiveMeepo(guildId);
       if (active) {
         logSystemEvent({
@@ -394,6 +398,7 @@ export const meepo = {
           content: "Meepo leaves voice channel.",
           authorId: interaction.user.id,
           authorName: interaction.user.username,
+          narrativeWeight: "secondary",
         });
       }
 
@@ -447,7 +452,7 @@ export const meepo = {
         // Start audio receiver
         startReceiver(guildId);
 
-        // Log system event (narrative primary)
+        // Log system event (narrative secondary - technical state)
         const active = getActiveMeepo(guildId);
         if (active) {
           logSystemEvent({
@@ -457,6 +462,7 @@ export const meepo = {
             content: `STT enabled - provider: ${providerInfo.name} (${providerInfo.description}).`,
             authorId: interaction.user.id,
             authorName: interaction.user.username,
+            narrativeWeight: "secondary",
           });
         }
 
@@ -481,7 +487,7 @@ export const meepo = {
         // Stop audio receiver
         stopReceiver(guildId);
 
-        // Log system event (narrative primary)
+        // Log system event (narrative secondary - technical state)
         const active = getActiveMeepo(guildId);
         if (active) {
           logSystemEvent({
@@ -491,6 +497,7 @@ export const meepo = {
             content: "STT disabled.",
             authorId: interaction.user.id,
             authorName: interaction.user.username,
+            narrativeWeight: "secondary",
           });
         }
 
@@ -549,12 +556,15 @@ export const meepo = {
         const ttsProvider = await getTtsProvider();
 
         // Synthesize text to audio
-        const mp3Buffer = await ttsProvider.synthesize(text);
+        let mp3Buffer = await ttsProvider.synthesize(text);
 
         if (mp3Buffer.length === 0) {
           await interaction.editReply({ content: "TTS synthesis returned empty audio. Check provider configuration." });
           return;
         }
+
+        // Apply post-TTS audio effects (if enabled)
+        mp3Buffer = await applyPostTtsFx(mp3Buffer, "mp3");
 
         // Queue playback
         speakInGuild(guildId, mp3Buffer, {

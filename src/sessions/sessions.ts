@@ -4,32 +4,44 @@ import { getDb } from "../db.js";
 export type Session = {
   session_id: string;
   guild_id: string;
-  started_at_ms: number;
+  label: string | null;             // User-provided label (e.g., "C2E03") for reference
+  created_at_ms: number;            // When session record was created (immutable, for ordering)
+  started_at_ms: number;            // When session content began
   ended_at_ms: number | null;
   started_by_id: string | null;
   started_by_name: string | null;
+  source?: string | null;            // 'live' (default) | 'ingest-media' (ingested recordings)
 };
 
 export function startSession(
   guildId: string,
   startedById: string | null = null,
-  startedByName: string | null = null
+  startedByName: string | null = null,
+  opts?: {
+    label?: string | null;    // User-provided label (e.g., "C2E03")
+    source?: string | null;   // 'live' (default) | 'ingest-media'
+  }
 ): Session {
   const db = getDb();
   const now = Date.now();
   const sessionId = randomUUID();
+  const sessionSource = opts?.source ?? "live";
+  const sessionLabel = opts?.label ?? null;
 
   db.prepare(
-    "INSERT INTO sessions (session_id, guild_id, started_at_ms, ended_at_ms, started_by_id, started_by_name) VALUES (?, ?, ?, NULL, ?, ?)"
-  ).run(sessionId, guildId, now, startedById, startedByName);
+    "INSERT INTO sessions (session_id, guild_id, label, created_at_ms, started_at_ms, ended_at_ms, started_by_id, started_by_name, source) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)"
+  ).run(sessionId, guildId, sessionLabel, now, now, startedById, startedByName, sessionSource);
 
   return {
     session_id: sessionId,
     guild_id: guildId,
+    label: sessionLabel,
+    created_at_ms: now,
     started_at_ms: now,
     ended_at_ms: null,
     started_by_id: startedById,
     started_by_name: startedByName,
+    source: sessionSource,
   };
 }
 
@@ -51,4 +63,27 @@ export function getActiveSession(guildId: string): Session | null {
     .get(guildId) as Session | undefined;
 
   return row ?? null;
+}
+
+export function getLatestIngestedSession(guildId: string): Session | null {
+  const db = getDb();
+  
+  // First, try to find ingested session for this specific guild
+  // Order by created_at_ms DESC (immutable creation timestamp, most reliable for "latest")
+  const row = db
+    .prepare("SELECT * FROM sessions WHERE source = 'ingest-media' AND guild_id = ? ORDER BY created_at_ms DESC LIMIT 1")
+    .get(guildId) as Session | undefined;
+
+  if (row) {
+    return row;
+  }
+
+  // Fallback: if no guild-scoped ingested session found, return the latest one regardless of guild
+  // (useful for offline testing where ingestion might use guild_id='offline_test')
+  // Also ordered by created_at_ms DESC for consistency
+  const fallbackRow = db
+    .prepare("SELECT * FROM sessions WHERE source = 'ingest-media' ORDER BY created_at_ms DESC LIMIT 1")
+    .get() as Session | undefined;
+
+  return fallbackRow ?? null;
 }
