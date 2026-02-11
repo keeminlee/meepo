@@ -720,11 +720,30 @@ OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
   - No LLM invocation, no latch state change, no chat reply (control command only)
   - Graceful error handling with user-facing precondition messages
 
+- ✅ **Task 4.5** — Feedback Loop Protection (`src/voice/receiver.ts` + `src/voice/speaker.ts`)
+  - Gate implemented: `isMeepoSpeaking()` check before STT queue
+  - Always logs: `[Receiver] 🔕 Gated (meepo-speaking): [user]` (visible in production)
+  - Prevents Meepo from transcribing its own TTS output
+  - Safe by default: blocks all overlapped speech (push-to-respond expected)
+
+- ✅ **Task 4.6** — Wake-Word Voice Reply (STT → LLM → TTS Loop Closure)
+  - **Address Detection** (`src/voice/wakeword.ts`):
+    - `isAddressedToMeepo(text, formId)`: Triggers on "meepo X", "hey meepo", "meepo:", "meepo,"
+    - Optional persona displayName support (e.g., "xoblob")
+  - **Voice Reply Handler** (`src/voice/voiceReply.ts`):
+    - Preconditions: awake, in voice, not speaking (4.5 gate), cooldown passed (5s default)
+    - LLM context: last 120s of primary narrative only
+    - Response: max 100 tokens (shorter for voice UX)
+    - TTS synthesize, queue playback via speaker pipeline
+    - Log as system event: `eventType: voice_reply`, source: `system`, narrative_weight: `primary`
+  - **Integration** (`src/voice/receiver.ts`):
+    - Hook after STT appends transcript
+    - Async, non-blocking voice reply handler
+    - All preconditions checked inside handler
+
 **Backlog (Not Started):**
-- **Task 4.5** — Feedback Loop Protection (*Gate implemented: `isMeepoSpeaking()` in receiver, awaiting validation*)
-- **Task 4.6** — Wake-Word Voice Reply (close the loop on voice input→output)
-- **Task 4.7** — LLM Voice Context (personas see recent voice utterances)
-- **Task 4.8** — Voice-First Recap Polish (narrative filtering)
+- **Task 4.7** — LLM Voice Context (personas see recent voice utterances in system prompt)
+- **Task 4.8** — Voice-First Recap Polish (filter system events, voice-primary narrative)
 
 ### ⏳ Phase 5: Text Elevation
 - `/mark-important <message_id>` (DM-only) → Sets `narrative_weight='elevated'`
@@ -798,15 +817,15 @@ OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
   - ✅ Fixed prompt contamination bug
   - ⏳ Backlog: Audio persistence (3.6), Smoke test (3.7)
 
-- **Phase 4 (TTS & Voice Loop Closure) In Progress**
+- **Phase 4 (TTS & Voice Loop Closure) Mostly Complete**
   - ✅ Task 4.1: TTS provider interface (mirrors STT architecture)
   - ✅ Task 4.2: OpenAI TTS provider with sentence-boundary chunking
   - ✅ Task 4.3: Voice speaker pipeline (AudioPlayer + per-guild queue + meepo-speaking tracking)
   - ✅ Task 4.4: `/meepo say` command (DM-only manual TTS test harness)
-  - 🚧 Task 4.5: Feedback loop protection (gate implemented, awaiting validation)
-  - ⏳ Task 4.6: Wake-word voice reply (STT → LLM → TTS closed loop)
-  - ⏳ Task 4.7: LLM voice context (personas see recent utterances)
-  - ⏳ Task 4.8: Voice-first recap polish
+  - ✅ Task 4.5: Feedback loop protection (isMeepoSpeaking gate + robust logging)
+  - ✅ Task 4.6: Wake-word voice reply (STT → LLM → TTS closed loop with address detection)
+  - ⏳ Task 4.7: LLM voice context (personas see recent utterances in system prompt)
+  - ⏳ Task 4.8: Voice-first recap polish (narrative filtering)
 
 **Architecture Highlights:**
 - One omniscient ledger with narrative weight tiers
@@ -819,24 +838,20 @@ OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
 - Meepo-speaking tracking for feedback loop protection (isMeepoSpeaking gate)
 - No audio persistence by default (privacy-first)
 
-**What's Complete (Phase 3-4 Tasks 1-10):**
-- ✅ Phase 3: OpenAI Whisper STT with domain normalization
-- ✅ Phase 4.1-4.3: OpenAI TTS provider + speaker pipeline + feedback loop protection
-
-**What's Left (Phase 4 Tasks 4-8):**
-- Task 4.4: `/meepo say` command (DM-only TTS + playback test)
-- Task 4.5: Feedback loop protection (already gate implemented, needs testing)
-- Task 4.6: Wake-word voice reply (close loop on voice input→output)
-**What's Complete (Phase 3-4 Tasks 1-13):**
+**What's Complete (Phase 3 + Phase 4.1-4.6):**
 - ✅ Phase 3 complete: Real STT (OpenAI Whisper) live with domain normalization
-- ✅ Phase 4 Tasks 1-4 complete: TTS provider + speaker pipeline + `/meepo say` command
+- ✅ Phase 4.1-4.6 complete: TTS provider + speaker pipeline + `/meepo say` + feedback loop protection + wake-word voice reply
 
-**What's Left (Phase 4 Tasks 5-8):**
-- Task 4.5: Feedback loop protection (already gate implemented, needs validation)
-- Task 4.6: Wake-word voice reply (close loop on voice input→output)
-- Task 4.7: LLM voice context (personas see recent voice utterances)
-- Task 4.8: Voice-first recap polish (narrative filtering)
+**What's Left (Phase 4.7-4.8 + Phase 5+):**
+- Task 4.7: LLM voice context (personas see recent voice utterances in system prompt)
+- Task 4.8: Voice-first recap polish (narrative filtering, remove noise events)
 - (Phase 5+) Text elevation tools, NPC mind, more personas, audio persistence option
+
+
+**Next Steps - Immediate:**
+- **Task 4.7:** Voice context in LLM prompts (personalities aware of recent voice utterances)
+- **Task 4.8:** Recap filtering (voice-primary narrative, system event polish)
+- (Phase 5) Text elevation marks (`/mark-important` for DMs)
 
 
 **Next Steps - Immediate Priorities:**
