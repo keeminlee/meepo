@@ -99,9 +99,9 @@ export function speakInGuild(
   }
 ): void {
   const state = getVoiceState(guildId);
-  if (!state || !state.sttEnabled) {
+  if (!state) {
     console.warn(
-      `[Speaker] Not in voice or STT disabled for guild ${guildId}`
+      `[Speaker] Not in voice for guild ${guildId}`
     );
     return;
   }
