@@ -59,6 +59,7 @@ type SpeakingSubscription = {
 
 type PcmCapture = {
   userId: string;
+  displayName: string; // member.displayName ?? user.username (cached at capture start)
   pcmChunks: Buffer[];
   totalBytes: number;
   startedAt: number;
@@ -87,6 +88,7 @@ async function handleTranscription(
   guildId: string,
   channelId: string,
   userId: string,
+  displayName: string,
   cap: PcmCapture
 ): Promise<void> {
   try {
@@ -122,7 +124,7 @@ async function handleTranscription(
       channel_id: channelId,
       message_id: messageId,
       author_id: userId,
-      author_name: `User_${userId.slice(0, 8)}`, // Fallback username (TODO: cache real usernames)
+      author_name: displayName, // Use member.displayName instead of fallback
       timestamp_ms: Date.now(),
       content: result.text,
       tags: "human",
@@ -135,7 +137,7 @@ async function handleTranscription(
     });
 
     console.log(
-      `[STT] 📝 Ledger: userId=${userId}, text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
+      `[STT] 📝 Ledger: ${displayName} (${userId}), text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
     );
   } catch (err) {
     console.error(`[STT] Transcription failed for userId=${userId}:`, err);
@@ -168,7 +170,7 @@ export function startReceiver(guildId: string): void {
 
   console.log(`[Receiver] Starting receiver for guild ${guildId}, channel ${channelId}`);
 
-  const onStart = (userId: string) => {
+  const onStart = async (userId: string) => {
     const speakers = activeSpeakers.get(guildId);
     const captures = pcmCaptures.get(guildId);
     if (!speakers || !captures) return;
@@ -179,18 +181,35 @@ export function startReceiver(guildId: string): void {
       return;
     }
 
+    // Fetch fresh member data for display name
+    let displayName = `User_${userId.slice(0, 8)}`;
+    try {
+      const guild = state.connection.joinConfig.guildId ? 
+        (global as any).discordClient?.guilds?.cache?.get(guildId) : 
+        null;
+      
+      if (guild) {
+        const member = await guild.members.fetch(userId);
+        displayName = member.displayName ?? member.user?.username ?? displayName;
+      }
+    } catch (err: any) {
+      if (DEBUG_VOICE) console.log(`[Receiver] Could not fetch member display name for ${userId}:`, err.message);
+      // displayName stays as fallback
+    }
+
     const startedAt = Date.now();
     speakers.set(userId, { userId, guildId, channelId, startedAt });
 
     if (DEBUG_VOICE) {
       console.log(
-        `[Receiver] 🎤 Speaking started: userId=${userId}, guild=${guildId}, channel=${channelId}`
+        `[Receiver] 🎤 Speaking started: ${displayName} (${userId}), guild=${guildId}, channel=${channelId}`
       );
     }
 
     // Create a capture record first
     captures.set(userId, {
       userId,
+      displayName,
       pcmChunks: [],
       totalBytes: 0,
       startedAt,
@@ -290,11 +309,11 @@ export function startReceiver(guildId: string): void {
         if (shouldAccept) {
           userCooldowns.get(guildId)?.set(userId, now);
           console.log(
-            `[Receiver] 🔇 Speaking ended: userId=${userId}, wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
+            `[Receiver] 🔇 Speaking ended: ${cap.displayName} (${userId}), wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
           );
 
           // Transcribe and emit to ledger (async, don't block cleanup)
-          handleTranscription(guildId, channelId, userId, cap).catch((err) => {
+          handleTranscription(guildId, channelId, userId, cap.displayName, cap).catch((err) => {
             console.error(`[Receiver] handleTranscription error for userId=${userId}:`, err);
           });
         } else if (DEBUG_VOICE) {
