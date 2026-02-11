@@ -2,6 +2,9 @@ import { EndBehaviorType } from "@discordjs/voice";
 import { getVoiceState } from "./state.js";
 import { pipeline } from "node:stream";
 import prism from "prism-media";
+import { getSttProvider } from "./stt/provider.js";
+import { appendLedgerEntry } from "../ledger/ledger.js";
+import { randomBytes } from "node:crypto";
 
 /**
  * Phase 2 Task 1-2: Speaking detection + PCM capture pipeline
@@ -33,6 +36,12 @@ const FRAME_MS = 20;
 const FRAME_BYTES = Math.round(BYTES_PER_SEC * (FRAME_MS / 1000)); // 3840 bytes for 20ms
 const FRAME_RMS_THRESH = 700;    // permissive
 const MIN_ACTIVE_MS = 200;       // require ~200ms of active audio (10 frames)
+
+// Memory safety: max PCM buffer size (10 seconds @ 48kHz stereo 16-bit = ~2MB)
+const MAX_PCM_BYTES = 10 * BYTES_PER_SEC; // 1,920,000 bytes
+
+// Singleton STT provider
+const sttProvider = getSttProvider();
 
 // Track per guild listener so stopReceiver can detach cleanly
 type ReceiverHandlers = {
@@ -69,6 +78,69 @@ const pcmCaptures = new Map<string, Map<string, PcmCapture>>();
 
 // Map<guildId, Map<userId, lastAcceptedEndMs>>
 const userCooldowns = new Map<string, Map<string, number>>();
+
+/**
+ * Handle transcription and ledger emission for accepted audio.
+ * Runs async, doesn't block cleanup.
+ */
+async function handleTranscription(
+  guildId: string,
+  channelId: string,
+  userId: string,
+  cap: PcmCapture
+): Promise<void> {
+  try {
+    // Merge PCM chunks
+    const pcmBuffer = Buffer.concat(cap.pcmChunks);
+    
+    // Memory safety check
+    if (pcmBuffer.length > MAX_PCM_BYTES) {
+      console.warn(
+        `[STT] PCM buffer too large (${pcmBuffer.length} bytes), truncating to ${MAX_PCM_BYTES}`
+      );
+      // Transcribe anyway with truncated buffer (better than failing silently)
+    }
+
+    // Transcribe
+    const result = await sttProvider.transcribePcm(
+      pcmBuffer.length > MAX_PCM_BYTES ? pcmBuffer.subarray(0, MAX_PCM_BYTES) : pcmBuffer,
+      RATE
+    );
+
+    // Discard empty transcriptions silently
+    if (!result.text || result.text.trim() === "") {
+      return;
+    }
+
+    // Generate unique message ID with random suffix to prevent millisecond collisions
+    const randomSuffix = randomBytes(4).toString("hex");
+    const messageId = `voice_${userId}_${cap.startedAt}_${randomSuffix}`;
+
+    // Emit to ledger - voice is primary narrative by default
+    appendLedgerEntry({
+      guild_id: guildId,
+      channel_id: channelId,
+      message_id: messageId,
+      author_id: userId,
+      author_name: `User_${userId.slice(0, 8)}`, // Fallback username (TODO: cache real usernames)
+      timestamp_ms: Date.now(),
+      content: result.text,
+      tags: "human",
+      source: "voice",
+      narrative_weight: "primary",
+      speaker_id: userId,
+      t_start_ms: cap.startedAt,
+      t_end_ms: Date.now(),
+      confidence: result.confidence ?? null,
+    });
+
+    console.log(
+      `[STT] 📝 Ledger: userId=${userId}, text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
+    );
+  } catch (err) {
+    console.error(`[STT] Transcription failed for userId=${userId}:`, err);
+  }
+}
 
 export function startReceiver(guildId: string): void {
   const state = getVoiceState(guildId);
@@ -220,6 +292,11 @@ export function startReceiver(guildId: string): void {
           console.log(
             `[Receiver] 🔇 Speaking ended: userId=${userId}, wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
           );
+
+          // Transcribe and emit to ledger (async, don't block cleanup)
+          handleTranscription(guildId, channelId, userId, cap).catch((err) => {
+            console.error(`[Receiver] handleTranscription error for userId=${userId}:`, err);
+          });
         } else if (DEBUG_VOICE) {
           console.log(
             `[Receiver] 🚫 Gated: userId=${userId}, reason=${gateReason}, wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`

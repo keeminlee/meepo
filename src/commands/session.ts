@@ -7,8 +7,12 @@ import { chat } from "../llm/client.js";
 /**
  * Shared ledger slice logic for both transcript and recap commands
  */
-function getLedgerSlice(opts: { guildId: string; range: string }): LedgerEntry[] | { error: string } {
-  const { guildId, range } = opts;
+function getLedgerSlice(opts: { 
+  guildId: string; 
+  range: string;
+  primaryOnly?: boolean;
+}): LedgerEntry[] | { error: string } {
+  const { guildId, range, primaryOnly } = opts;
   const now = Date.now();
   let startMs: number;
 
@@ -28,7 +32,7 @@ function getLedgerSlice(opts: { guildId: string; range: string }): LedgerEntry[]
     return { error: "Unknown range." };
   }
 
-  const entries = getLedgerInRange({ guildId, startMs, endMs: now });
+  const entries = getLedgerInRange({ guildId, startMs, endMs: now, primaryOnly });
 
   if (entries.length === 0) {
     return { error: `No ledger entries found for range: ${range}` };
@@ -56,6 +60,12 @@ export const session = {
               { name: "Today (UTC)", value: "today" }
             )
         )
+        .addBooleanOption((opt) =>
+          opt
+            .setName("primary")
+            .setDescription("Show only primary narrative (voice + elevated text). Default: show all.")
+            .setRequired(false)
+        )
     )
     .addSubcommand((sub) =>
       sub
@@ -71,6 +81,12 @@ export const session = {
               { name: "Last 5 hours", value: "last_2h" },
               { name: "Today (UTC)", value: "today" }
             )
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName("full")
+            .setDescription("Include secondary narrative (normal text chat). Default: primary only.")
+            .setRequired(false)
         )
     ),
 
@@ -97,20 +113,26 @@ export const session = {
 
     if (sub === "transcript") {
       const range = interaction.options.getString("range", true);
-      const result = getLedgerSlice({ guildId, range });
+      const primaryOnly = interaction.options.getBoolean("primary") ?? false;
+      
+      const result = getLedgerSlice({ guildId, range, primaryOnly });
 
       if ("error" in result) {
         await interaction.reply({ content: result.error, ephemeral: true });
         return;
       }
 
-      // Format as chronological list
+      // Format with source and narrative_weight for debugging
       let transcript = result
         .map((e) => {
           const t = new Date(e.timestamp_ms).toISOString();
-          return `[${t}] ${e.author_name}: ${e.content}`;
+          const meta = `(${e.source}/${e.narrative_weight})`;
+          return `[${t}] ${meta} ${e.author_name}: ${e.content}`;
         })
         .join("\n");
+
+      const mode = primaryOnly ? "primary" : "full";
+      const header = `**Session transcript (${range}, mode: ${mode}):**\n`;
 
       // Truncate to fit Discord message limit (2000 chars)
       if (transcript.length > 1900) {
@@ -118,7 +140,7 @@ export const session = {
       }
 
       await interaction.reply({
-        content: `**Session transcript (${range}):**\n\`\`\`\n${transcript}\n\`\`\``,
+        content: `${header}\`\`\`\n${transcript}\n\`\`\``,
         ephemeral: true,
       });
       return;
@@ -126,7 +148,10 @@ export const session = {
 
     if (sub === "recap") {
       const range = interaction.options.getString("range", true);
-      const result = getLedgerSlice({ guildId, range });
+      const includeFull = interaction.options.getBoolean("full") ?? false;
+      const primaryOnly = !includeFull; // Default to primary only
+      
+      const result = getLedgerSlice({ guildId, range, primaryOnly });
 
       if ("error" in result) {
         await interaction.reply({ content: result.error, ephemeral: true });
@@ -143,6 +168,8 @@ export const session = {
           return `[${t}] ${e.author_name}: ${e.content}`;
         })
         .join("\n");
+
+      const mode = primaryOnly ? "primary" : "full";
 
       // Summarize using LLM
       const systemPrompt = `You are a D&D session recorder for the DM. You will be given a session transcript (raw dialogue and events). Produce a structured DM recap that is detailed, skimmable, and strictly grounded in the transcript.
@@ -196,6 +223,8 @@ STYLE:
         // If summary is too long, send as file attachment instead
         const maxMessageLength = 1950;
         
+        const modeHeader = `**Session recap (${range}, mode: ${mode}):**\n`;
+        
         if (summary.length > maxMessageLength) {
           // Send as file attachment
           const buffer = Buffer.from(summary, 'utf-8');
@@ -204,13 +233,13 @@ STYLE:
           });
           
           await interaction.editReply({
-            content: `**Session recap (${range}):**\n(Summary was too long for Discord, attached as file)`,
+            content: `${modeHeader}(Summary was too long for Discord, attached as file)`,
             files: [attachment],
           });
         } else {
           // Send as normal message
           await interaction.editReply({
-            content: `**Session recap (${range}):**\n${summary}`,
+            content: `${modeHeader}${summary}`,
           });
         }
       } catch (err: any) {

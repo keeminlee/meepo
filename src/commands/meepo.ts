@@ -8,6 +8,7 @@ import { logSystemEvent } from "../ledger/system.js";
 import { joinVoice, leaveVoice } from "../voice/connection.js";
 import { getVoiceState, setVoiceState, clearVoiceState } from "../voice/state.js";
 import { startReceiver, stopReceiver } from "../voice/receiver.js";
+import { getSttProviderInfo } from "../voice/stt/provider.js";
 
 export const meepo = {
   data: new SlashCommandBuilder()
@@ -426,6 +427,9 @@ export const meepo = {
 
         currentState.sttEnabled = true;
 
+        // Get provider info for user messaging
+        const providerInfo = getSttProviderInfo();
+
         // Start audio receiver
         startReceiver(guildId);
 
@@ -436,14 +440,14 @@ export const meepo = {
             guildId,
             channelId: active.channel_id,
             eventType: "stt_toggle",
-            content: "STT enabled (Phase 2 feature - no transcription yet).",
+            content: `STT enabled - provider: ${providerInfo.name} (${providerInfo.description}).`,
             authorId: interaction.user.id,
             authorName: interaction.user.username,
           });
         }
 
         await interaction.reply({
-          content: "Meepo will try to understand words now! ✨\n_Meep meep... (Meepo is still learning this part!)_",
+          content: `Meepo will try to understand words now! ✨\n_Provider: **${providerInfo.name}** (${providerInfo.description})_`,
           ephemeral: true,
         });
         return;

@@ -137,14 +137,22 @@ export function getLedgerInRange(opts: {
   startMs: number;
   endMs?: number;
   limit?: number;
+  primaryOnly?: boolean; // Filter to narrative_weight IN ('primary', 'elevated')
 }): LedgerEntry[] {
   const db = getDb();
   const endMs = opts.endMs ?? Date.now();
   const limit = opts.limit ?? 500;
+  const primaryOnly = opts.primaryOnly ?? false;
 
-  const rows = db.prepare(
-    "SELECT * FROM ledger_entries WHERE guild_id = ? AND timestamp_ms >= ? AND timestamp_ms < ? ORDER BY timestamp_ms ASC LIMIT ?"
-  ).all(opts.guildId, opts.startMs, endMs, limit) as LedgerEntry[];
+  let query = "SELECT * FROM ledger_entries WHERE guild_id = ? AND timestamp_ms >= ? AND timestamp_ms < ?";
+  
+  if (primaryOnly) {
+    query += " AND narrative_weight IN ('primary', 'elevated')";
+  }
+  
+  query += " ORDER BY timestamp_ms ASC LIMIT ?";
+
+  const rows = db.prepare(query).all(opts.guildId, opts.startMs, endMs, limit) as LedgerEntry[];
 
   return rows;
 }
