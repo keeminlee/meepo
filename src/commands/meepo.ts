@@ -320,6 +320,7 @@ export const meepo = {
         setVoiceState(guildId, {
           channelId: userVoiceChannel.id,
           connection,
+          guild,  // Store guild reference for member lookups
           sttEnabled: false, // Default to disabled
           connectedAt: Date.now(),
         });

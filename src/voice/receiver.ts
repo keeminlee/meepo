@@ -184,12 +184,8 @@ export function startReceiver(guildId: string): void {
     // Fetch fresh member data for display name
     let displayName = `User_${userId.slice(0, 8)}`;
     try {
-      const guild = state.connection.joinConfig.guildId ? 
-        (global as any).discordClient?.guilds?.cache?.get(guildId) : 
-        null;
-      
-      if (guild) {
-        const member = await guild.members.fetch(userId);
+      if (state.guild) {
+        const member = await state.guild.members.fetch(userId);
         displayName = member.displayName ?? member.user?.username ?? displayName;
       }
     } catch (err: any) {

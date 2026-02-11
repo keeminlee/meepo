@@ -1,4 +1,5 @@
 import { VoiceConnection } from "@discordjs/voice";
+import type { Guild } from "discord.js";
 
 /**
  * Voice state for a guild
@@ -7,6 +8,7 @@ import { VoiceConnection } from "@discordjs/voice";
 export type VoiceState = {
   channelId: string;
   connection: VoiceConnection;
+  guild: Guild;  // Discord guild reference for member lookups
   sttEnabled: boolean;
   connectedAt: number;
 };
