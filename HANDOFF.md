@@ -22,28 +22,34 @@ Discord bot for D&D sessions: in-world NPC (Meepo) that listens, remembers, and 
 
 ```
 src/
-├── bot.ts                    # Main Discord event loop
+├── bot.ts                    # Main Discord event loop (with GuildVoiceStates intent)
 ├── db.ts                     # SQLite singleton + migrations
 ├── commands/
-│   ├── meepo.ts             # /meepo wake|sleep|status|hush|transform
-│   ├── session.ts           # /session recap (DM-only)
+│   ├── meepo.ts             # /meepo wake|sleep|status|hush|transform|join|leave|stt
+│   ├── session.ts           # /session recap|transcript (DM-only)
 │   └── index.ts             # Command registry
 ├── meepo/
 │   ├── state.ts             # NPC instance CRUD (wake/sleep/transform)
-│   └── triggers.ts          # Address detection (prefix/mention)
+│   ├── triggers.ts          # Address detection (prefix/mention)
+│   └── nickname.ts          # Bot nickname management per persona
 ├── latch/
 │   └── latch.ts             # Conversation window state (90s default)
 ├── ledger/
-│   └── ledger.ts            # Append-only event log + queries
+│   ├── ledger.ts            # Append-only event log + queries
+│   └── system.ts            # System event logging helper
 ├── sessions/
 │   └── sessions.ts          # D&D session tracking (auto-start on wake)
 ├── llm/
 │   ├── client.ts            # OpenAI API wrapper with kill switch
 │   └── prompts.ts           # System prompt builder (persona-driven)
 ├── personas/
-    ├── meepo.ts             # Default form: baby celestial, ends with "meep"
-    ├── xoblob.ts            # Mimic form: riddles, Entity-13V flavor
-    └── index.ts             # Persona registry + StyleSpec system
+│   ├── meepo.ts             # Default form: baby celestial, ends with "meep"
+│   ├── xoblob.ts            # Mimic form: riddles, Entity-13V flavor
+│   └── index.ts             # Persona registry + StyleSpec system
+├── voice/
+    ├── state.ts             # In-memory voice state tracking
+    ├── connection.ts        # Voice connection lifecycle
+    └── receiver.ts          # Audio capture, PCM decode, anti-noise gating
 ```
 
 ---
@@ -520,43 +526,119 @@ npm run dev:deploy     # Re-register slash commands
 1. /meepo wake persona:grumpy scout
 2. Send "hi" (no prefix) → Meepo responds (auto-latch works)
 3. Natural conversation for 90s
-4. /Voice Integration Roadmap (Next Phase)
+4. /session transcript last_1h
+5. /session recap last_1h
+```
 
-**Phase 1: Voice Presence**
+### Voice Testing Flow (Phase 1-2 Complete)
+```
+1. /meepo wake
+2. Join a voice channel
+3. /meepo join → Bot joins voice
+4. /meepo stt status → Shows connected, STT disabled
+5. /meepo stt on → Enables audio capture
+   - Console: [Receiver] Starting receiver...
+6. Speak normally → Console: 🔇 Speaking ended: audioMs=..., activeMs=..., peak=...
+7. Keyboard click → Silently gated (or debug log if DEBUG_VOICE=true)
+8. /meepo stt off → Stops receiver
+9. /meepo leave → Disconnects from voice
+```
+
+---
+
+## Voice Integration Roadmap
+
+### ✅ Phase 1: Voice Presence (COMPLETE)
 - `/meepo join` / `/meepo leave` commands
 - Voice connection via `@discordjs/voice`
-- `/stt on|off|status` commands (toggle transcription)
+- `/meepo stt on|off|status` commands (toggle transcription)
+- GuildVoiceStates intent enabled
+- Receiver-ready setup (selfDeaf: false, selfMute: true)
+- Clean disconnect handling with state cleanup
 
-**Phase 2: STT → Ledger**
-- Per-user audio streams from Discord (speaker attribution built-in)
-- Chunking (silence detection preferred, fixed-window fallback)
+**Files:**
+- `src/voice/state.ts` - In-memory voice state tracking
+- `src/voice/connection.ts` - Voice connection lifecycle
+- `src/commands/meepo.ts` - Join/leave/stt commands
+
+### ✅ Phase 2: Audio Capture & Gating (COMPLETE - Tasks 1-2)
+- Per-user audio stream subscription with `EndBehaviorType.AfterSilence` (250ms)
+- Opus decode → PCM via prism-media
+- Conservative anti-noise gating:
+  - Minimum audio: 250ms of actual PCM content (not wall-clock time)
+  - Activity-based filtering: 20ms RMS frame analysis (MIN_ACTIVE_MS = 200ms)
+  - Per-user cooldown: 300ms (prevents rapid retriggers)
+  - Long audio (≥1.2s) bypasses activity gate and cooldown
+- Duplicate subscription prevention
+- Stream lifecycle finalization (not speaking state)
+- Clean log levels (operational always-on, debug-gated noise)
+
+**Files:**
+- `src/voice/receiver.ts` - Audio capture, PCM decode, frame-level gating
+
+**Dependencies:**
+- `@discordjs/voice` - Voice connection and receiver
+- `prism-media` (via @discordjs/voice) - Opus decoding
+
+**Current Logs:**
+- Always: `Starting receiver`, `Stopping receiver`, `Speaking ended: audioMs=..., activeMs=..., peak=...`
+- Debug only: `Speaking started`, `Gated: reason=...`, stream errors
+
+### 🚧 Phase 2: STT Provider Interface (NEXT - Task 3)
+- Create `src/voice/stt/provider.ts` with pluggable interface:
+  ```typescript
+  interface SttProvider {
+    transcribePcm(pcm: Buffer, sampleRate: number): Promise<string>;
+  }
+  ```
+- Noop provider for testing
+- Wire receiver to call provider on accepted utterances
+- Emit ledger events: `{event:"stt_transcript", userId, text, confidence:null}`
+- Cap buffer size to prevent runaway memory
+
+### ⏳ Phase 3: Real STT (Whisper)
 - OpenAI Whisper API integration (matches LLM pattern: kill switch, API key)
+- Environment variables:
+  ```
+  STT_PROVIDER=openai          # or 'local' for whisper.cpp
+  WHISPER_API_KEY=...
+  STT_LANGUAGE=en
+  STT_SAVE_AUDIO=false         # Debug mode only
+  ```
 - Append to ledger with `source='voice'`, `narrative_weight='primary'`
 - Stream → transcribe → discard (no audio storage by default)
 
-**Phase 3: Narrative-Aware Recaps**
-- `/session recap` defaults to primary narrative only
+### ⏳ Phase 4: Narrative-Aware Recaps
+- `/session recap` defaults to primary narrative only (voice-first)
 - Add `--full` flag for omniscient view (all sources)
 - DM recap includes diagnostics (coverage %, unknown speakers, low-confidence warnings)
 
-**Phase 4: Text Elevation**
+### ⏳ Phase 5: Text Elevation
 - `/mark-important <message_id>` (DM-only) → Sets `narrative_weight='elevated'`
 - Auto-elevate: commands, transforms, NPC state changes
 - Optional: Auto-elevate text addressed to Meepo when in voice
 
-**Phase 5: TTS Output**
+### ⏳ Phase 6: TTS Output
 - Meepo speaks responses in voice when joined
 - Persona-specific voices (OpenAI TTS or ElevenLabs)
-- FalVoice/Narrative Migration:** Old databases get voice/narrative fields added with safe defaults (`source='text'`, `narrative_weight='secondary'`)
 
-6. **Latch Scope:** Currently guild+channel key. Could be refactored to channel-only if multi-guild support needed.
+**Voice/Narrative Migration:** Old databases get voice/narrative fields added with safe defaults (`source='text'`, `narrative_weight='secondary'`)
 
-8. **Transform vs Persona Seed:**
-   - `form_id`: Which persona definition to use (meepo, xoblob)
-   - `persona_seed`: Optional custom traits from `/meepo wake [persona]`
-   - Both can coexist: transform changes base persona, seed adds flavor
+---
 
-9. **System Events:** Wake/sleep/transform now create ledger entries (visible in transcripts/recaps as session markers)
+## Gotchas & Important Notes
+
+1. **PID Lock:** Bot uses `./data/bot.pid` to prevent multiple instances. If you see "Bot already running" on startup, either kill the existing process or delete the stale lock file if the process crashed.
+
+2. **Message Content Intent:** Must be enabled in Discord Developer Portal or bot can't read messages
+
+3. **GuildVoiceStates Intent:** Required for voice channel detection. Must be enabled in code (`GatewayIntentBits.GuildVoiceStates`) - not a privileged intent.
+
+4. **View Channel Permission:** Bot must have "View Channel" permission to receive events
+
+5. **Unique Message ID:** Ledger deduplication handles this gracefully (silent ignore), but duplicates shouldn't happen
+
+6. **Form ID Migration:** Old databases get `form_id='meepo'` auto-added on startup
 
 ---
 
@@ -574,26 +656,47 @@ npm run dev:deploy     # Re-register slash commands
 
 ## Next Chat Starting Point
 
-**You are picking up a Discord bot project in working MVP state.**
+**You are picking up a Discord bot project with voice capture implemented.**
 
 **Current Status:** 
 - **Text-only MVP complete** with LLM-powered persona system and session recap
 - **Phase 0 (Narrative Authority) complete** - Schema extended for voice integration
-- **Ready for voice implementation** - Data model supports voice, just needs STT/TTS
+- **Phase 1 (Voice Presence) complete** - Bot can join/leave voice, toggle STT
+- **Phase 2 (Audio Capture) partially complete** - PCM capture working with anti-noise gating
+  - ✅ Tasks 1-2: Speaking detection, Opus decode, frame-level activity gating
+  - 🚧 Task 3: STT provider interface (next step)
 
 **Architecture Highlights:**
 - One omniscient ledger with narrative weight tiers (voice primary, text secondary)
 - System events logged (wake/sleep/transform appear in recaps)
+- Conservative anti-noise gating: PCM-based duration (not wall-clock), RMS frame analysis
 - No audio persistence by default (privacy-first)
 - Per-user voice attribution ready (schema supports Discord user IDs)
 
 **Next Steps - Choose Direction:**
-- **Voice Integration (Phase 1-6):** Implement STT pipeline, narrative-aware recaps, TTS output
+- **Phase 2 Task 3:** Implement STT provider interface (pluggable, noop for testing)
+- **Phase 3:** Real STT with OpenAI Whisper API integration
+- **Phase 4:** Narrative-aware recaps (voice-first, with --full flag)
+- **Phase 5:** Text elevation tools (`/mark-important` for DMs)
+- **Phase 6:** TTS output (Meepo speaks in voice)
 - **More Personas:** Add new character forms with unique speech patterns
 - **NPC Mind:** Locality-gated knowledge system (belief formation from perceived events)
-- **Party-facing Recap:** Variant that filters meta/secrets for players
-- **Text Elevation Tools:** `/mark-important` command for DMs
 - **Bug fixes or UX improvements**
+
+**Test Voice Capture:**
+```bash
+npm run dev:bot
+```
+
+In Discord:
+```
+/meepo wake
+Join voice channel
+/meepo join
+/meepo stt on
+<speak normally> → Console shows: 🔇 Speaking ended: audioMs=..., activeMs=...
+<keyboard click> → Silently gated (too short)
+```
 
 ## Gotchas & Important Notes
 
@@ -622,51 +725,55 @@ npm run dev:deploy     # Re-register slash commands
 **Migrations:** `src/db.ts` (inline)  
 **Main Loop:** `src/bot.ts` messageCreate handler  
 **Personas:** `src/personas/*.ts`  
+**Voice:** `src/voice/*.ts` (state, connection, receiver)  
 **Commands:** `src/commands/*.ts`  
+**Ledger:** `src/ledger/ledger.ts` (core), `src/ledger/system.ts` (system events)  
 **Docs:** `README.md`, `.env.example`
 
 ---
 
-## Next Chat Starting Point
+## Key Commands to Know
 
-**You are picking up a Discord bot project in working MVP state.**
-
-**Current Status:** Text-only baseline complete with LLM-powered persona system and session recap. Clean MVP ready for voice integration or feature expansion.
-
-**Ask the user:**
-- Continue with voice integration (STT/TTS)?
-- Add more personas/forms?
-- Implement NPC Mind (locality-gated knowledge)?
-- Party-facing recap variant?
-- Bug fixes or UX improvements?
-
-**Key Commands to Know:**
 ```bash
 npm run dev:bot        # Start bot
-npm run dev:deploy     # Register commands
+npm run dev:deploy     # Register commands (if commands changed)
+npx tsc --noEmit      # Type check without building
 ```
 
 **Test in Discord:**
 ```
+# Text-only testing
 /meepo wake
 hi                     # Auto-latch works, Meepo responds
 /meepo transform xoblob
 what do you know?      # Xoblob riddles
 /session transcript last_5h
 /session recap last_5h # LLM summary (may be file attachment)
+
+# Voice testing
+/meepo wake
+<join voice channel>
+/meepo join
+/meepo stt on         # Console: [Receiver] Starting receiver...
+<speak normally>      # Console: 🔇 Speaking ended: audioMs=..., activeMs=..., peak=...
+/meepo stt off
+/meepo leave
 ```
 
-**Recent Major Changes:**
-- Style bleed feature removed (clean MVP)
-- Session recap now LLM-powered with structured output
-- Session transcript shows raw ledger
-- StyleSpec system for maintainable personas
-- File attachment support for long summaries
+**Recent Major Changes (Day 8-10):**
+- Phase 1 voice integration complete (join/leave, STT toggle)
+- Phase 2 audio capture complete (PCM decode, anti-noise gating)
+- Conservative gating: PCM-based duration + RMS frame activity analysis
+- GuildVoiceStates intent added to bot.ts
+- Reflavored voice messages to be more Meepo-like ("Meep!")
+- Clean log levels (operational vs debug)
 
 **Read This First:**
 - README.md (user-facing docs)
 - This file (developer handoff)
 - src/personas/*.ts (to understand identity system)
-- src/commands/session.ts (recap implementation)
+- src/voice/receiver.ts (audio capture pipeline)
+- src/commands/meepo.ts (voice commands)
 
 Good luck! 🎲
+

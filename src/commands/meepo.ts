@@ -5,6 +5,9 @@ import { getAvailableForms, getPersona } from "../personas/index.js";
 import { setBotNicknameForPersona } from "../meepo/nickname.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
 import { logSystemEvent } from "../ledger/system.js";
+import { joinVoice, leaveVoice } from "../voice/connection.js";
+import { getVoiceState, setVoiceState, clearVoiceState } from "../voice/state.js";
+import { startReceiver, stopReceiver } from "../voice/receiver.js";
 
 export const meepo = {
   data: new SlashCommandBuilder()
@@ -48,6 +51,32 @@ export const meepo = {
             .addChoices(
               { name: "Meepo (default)", value: "meepo" },
               { name: "Old Xoblob", value: "xoblob" }
+            )
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("join")
+        .setDescription("Join your voice channel (requires /meepo wake first).")
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("leave")
+        .setDescription("Leave voice channel.")
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("stt")
+        .setDescription("Manage speech-to-text (STT) transcription.")
+        .addStringOption((opt) =>
+          opt
+            .setName("action")
+            .setDescription("Enable, disable, or check STT status")
+            .setRequired(true)
+            .addChoices(
+              { name: "on", value: "on" },
+              { name: "off", value: "off" },
+              { name: "status", value: "status" }
             )
         )
     ),
@@ -221,6 +250,239 @@ export const meepo = {
       } catch (err: any) {
         await interaction.reply({ content: "Unknown character form: " + character, ephemeral: true });
       }
+      return;
+    }
+
+    if (sub === "join") {
+      // Require Meepo to be awake before joining voice
+      const active = getActiveMeepo(guildId);
+      if (!active) {
+        await interaction.reply({
+          content: "Meepo is asleep. Use /meepo wake first.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Check if user is in a voice channel
+      // Fetch fresh member data to avoid cache issues
+      const guild = interaction.guild;
+      if (!guild) {
+        await interaction.reply({
+          content: "This command only works in a server.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const member = await guild.members.fetch(interaction.user.id);
+      const userVoiceChannel = member.voice.channel;
+
+      if (!userVoiceChannel) {
+        await interaction.reply({
+          content: "Meep? Meepo can't find you! Join a voice channel first, friend!",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Check if already connected
+      const currentState = getVoiceState(guildId);
+      if (currentState) {
+        if (currentState.channelId === userVoiceChannel.id) {
+          await interaction.reply({
+            content: "Meep! Meepo is already here with you!",
+            ephemeral: true,
+          });
+          return;
+        } else {
+          await interaction.reply({
+            content: `Meepo is already listening in <#${currentState.channelId}>! Ask Meepo to leave first, meep?`,
+            ephemeral: true,
+          });
+          return;
+        }
+      }
+
+      // Join voice channel
+      // Defer reply immediately to prevent timeout
+      await interaction.deferReply({ ephemeral: true });
+
+      try {
+        const connection = await joinVoice({
+          guildId,
+          channelId: userVoiceChannel.id,
+          adapterCreator: guild.voiceAdapterCreator,
+        });
+
+        // Store state
+        setVoiceState(guildId, {
+          channelId: userVoiceChannel.id,
+          connection,
+          sttEnabled: false, // Default to disabled
+          connectedAt: Date.now(),
+        });
+
+        // Log system event (narrative primary)
+        logSystemEvent({
+          guildId,
+          channelId: active.channel_id,
+          eventType: "voice_join",
+          content: `Meepo joins voice channel: ${userVoiceChannel.name}`,
+          authorId: interaction.user.id,
+          authorName: interaction.user.username,
+        });
+
+        // Resolve deferred interaction with success message
+        await interaction.editReply({
+          content: `*poof!* Meepo is here! Listening in <#${userVoiceChannel.id}>! Meep meep! 🎧`,
+        }).catch((editErr: any) => {
+          console.error("[Voice] Failed to edit reply after join:", editErr);
+        });
+      } catch (err: any) {
+        console.error("[Voice] Failed to join:", err);
+        
+        // Ensure interaction is resolved even if join failed
+        await interaction.editReply({
+          content: `Meep meep... Meepo couldn't get there! (${err.message})`,
+        }).catch((editErr: any) => {
+          console.error("[Voice] Failed to edit reply after error:", editErr);
+        });
+      }
+      return;
+    }
+
+    if (sub === "leave") {
+      const currentState = getVoiceState(guildId);
+      if (!currentState) {
+        await interaction.reply({
+          content: "Meep? Meepo isn't in voice right now!",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const channelId = currentState.channelId;
+      
+      // Stop receiver if active
+      stopReceiver(guildId);
+      
+      leaveVoice(guildId);
+
+      // Log system event (narrative primary)
+      const active = getActiveMeepo(guildId);
+      if (active) {
+        logSystemEvent({
+          guildId,
+          channelId: active.channel_id,
+          eventType: "voice_leave",
+          content: "Meepo leaves voice channel.",
+          authorId: interaction.user.id,
+          authorName: interaction.user.username,
+        });
+      }
+
+      await interaction.reply({
+        content: `*poof!* Meepo leaves <#${channelId}>. Bye bye! Meep!`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (sub === "stt") {
+      const action = interaction.options.getString("action", true);
+      const currentState = getVoiceState(guildId);
+
+      if (!currentState) {
+        await interaction.reply({
+          content: "Meep? Meepo needs to join voice first!",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (action === "status") {
+        const active = getActiveMeepo(guildId);
+        await interaction.reply({
+          content:
+            "**Meepo's Voice Status** 🎧\n" +
+            `- Listening in: <#${currentState.channelId}>\n` +
+            `- Understanding words: ${currentState.sttEnabled ? "yes! ✨" : "not yet"}\n` +
+            `- Since: ${new Date(currentState.connectedAt).toLocaleString()}\n` +
+            `\n_Meep! (Meepo forgets this if bot restarts)_`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (action === "on") {
+        if (currentState.sttEnabled) {
+          await interaction.reply({
+            content: "Meep! Meepo is already trying to understand words!",
+            ephemeral: true,
+          });
+          return;
+        }
+
+        currentState.sttEnabled = true;
+
+        // Start audio receiver
+        startReceiver(guildId);
+
+        // Log system event (narrative primary)
+        const active = getActiveMeepo(guildId);
+        if (active) {
+          logSystemEvent({
+            guildId,
+            channelId: active.channel_id,
+            eventType: "stt_toggle",
+            content: "STT enabled (Phase 2 feature - no transcription yet).",
+            authorId: interaction.user.id,
+            authorName: interaction.user.username,
+          });
+        }
+
+        await interaction.reply({
+          content: "Meepo will try to understand words now! ✨\n_Meep meep... (Meepo is still learning this part!)_",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (action === "off") {
+        if (!currentState.sttEnabled) {
+          await interaction.reply({
+            content: "Meep! Meepo wasn't trying to understand words anyway!",
+            ephemeral: true,
+          });
+          return;
+        }
+
+        currentState.sttEnabled = false;
+
+        // Stop audio receiver
+        stopReceiver(guildId);
+
+        // Log system event (narrative primary)
+        const active = getActiveMeepo(guildId);
+        if (active) {
+          logSystemEvent({
+            guildId,
+            channelId: active.channel_id,
+            eventType: "stt_toggle",
+            content: "STT disabled.",
+            authorId: interaction.user.id,
+            authorName: interaction.user.username,
+          });
+        }
+
+        await interaction.reply({
+          content: "Okay! Meepo will just listen quietly now. Meep!",
+          ephemeral: true,
+        });
+        return;
+      }
+
       return;
     }
 
