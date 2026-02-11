@@ -685,11 +685,49 @@ OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
 - **Task 3.6** — Optional Audio Persistence (debug-only WAV saving to `./data/audio/<guild>/<session>/<timestamp>_<user>.wav`)
 - **Task 3.7** — STT Smoke-Test Command (synthetic PCM verification)
 
-### ⏳ Phase 4: Voice-Aware LLM Integration & Narrative Recaps
-- LLM sees voice context: speaker name, confidence, utterance boundaries
-- Persona understanding of voice (e.g., Xoblob reacts to hearing Meepo's name)
-- `/session recap` integrates voice-first narrative (voice='primary' by default)
-- `/meepo stt` command enhancements: status, toggle, provider info display
+### ⏳ Phase 4: Voice-Aware LLM Integration & TTS Output
+
+**Completed Tasks:**
+
+- ✅ **Task 4.1** — TTS Provider Interface (`src/voice/tts/provider.ts`)
+  - Async factory pattern matching STT provider design
+  - Supports: noop (disabled), openai (production)
+  - `getTtsProvider()` lazy-loads and caches singleton
+
+- ✅ **Task 4.2** — OpenAI TTS Implementation (`src/voice/tts/openai.ts`)
+  - Text → MP3 audio via OpenAI `gpt-4o-mini-tts` model  
+  - Sentence-boundary chunking (splits on `.!?` to preserve context)
+  - Max `TTS_MAX_CHARS_PER_CHUNK=350` (default, configurable)
+  - MP3 buffer concatenation (monitoring for potential glitches; fallback ready in 4.3)
+  - Configurable voice: `TTS_VOICE=alloy` (default)
+
+- ✅ **Task 4.3** — Voice Speaker Pipeline (`src/voice/speaker.ts`)
+  - AudioPlayer-based playback into VoiceConnection
+  - Per-guild playback queue using promise chaining (FIFO, no overlap)
+  - MP3 buffer → AudioResource with prism-media MP3→Opus transcoding
+  - Meepo-speaking tracking for feedback loop protection
+  - `speakInGuild(guildId, mp3Buffer)` queues playback sequentially
+  - Playback waits for idle state before resolving (prevents overlap)
+  - Integrated speaker lifecycle: cleanup on disconnect via `cleanupSpeaker()`
+  - Task 4.5 prep: `isMeepoSpeaking()` gate in receiver to prevent STT self-echo
+
+**Environment Variables (Phase 4):**
+```
+TTS_ENABLED=true                       # Master toggle
+TTS_PROVIDER=openai                    # Provider selection
+TTS_OPENAI_MODEL=gpt-4o-mini-tts       # Model choice
+TTS_VOICE=alloy                        # Voice variant
+TTS_MAX_CHARS_PER_CHUNK=350            # Sentence-split max length
+LLM_VOICE_CONTEXT_MS=120000            # Voice context window (120s)
+VOICE_REPLY_COOLDOWN_MS=5000           # Cooldown between voice replies
+```
+
+**Backlog (Not Started):**
+- **Task 4.4** — `/meepo say` Command (DM-only TTS + playback test)
+- **Task 4.5** — Feedback Loop Protection (STT pause while Meepo speaks)
+- **Task 4.6** — Wake-Word Voice Reply (close the loop on voice input→output)
+- **Task 4.7** — LLM Voice Context (personas see recent voice utterances)
+- **Task 4.8** — Voice-First Recap Polish (narrative filtering)
 
 ### ⏳ Phase 5: Text Elevation
 - `/mark-important <message_id>` (DM-only) → Sets `narrative_weight='elevated'`
@@ -731,11 +769,14 @@ OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
 **Commands:** `src/commands/*.ts`  
 **Ledger:** `src/ledger/ledger.ts` (core), `src/ledger/system.ts` (system events)  
 **Voice/STT:**
-  - `src/voice/receiver.ts` — PCM capture, gating, STT invocation
-  - `src/voice/stt/provider.ts` — Provider factory (noop, debug, openai)
+  - `src/voice/receiver.ts` — PCM capture, gating, STT invocation + feedback loop protection
+  - `src/voice/speaker.ts` — TTS playback queue, AudioPlayer integration, meepo-speaking tracking
+  - `src/voice/stt/provider.ts` — STT provider factory (noop, debug, openai)
   - `src/voice/stt/openai.ts` — OpenAI Whisper integration
   - `src/voice/stt/wav.ts` — WAV encoder utility
   - `src/voice/stt/normalize.ts` — Domain name normalization
+  - `src/voice/tts/provider.ts` — TTS provider factory (noop, openai)
+  - `src/voice/tts/openai.ts` — OpenAI TTS provider (sentence-boundary chunking)
 **Docs:** `README.md`, `.env.example`
 
 ---
@@ -765,25 +806,30 @@ OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
 - System events logged separately
 - Conservative anti-noise gating + 700ms silence duration for natural speech
 - Per-guild promise-chained STT queue (FIFO, no loss)
+- Per-guild promise-chained TTS queue (FIFO, no playback overlap)
 - Domain name canonicalization layer (regex-based, toggle: `STT_NORMALIZE_NAMES`)
+- AudioPlayer-based voice synthesis with Opus transcoding
+- Meepo-speaking tracking for feedback loop protection (isMeepoSpeaking gate)
 - No audio persistence by default (privacy-first)
 
-**What's Left (Phase 4+):**
-- LLM integration with voice context (persona sees utterance, speaker name, confidence)
-- Enhanced recaps pulling voice-first narrative 
-- TTS for voice output
-- Text elevation marks (manual/automatic)
+**What's Complete (Phase 3-4 Tasks 1-10):**
+- ✅ Phase 3: OpenAI Whisper STT with domain normalization
+- ✅ Phase 4.1-4.3: OpenAI TTS provider + speaker pipeline + feedback loop protection
+
+**What's Left (Phase 4 Tasks 4-8):**
+- Task 4.4: `/meepo say` command (DM-only TTS + playback test)
+- Task 4.5: Feedback loop protection (already gate implemented, needs testing)
+- Task 4.6: Wake-word voice reply (close loop on voice input→output)
+- Task 4.7: LLM voice context (personas see recent voice utterances)
+- Task 4.8: Voice-first recap polish (narrative filtering)
+- (Phase 5+) Text elevation tools, NPC mind, more personas, audio persistence option
 
 
-**Next Steps - Choose Direction:**
-- **Phase 3:** Real STT with OpenAI Whisper API integration (next logical step)
-- **Phase 4:** Narrative-aware recaps (voice-first by default, already partially done)
-- **Phase 5:** Text elevation tools (`/mark-important` for DMs)
-- **Phase 6:** TTS output (Meepo speaks in voice)
-- **More Personas:** Add new character forms with unique speech patterns
-- **NPC Mind:** Locality-gated knowledge system (belief formation from perceived events)
-- **Audio saving option:** `STT_SAVE_AUDIO=true` for debugging transcription quality
-- **Bug fixes or UX improvements**
+**Next Steps - Immediate Priorities:**
+- **Task 4.4:** Implement `/meepo say` command for manual TTS testing
+- **Task 4.5-4.6:** Complete wake-word voice reply loop (connects STT→LLM→TTS)
+- **Task 4.7:** Voice context in LLM prompts (personas respond to what they hear)
+- **Task 4.8:** Recap filtering (voice-primary narrative by default)
 
 **Test Voice Capture:**
 ```bash
