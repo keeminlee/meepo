@@ -6,6 +6,7 @@ import {
 } from "@discordjs/voice";
 import { getVoiceState, setVoiceState, clearVoiceState } from "./state.js";
 import { stopReceiver } from "./receiver.js";
+import { cleanupSpeaker } from "./speaker.js";
 
 /**
  * Join a voice channel
@@ -53,6 +54,8 @@ export function leaveVoice(guildId: string): void {
     return; // Already disconnected
   }
 
+  stopReceiver(guildId);
+  cleanupSpeaker(guildId);
   state.connection.destroy();
   clearVoiceState(guildId);
 }
@@ -72,6 +75,7 @@ function setupDisconnectHandlers(connection: VoiceConnection, guildId: string): 
     // Clean up state when connection is destroyed
     if (newState.status === VoiceConnectionStatus.Destroyed) {
       stopReceiver(guildId);
+      cleanupSpeaker(guildId);
       clearVoiceState(guildId);
       console.log(`[Voice] Guild ${guildId}: State cleared (destroyed)`);
     }

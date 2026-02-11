@@ -5,6 +5,7 @@ import prism from "prism-media";
 import { getSttProvider } from "./stt/provider.js";
 import { normalizeTranscript } from "./stt/normalize.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
+import { isMeepoSpeaking } from "./speaker.js";
 import { randomBytes } from "node:crypto";
 
 /**
@@ -330,6 +331,16 @@ export function startReceiver(guildId: string): void {
 
       try {
         if (shouldAccept) {
+          // Task 4.5: Feedback loop protection - skip STT if Meepo is currently speaking
+          if (isMeepoSpeaking(guildId)) {
+            if (DEBUG_VOICE) {
+              console.log(
+                `[Receiver] 🔕 Skipped STT: ${cap.displayName} spoke while Meepo was speaking (feedback loop protection)`
+              );
+            }
+            return;
+          }
+
           userCooldowns.get(guildId)?.set(userId, now);
           console.log(
             `[Receiver] 🔇 Speaking ended: ${cap.displayName} (${userId}), wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
