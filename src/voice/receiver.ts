@@ -3,6 +3,7 @@ import { getVoiceState } from "./state.js";
 import { pipeline } from "node:stream";
 import prism from "prism-media";
 import { getSttProvider } from "./stt/provider.js";
+import { normalizeTranscript } from "./stt/normalize.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
 import { randomBytes } from "node:crypto";
 
@@ -24,7 +25,7 @@ const BYTES_PER_SAMPLE = 2;
 const BYTES_PER_SEC = RATE * CHANNELS * BYTES_PER_SAMPLE; // 192000
 
 // Stream end behavior
-const END_SILENCE_MS = 250;
+const END_SILENCE_MS = 700;
 
 // Conservative gating (err on allowing speech through)
 const MIN_AUDIO_MS = 250;        // require at least 250ms worth of PCM bytes
@@ -40,8 +41,13 @@ const MIN_ACTIVE_MS = 200;       // require ~200ms of active audio (10 frames)
 // Memory safety: max PCM buffer size (10 seconds @ 48kHz stereo 16-bit = ~2MB)
 const MAX_PCM_BYTES = 10 * BYTES_PER_SEC; // 1,920,000 bytes
 
-// Singleton STT provider
-const sttProvider = getSttProvider();
+// Singleton STT provider (lazy-initialized)
+let sttProvider: Awaited<ReturnType<typeof getSttProvider>> | null = null;
+
+// Per-guild STT queue using promise chaining (Task 3.4)
+// Maintains Promise<void> chain per guild to serialize transcriptions
+// Guarantees: no overlapping STT calls, FIFO order, no skipped utterances
+const guildSttChain = new Map<string, Promise<void>>();
 
 // Track per guild listener so stopReceiver can detach cleanly
 type ReceiverHandlers = {
@@ -82,7 +88,7 @@ const userCooldowns = new Map<string, Map<string, number>>();
 
 /**
  * Handle transcription and ledger emission for accepted audio.
- * Runs async, doesn't block cleanup.
+ * Called serially per guild via promise chaining (see call site).
  */
 async function handleTranscription(
   guildId: string,
@@ -92,6 +98,11 @@ async function handleTranscription(
   cap: PcmCapture
 ): Promise<void> {
   try {
+    // Lazy-initialize STT provider on first use
+    if (!sttProvider) {
+      sttProvider = await getSttProvider();
+    }
+
     // Merge PCM chunks
     const pcmBuffer = Buffer.concat(cap.pcmChunks);
     
@@ -109,8 +120,24 @@ async function handleTranscription(
       RATE
     );
 
+    // Task 3.8: Post-STT domain normalization (canonicalize entity names)
+    const shouldNormalize = (process.env.STT_NORMALIZE_NAMES ?? "true").toLowerCase() !== "false";
+    let normalizedText = result.text;
+
+    if (shouldNormalize) {
+      normalizedText = normalizeTranscript(result.text);
+
+      if (DEBUG_VOICE && normalizedText !== result.text) {
+        const rawPreview = result.text.substring(0, 120);
+        const normPreview = normalizedText.substring(0, 120);
+        console.log(
+          `[STT] Normalized: "${rawPreview}${result.text.length > 120 ? "..." : ""}" → "${normPreview}${normalizedText.length > 120 ? "..." : ""}"`
+        );
+      }
+    }
+
     // Discard empty transcriptions silently
-    if (!result.text || result.text.trim() === "") {
+    if (!normalizedText || normalizedText.trim() === "") {
       return;
     }
 
@@ -126,7 +153,7 @@ async function handleTranscription(
       author_id: userId,
       author_name: displayName, // Use member.displayName instead of fallback
       timestamp_ms: Date.now(),
-      content: result.text,
+      content: normalizedText,
       tags: "human",
       source: "voice",
       narrative_weight: "primary",
@@ -137,7 +164,7 @@ async function handleTranscription(
     });
 
     console.log(
-      `[STT] 📝 Ledger: ${displayName} (${userId}), text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
+      `[STT] 📝 Ledger: ${displayName} (${userId}), text="${normalizedText}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
     );
   } catch (err) {
     console.error(`[STT] Transcription failed for userId=${userId}:`, err);
@@ -308,10 +335,14 @@ export function startReceiver(guildId: string): void {
             `[Receiver] 🔇 Speaking ended: ${cap.displayName} (${userId}), wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
           );
 
-          // Transcribe and emit to ledger (async, don't block cleanup)
-          handleTranscription(guildId, channelId, userId, cap.displayName, cap).catch((err) => {
-            console.error(`[Receiver] handleTranscription error for userId=${userId}:`, err);
-          });
+          // Queue transcription via promise chain (ensures serial, FIFO execution per guild)
+          const currentChain = guildSttChain.get(guildId) ?? Promise.resolve();
+          const newChain = currentChain
+            .then(() => handleTranscription(guildId, channelId, userId, cap.displayName, cap))
+            .catch((err) => {
+              console.error(`[Receiver] handleTranscription error for userId=${userId}:`, err);
+            });
+          guildSttChain.set(guildId, newChain);
         } else if (DEBUG_VOICE) {
           console.log(
             `[Receiver] 🚫 Gated: userId=${userId}, reason=${gateReason}, wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`

@@ -35,8 +35,13 @@ export function getSttProviderInfo(): { name: string; description: string } {
       return { name: "noop", description: "discards transcripts (silent mode)" };
     case "debug":
       return { name: "debug", description: "emits test transcripts for development" };
-    case "openai":
-      return { name: "openai", description: "emits real transcripts via Whisper API" };
+    case "openai": {
+      const model = process.env.STT_OPENAI_MODEL ?? "gpt-4o-mini-transcribe";
+      return {
+        name: "openai",
+        description: `real transcripts via OpenAI Audio API (${model})`,
+      };
+    }
     default:
       return { name: provider, description: "unknown provider (using noop)" };
   }
@@ -44,24 +49,41 @@ export function getSttProviderInfo(): { name: string; description: string } {
 
 /**
  * Get the configured STT provider based on environment.
- * STT_PROVIDER env var: "noop" | "debug" | "openai" | "local"
+ * STT_PROVIDER env var: "noop" | "debug" | "openai"
+ *
+ * Providers are lazy-loaded and cached (single instance per bot lifetime).
  */
-export function getSttProvider(): SttProvider {
+
+let providerPromise: Promise<SttProvider> | null = null;
+
+export async function getSttProvider(): Promise<SttProvider> {
+  // Return cached promise if already initialized
+  if (providerPromise) return providerPromise;
+
   const provider = process.env.STT_PROVIDER ?? "noop";
-  
-  switch (provider) {
-    case "noop":
-      return new NoopSttProvider();
-    
-    case "debug":
-      return new DebugSttProvider();
-    
-    // TODO Phase 3: Add OpenAI Whisper provider
-    // case "openai":
-    //   return new OpenAiSttProvider();
-    
-    default:
-      console.warn(`[STT] Unknown provider "${provider}", falling back to noop`);
-      return new NoopSttProvider();
-  }
+
+  // Create the promise and cache it
+  providerPromise = (async () => {
+    switch (provider) {
+      case "noop":
+        return new NoopSttProvider();
+
+      case "debug":
+        return new DebugSttProvider();
+
+      case "openai": {
+        // Lazy-load OpenAI provider to avoid importing SDK if not used
+        const { OpenAiSttProvider } = await import("./openai.js");
+        return new OpenAiSttProvider();
+      }
+
+      default:
+        console.warn(
+          `[STT] Unknown provider "${provider}", falling back to noop`
+        );
+        return new NoopSttProvider();
+    }
+  })();
+
+  return providerPromise;
 }

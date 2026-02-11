@@ -47,9 +47,13 @@ src/
 │   ├── xoblob.ts            # Mimic form: riddles, Entity-13V flavor
 │   └── index.ts             # Persona registry + StyleSpec system
 ├── voice/
-    ├── state.ts             # In-memory voice state tracking
-    ├── connection.ts        # Voice connection lifecycle
-    └── receiver.ts          # Audio capture, PCM decode, anti-noise gating
+│   ├── state.ts             # In-memory voice state tracking (includes guild reference)
+│   ├── connection.ts        # Voice connection lifecycle
+│   ├── receiver.ts          # Audio capture, PCM decode, anti-noise gating, STT integration
+│   └── stt/
+│       ├── provider.ts      # STT interface + factory
+│       ├── noop.ts          # Silent provider (tests pipeline)
+│       └── debug.ts         # Test provider (emits "voice heard" transcripts)
 ```
 
 ---
@@ -335,6 +339,12 @@ LLM_ENABLED=true
 LLM_MODEL=gpt-4o-mini
 LLM_TEMPERATURE=0.3
 LLM_MAX_TOKENS=200
+
+# Voice & STT
+STT_PROVIDER=noop                 # noop | debug | openai
+DEBUG_VOICE=false                 # Verbose voice logging
+STT_LANGUAGE=en                   # (Future: for Whisper)
+STT_SAVE_AUDIO=false              # (Future: save audio chunks to data/audio/)
 ```
 
 ---
@@ -561,7 +571,9 @@ npm run dev:deploy     # Re-register slash commands
 - `src/voice/connection.ts` - Voice connection lifecycle
 - `src/commands/meepo.ts` - Join/leave/stt commands
 
-### ✅ Phase 2: Audio Capture & Gating (COMPLETE - Tasks 1-2)
+### ✅ Phase 2: Audio Capture & Gating (COMPLETE - Tasks 1-3)
+
+#### Tasks 1-2: Audio Capture & Gating (COMPLETE)
 - Per-user audio stream subscription with `EndBehaviorType.AfterSilence` (250ms)
 - Opus decode → PCM via prism-media
 - Conservative anti-noise gating:
@@ -574,44 +586,110 @@ npm run dev:deploy     # Re-register slash commands
 - Clean log levels (operational always-on, debug-gated noise)
 
 **Files:**
-- `src/voice/receiver.ts` - Audio capture, PCM decode, frame-level gating
+- `src/voice/receiver.ts` - Audio capture, PCM decode, frame-level gating + STT integration
 
 **Dependencies:**
 - `@discordjs/voice` - Voice connection and receiver
 - `prism-media` (via @discordjs/voice) - Opus decoding
 
 **Current Logs:**
-- Always: `Starting receiver`, `Stopping receiver`, `Speaking ended: audioMs=..., activeMs=..., peak=...`
+- Always: `Starting receiver`, `Stopping receiver`, `Speaking ended: displayName, audioMs=..., activeMs=..., peak=...`
 - Debug only: `Speaking started`, `Gated: reason=...`, stream errors
 
-### 🚧 Phase 2: STT Provider Interface (NEXT - Task 3)
-- Create `src/voice/stt/provider.ts` with pluggable interface:
-  ```typescript
-  interface SttProvider {
-    transcribePcm(pcm: Buffer, sampleRate: number): Promise<string>;
-  }
-  ```
-- Noop provider for testing
-- Wire receiver to call provider on accepted utterances
-- Emit ledger events: `{event:"stt_transcript", userId, text, confidence:null}`
-- Cap buffer size to prevent runaway memory
+#### Task 3: STT Provider Interface (COMPLETE)
+- Pluggable STT provider interface in `src/voice/stt/provider.ts`:
+  - `transcribePcm(pcm, sampleRate)` returns `{ text: string; confidence?: number }`
+  - `getSttProvider()` factory reads `STT_PROVIDER` env var (defaults to noop)
+  - `getSttProviderInfo()` returns provider name + description for UI
+- **NoopSttProvider** (`src/voice/stt/noop.ts`): Returns empty text (silent, tests pipeline)
+- **DebugSttProvider** (`src/voice/stt/debug.ts`): Returns test transcripts like `"(voice heard N, X.Xs)"` (99% confidence)
+- Receiver calls STT on accepted utterances (after gating passes, async non-blocking)
+- Ledger emission with full voice attribution:
+  - `source='voice'`, `narrative_weight='primary'`
+  - `speaker_id=userId`, `author_name=member.displayName` (cached at capture start)
+  - `t_start_ms`, `t_end_ms`, `confidence`
+  - Synthetic `message_id=voice_{userId}_{timestamp}_{randomSuffix}` (collision-safe)
+- Memory safety: `MAX_PCM_BYTES=10*BYTES_PER_SEC` (truncate + log on overflow)
+- `/meepo stt on` displays active provider + behavior in reply
 
-### ⏳ Phase 3: Real STT (Whisper)
-- OpenAI Whisper API integration (matches LLM pattern: kill switch, API key)
-- Environment variables:
-  ```
-  STT_PROVIDER=openai          # or 'local' for whisper.cpp
-  WHISPER_API_KEY=...
-  STT_LANGUAGE=en
-  STT_SAVE_AUDIO=false         # Debug mode only
-  ```
-- Append to ledger with `source='voice'`, `narrative_weight='primary'`
-- Stream → transcribe → discard (no audio storage by default)
+#### Session Command Improvements
+- `/session transcript` shows `(source/narrative_weight)` inline for each entry
+- `/session transcript --primary` filters to primary/elevated narrative only (default: show all)
+- `/session recap` defaults to primary-only (voice + elevated text, voice-first narrative)
+- `/session recap --full` includes secondary narrative (text chat)
+- Mode headers: "mode: primary" or "mode: full"
+- `getLedgerInRange()` supports `primaryOnly?: boolean` parameter
 
-### ⏳ Phase 4: Narrative-Aware Recaps
-- `/session recap` defaults to primary narrative only (voice-first)
-- Add `--full` flag for omniscient view (all sources)
-- DM recap includes diagnostics (coverage %, unknown speakers, low-confidence warnings)
+**Files:**
+- `src/voice/stt/provider.ts` - Interface + factory
+- `src/voice/stt/noop.ts` - Silent provider
+- `src/voice/stt/debug.ts` - Test provider
+- `src/voice/receiver.ts` - STT integration + member name caching
+- `src/voice/state.ts` - Added guild reference for member lookup
+- `src/commands/meepo.ts` - STT mode line on stt on
+- `src/commands/session.ts` - Added --primary and --full flags
+- `src/ledger/ledger.ts` - Added primaryOnly filter support
+
+### ✅ Phase 3: Real STT (OpenAI Whisper Audio API)
+
+**Completed Tasks:**
+
+- ✅ **Task 3.1** — OpenAI STT Provider (`src/voice/stt/openai.ts`)
+  - Converts PCM (16-bit LE, 48kHz mono) → WAV in-memory
+  - Calls OpenAI Audio API with configurable model (default: `gpt-4o-mini-transcribe`)
+  - Retry logic: max 1 retry on 429/5xx/network errors (250-500ms jitter backoff)
+  - No confidence score (OpenAI doesn't provide for transcriptions)
+
+- ✅ **Task 3.2** — Provider Factory Wiring
+  - Lazy-loaded, cached singleton per bot lifetime
+  - `getSttProviderInfo()` displays model name in user messages
+  - `/meepo stt on` shows: "openai (real transcripts via OpenAI Audio API (gpt-4o-mini-transcribe))"
+
+- ✅ **Task 3.3** — WAV Encoder (`src/voice/stt/wav.ts`)
+  - `pcmToWav(pcm, sampleRate, channels=1): Buffer`
+  - Correct RIFF/WAVE header (16-bit PCM little-endian)
+  - Verified OpenAI Audio API accepts output
+
+- ✅ **Task 3.4** — Per-Guild Concurrency & Queuing
+  - Replaced busy flag with promise-chaining queue
+  - `Map<guildId, Promise<void>>` ensures serial FIFO execution
+  - No utterance loss if speakers overlap
+  - Memory-bounded (only stores Promise reference, not buffers)
+
+- ✅ **Task 3.5** — Minimal Retry Logic
+  - Transient error handling: 429 (rate limit), 5xx, network reset/timeout
+  - Exponential backoff with jitter (250-500ms)
+  - Max 1 retry per utterance, then fail with logged error
+
+- ✅ **Task 3.8** — Post-STT Domain Normalization (`src/voice/stt/normalize.ts`)
+  - Pure regex-based canonicalization (no LLM, no prompt)
+  - Entities: Meepo, Xoblob, Corah Malora, Henroc, Kayn
+  - Case-insensitive, word-boundary aware, multi-word support
+  - Togglable: `STT_NORMALIZE_NAMES=true` (default: enabled)
+  - Applied before ledger append; debug logging shows raw→normalized diff
+
+**Environment Variables (Phase 3):**
+```
+STT_PROVIDER=openai                    # Provider selection
+STT_OPENAI_MODEL=gpt-4o-mini-transcribe # Model choice
+STT_LANGUAGE=en                        # Audio language (optional)
+STT_NORMALIZE_NAMES=true               # Enable domain name normalization
+OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
+```
+
+**Key Fixes:**
+- Fixed prompt echo bug: Removed `STT_PROMPT` from transcriptions API (Whisper treats prompt as preceding text, not vocabulary hints)
+- Updated `END_SILENCE_MS` from 250ms → 700ms to support natural speech pauses
+
+**Backlog (Low Priority):**
+- **Task 3.6** — Optional Audio Persistence (debug-only WAV saving to `./data/audio/<guild>/<session>/<timestamp>_<user>.wav`)
+- **Task 3.7** — STT Smoke-Test Command (synthetic PCM verification)
+
+### ⏳ Phase 4: Voice-Aware LLM Integration & Narrative Recaps
+- LLM sees voice context: speaker name, confidence, utterance boundaries
+- Persona understanding of voice (e.g., Xoblob reacts to hearing Meepo's name)
+- `/session recap` integrates voice-first narrative (voice='primary' by default)
+- `/meepo stt` command enhancements: status, toggle, provider info display
 
 ### ⏳ Phase 5: Text Elevation
 - `/mark-important <message_id>` (DM-only) → Sets `narrative_weight='elevated'`
@@ -640,6 +718,8 @@ npm run dev:deploy     # Re-register slash commands
 
 6. **Form ID Migration:** Old databases get `form_id='meepo'` auto-added on startup
 
+7. **Whisper Name Recognition:** Whisper already excels at recognizing names once heard naturally in speech. Domain normalization layer ensures consistent casing in ledger without prompt contamination.
+
 ---
 
 ## File Locations Reference
@@ -650,37 +730,59 @@ npm run dev:deploy     # Re-register slash commands
 **Personas:** `src/personas/*.ts`  
 **Commands:** `src/commands/*.ts`  
 **Ledger:** `src/ledger/ledger.ts` (core), `src/ledger/system.ts` (system events)  
+**Voice/STT:**
+  - `src/voice/receiver.ts` — PCM capture, gating, STT invocation
+  - `src/voice/stt/provider.ts` — Provider factory (noop, debug, openai)
+  - `src/voice/stt/openai.ts` — OpenAI Whisper integration
+  - `src/voice/stt/wav.ts` — WAV encoder utility
+  - `src/voice/stt/normalize.ts` — Domain name normalization
 **Docs:** `README.md`, `.env.example`
 
 ---
 
 ## Next Chat Starting Point
 
-**You are picking up a Discord bot project with voice capture implemented.**
+**You are picking up a Discord bot project with Voice-to-Text (STT) now live.**
 
 **Current Status:** 
 - **Text-only MVP complete** with LLM-powered persona system and session recap
 - **Phase 0 (Narrative Authority) complete** - Schema extended for voice integration
-- **Phase 1 (Voice Presence) complete** - Bot can join/leave voice, toggle STT
-- **Phase 2 (Audio Capture) partially complete** - PCM capture working with anti-noise gating
-  - ✅ Tasks 1-2: Speaking detection, Opus decode, frame-level activity gating
-  - 🚧 Task 3: STT provider interface (next step)
+- **Phase 1 (Voice Presence) complete** - Bot joins/leaves voice, toggles STT
+- **Phase 2 (Audio Capture & STT Architecture) complete** - PCM capture pipeline + pluggable providers
+  - ✅ Tasks 1-2: Speaking detection, Opus → PCM decode, frame-level activity gating
+  - ✅ Task 3: STT provider interface (Noop, Debug, Factory pattern)
+  - ✅ Session commands: Narrative filtering (--primary, --full)
+  - ✅ Member lookup: Voice entries show proper Discord display names
+
+- **Phase 3 (Real STT) complete** — OpenAI Whisper API integration live
+  - ✅ Task 3.1-3.5: Provider, retry, queuing, WAV encoding
+  - ✅ Task 3.8: Domain normalization (no prompt echo)
+  - ✅ Fixed prompt contamination bug
+  - ⏳ Backlog: Audio persistence (3.6), Smoke test (3.7)
 
 **Architecture Highlights:**
-- One omniscient ledger with narrative weight tiers (voice primary, text secondary)
-- System events logged (wake/sleep/transform appear in recaps)
-- Conservative anti-noise gating: PCM-based duration (not wall-clock), RMS frame analysis
+- One omniscient ledger with narrative weight tiers
+- System events logged separately
+- Conservative anti-noise gating + 700ms silence duration for natural speech
+- Per-guild promise-chained STT queue (FIFO, no loss)
+- Domain name canonicalization layer (regex-based, toggle: `STT_NORMALIZE_NAMES`)
 - No audio persistence by default (privacy-first)
-- Per-user voice attribution ready (schema supports Discord user IDs)
+
+**What's Left (Phase 4+):**
+- LLM integration with voice context (persona sees utterance, speaker name, confidence)
+- Enhanced recaps pulling voice-first narrative 
+- TTS for voice output
+- Text elevation marks (manual/automatic)
+
 
 **Next Steps - Choose Direction:**
-- **Phase 2 Task 3:** Implement STT provider interface (pluggable, noop for testing)
-- **Phase 3:** Real STT with OpenAI Whisper API integration
-- **Phase 4:** Narrative-aware recaps (voice-first, with --full flag)
+- **Phase 3:** Real STT with OpenAI Whisper API integration (next logical step)
+- **Phase 4:** Narrative-aware recaps (voice-first by default, already partially done)
 - **Phase 5:** Text elevation tools (`/mark-important` for DMs)
 - **Phase 6:** TTS output (Meepo speaks in voice)
 - **More Personas:** Add new character forms with unique speech patterns
 - **NPC Mind:** Locality-gated knowledge system (belief formation from perceived events)
+- **Audio saving option:** `STT_SAVE_AUDIO=true` for debugging transcription quality
 - **Bug fixes or UX improvements**
 
 **Test Voice Capture:**
@@ -760,13 +862,17 @@ what do you know?      # Xoblob riddles
 /meepo leave
 ```
 
-**Recent Major Changes (Day 8-10):**
-- Phase 1 voice integration complete (join/leave, STT toggle)
-- Phase 2 audio capture complete (PCM decode, anti-noise gating)
-- Conservative gating: PCM-based duration + RMS frame activity analysis
-- GuildVoiceStates intent added to bot.ts
-- Reflavored voice messages to be more Meepo-like ("Meep!")
-- Clean log levels (operational vs debug)
+**Recent Major Changes (Day 10 - Phase 2 Complete):**
+- ✅ Phase 2 Task 3 complete: STT provider interface (pluggable, testable)
+- ✅ NoopSttProvider: Silent (tests full pipeline without real transcription)
+- ✅ DebugSttProvider: Emits test transcripts `"(voice heard N, X.Xs)"` with 99% confidence
+- ✅ Receiver calls STT on accepted utterances (async, non-blocking cleanup)
+- ✅ Ledger emission: voice entries marked `source: voice`, `narrative_weight: primary`
+- ✅ Member display names: Voice entries show `"Keemin"` not `"User_28802586"` (guild member fetch cached at capture start)
+- ✅ Message ID collision fix: Random suffix prevents millisecond collisions
+- ✅ Session improvements: `/session transcript --primary`, `/session recap` voice-first by default
+- ✅ Provider mode line: `/meepo stt on` displays active provider behavior
+- ✅ Full pipeline verified: gating → STT → ledger → recap (tested with debug provider)
 
 **Read This First:**
 - README.md (user-facing docs)
