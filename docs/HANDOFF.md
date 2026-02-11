@@ -650,6 +650,66 @@ Scripts:        package.json (dev:bot, dev:deploy)
 
 ## Backlog & Future Improvements
 
+### Schema Extraction Refactor (Lean, Not Urgent)
+**Goal:** Reduce drift between bot schema and ingestion tool schema
+
+**Current State:** Both `src/db.ts` and `tools/ingest-media.ts` maintain separate schema copies
+- Acceptable for now (ingestion tool overwrites test DB frequently)
+- No active drift yet
+
+**Future Improvement (when you revisit schema management):**
+Extract shared `ensureSchema(db)` function used by both:
+```typescript
+// src/db/initSchema.ts (new shared module)
+export function ensureSchema(db: Database.Database): void {
+  const schemaPath = path.join(process.cwd(), "src", "db", "schema.sql");
+  const schema = fs.readFileSync(schemaPath, "utf8");
+  db.exec(schema);
+}
+
+// src/db.ts (bot init)
+import { ensureSchema } from "./db/initSchema.js";
+export function getDb(): Database.Database {
+  // ...
+  ensureSchema(db);  // Replace inline schema loading
+  applyMigrations(db);
+  // ...
+}
+
+// tools/ingest-media.ts (ingestion init)
+import { ensureSchema } from "../src/db/initSchema.js";
+function initializeDb(dbPath: string): Database.Database {
+  // ...
+  ensureSchema(db);  // Same schema source
+  const db = new Database(dbPath);
+  // ...
+}
+```
+
+**Benefit:** Single source of truth (no drift)  
+**Cost:** Minimal refactoring  
+**Timeline:** Nice-to-have when you next touch schema management
+
+### Migration Safety Validation ✅ Verified
+**Current state is production-safe for existing databases:**
+
+**Migration pattern for `created_at_ms` (Feb 11):**
+1. ✅ **Add as nullable:** `ALTER TABLE sessions ADD COLUMN created_at_ms INTEGER;`
+2. ✅ **Backfill:** `UPDATE sessions SET created_at_ms = started_at_ms WHERE created_at_ms IS NULL` (idempotent guard)
+3. ✅ **Leave nullable in SQLite:** SQLite can't enforce NOT NULL retroactively; handled at code level
+4. ✅ **Always write in code:** `startSession()` always inserts `created_at_ms = now` (never null for new sessions)
+
+**Result:**
+- Old DBs: Existing sessions get `created_at_ms` from `started_at_ms` (best guess)
+- New DBs: All sessions have `created_at_ms` populated via `startSession()`
+- No corruption risk, safe to re-run (idempotent WHERE clause)
+
+**For future NOT NULL columns, use this pattern:**
+- Add nullable
+- Backfill with guard (WHERE IS NULL)
+- Leave nullable in schema
+- Always populate in code
+
 ### Wakeword Detection Robustness
 **Best practice (still lean):**
 
