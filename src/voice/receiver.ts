@@ -6,6 +6,9 @@ import { getSttProvider } from "./stt/provider.js";
 import { normalizeTranscript } from "./stt/normalize.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
 import { isMeepoSpeaking } from "./speaker.js";
+import { isAddressedToMeepo } from "./wakeword.js";
+import { respondToVoiceUtterance } from "./voiceReply.js";
+import { getActiveMeepo } from "../meepo/state.js";
 import { randomBytes } from "node:crypto";
 
 /**
@@ -167,6 +170,20 @@ async function handleTranscription(
     console.log(
       `[STT] 📝 Ledger: ${displayName} (${userId}), text="${normalizedText}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
     );
+
+    // Task 4.6: Check if addressed to Meepo and generate voice reply if conditions met
+    const meepo = getActiveMeepo(guildId);
+    if (meepo && isAddressedToMeepo(normalizedText, meepo.form_id)) {
+      // Async, non-blocking—reply handler checks all preconditions internally
+      respondToVoiceUtterance({
+        guildId,
+        channelId,
+        speakerName: displayName,
+        utterance: normalizedText,
+      }).catch((err) => {
+        console.error(`[VoiceReply] Unhandled error:`, err);
+      });
+    }
   } catch (err) {
     console.error(`[STT] Transcription failed for userId=${userId}:`, err);
   }
@@ -333,11 +350,9 @@ export function startReceiver(guildId: string): void {
         if (shouldAccept) {
           // Task 4.5: Feedback loop protection - skip STT if Meepo is currently speaking
           if (isMeepoSpeaking(guildId)) {
-            if (DEBUG_VOICE) {
-              console.log(
-                `[Receiver] 🔕 Skipped STT: ${cap.displayName} spoke while Meepo was speaking (feedback loop protection)`
-              );
-            }
+            console.log(
+              `[Receiver] 🔕 Gated (meepo-speaking): ${cap.displayName} (${userId})`
+            );
             return;
           }
 
