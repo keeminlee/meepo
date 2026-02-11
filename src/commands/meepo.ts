@@ -9,6 +9,8 @@ import { joinVoice, leaveVoice } from "../voice/connection.js";
 import { getVoiceState, setVoiceState, clearVoiceState } from "../voice/state.js";
 import { startReceiver, stopReceiver } from "../voice/receiver.js";
 import { getSttProviderInfo } from "../voice/stt/provider.js";
+import { getTtsProvider } from "../voice/tts/provider.js";
+import { speakInGuild } from "../voice/speaker.js";
 
 export const meepo = {
   data: new SlashCommandBuilder()
@@ -79,6 +81,17 @@ export const meepo = {
               { name: "off", value: "off" },
               { name: "status", value: "status" }
             )
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("say")
+        .setDescription("[DM-only] Force Meepo to speak text aloud in voice channel.")
+        .addStringOption((opt) =>
+          opt
+            .setName("text")
+            .setDescription("Text for Meepo to speak")
+            .setRequired(true)
         )
     ),
 
@@ -488,6 +501,81 @@ export const meepo = {
         return;
       }
 
+      return;
+    }
+
+    if (sub === "say") {
+      // DM-only enforcement
+      const dmRoleId = process.env.DM_ROLE_ID;
+      if (dmRoleId) {
+        const member = interaction.member;
+        const hasDmRole = member?.roles?.cache?.has(dmRoleId) ?? false;
+        if (!hasDmRole) {
+          await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
+          return;
+        }
+      }
+
+      // Preconditions
+      const active = getActiveMeepo(guildId);
+      if (!active) {
+        await interaction.reply({ content: "Meepo is asleep. Use /meepo wake first.", ephemeral: true });
+        return;
+      }
+
+      const voiceState = getVoiceState(guildId);
+      if (!voiceState) {
+        await interaction.reply({ content: "Meepo is not in a voice channel. Use /meepo join first.", ephemeral: true });
+        return;
+      }
+
+      const ttsEnabled = (process.env.TTS_ENABLED ?? "true").toLowerCase() !== "false";
+      if (!ttsEnabled) {
+        await interaction.reply({ content: "TTS is not enabled (TTS_ENABLED=false).", ephemeral: true });
+        return;
+      }
+
+      const text = interaction.options.getString("text", true).trim();
+      if (!text) {
+        await interaction.reply({ content: "Text cannot be empty.", ephemeral: true });
+        return;
+      }
+
+      // Acknowledge immediately
+      await interaction.deferReply({ ephemeral: true });
+
+      try {
+        // Get TTS provider
+        const ttsProvider = await getTtsProvider();
+
+        // Synthesize text to audio
+        const mp3Buffer = await ttsProvider.synthesize(text);
+
+        if (mp3Buffer.length === 0) {
+          await interaction.editReply({ content: "TTS synthesis returned empty audio. Check provider configuration." });
+          return;
+        }
+
+        // Queue playback
+        speakInGuild(guildId, mp3Buffer, {
+          userDisplayName: "[/meepo say]",
+        });
+
+        // Log system event (tags: system,tts_say)
+        logSystemEvent({
+          guildId,
+          channelId: active.channel_id,
+          eventType: "tts_say",
+          content: text,
+          authorId: interaction.user.id,
+          authorName: interaction.user.username,
+        });
+
+        await interaction.editReply({ content: `Speaking: "${text.substring(0, 100)}${text.length > 100 ? "..." : ""}"` });
+      } catch (err: any) {
+        console.error("[TTS] /meepo say error:", err);
+        await interaction.editReply({ content: `TTS error: ${err.message}` });
+      }
       return;
     }
 
