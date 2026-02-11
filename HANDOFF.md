@@ -709,22 +709,19 @@ OPENAI_API_KEY=sk-proj-...             # Reuse from LLM
   - `speakInGuild(guildId, mp3Buffer)` queues playback sequentially
   - Playback waits for idle state before resolving (prevents overlap)
   - Integrated speaker lifecycle: cleanup on disconnect via `cleanupSpeaker()`
-  - Task 4.5 prep: `isMeepoSpeaking()` gate in receiver to prevent STT self-echo
 
-**Environment Variables (Phase 4):**
-```
-TTS_ENABLED=true                       # Master toggle
-TTS_PROVIDER=openai                    # Provider selection
-TTS_OPENAI_MODEL=gpt-4o-mini-tts       # Model choice
-TTS_VOICE=alloy                        # Voice variant
-TTS_MAX_CHARS_PER_CHUNK=350            # Sentence-split max length
-LLM_VOICE_CONTEXT_MS=120000            # Voice context window (120s)
-VOICE_REPLY_COOLDOWN_MS=5000           # Cooldown between voice replies
-```
+- ✅ **Task 4.4** — `/meepo say` Command (`src/commands/meepo.ts`)
+  - DM-only slash command with `/meepo say <text>` interface
+  - DM-only enforcement via DM_ROLE_ID check (matches /session command pattern)
+  - Preconditions: Meepo awake, in voice channel, TTS_ENABLED=true
+  - Synthesizes text to MP3 audio via `getTtsProvider().synthesize()`
+  - Queues playback via `speakInGuild()` with metadata
+  - Logs system event with tags: `system,tts_say`, source: `system`, narrative_weight: `primary`
+  - No LLM invocation, no latch state change, no chat reply (control command only)
+  - Graceful error handling with user-facing precondition messages
 
 **Backlog (Not Started):**
-- **Task 4.4** — `/meepo say` Command (DM-only TTS + playback test)
-- **Task 4.5** — Feedback Loop Protection (STT pause while Meepo speaks)
+- **Task 4.5** — Feedback Loop Protection (*Gate implemented: `isMeepoSpeaking()` in receiver, awaiting validation*)
 - **Task 4.6** — Wake-Word Voice Reply (close the loop on voice input→output)
 - **Task 4.7** — LLM Voice Context (personas see recent voice utterances)
 - **Task 4.8** — Voice-First Recap Polish (narrative filtering)
@@ -801,6 +798,16 @@ VOICE_REPLY_COOLDOWN_MS=5000           # Cooldown between voice replies
   - ✅ Fixed prompt contamination bug
   - ⏳ Backlog: Audio persistence (3.6), Smoke test (3.7)
 
+- **Phase 4 (TTS & Voice Loop Closure) In Progress**
+  - ✅ Task 4.1: TTS provider interface (mirrors STT architecture)
+  - ✅ Task 4.2: OpenAI TTS provider with sentence-boundary chunking
+  - ✅ Task 4.3: Voice speaker pipeline (AudioPlayer + per-guild queue + meepo-speaking tracking)
+  - ✅ Task 4.4: `/meepo say` command (DM-only manual TTS test harness)
+  - 🚧 Task 4.5: Feedback loop protection (gate implemented, awaiting validation)
+  - ⏳ Task 4.6: Wake-word voice reply (STT → LLM → TTS closed loop)
+  - ⏳ Task 4.7: LLM voice context (personas see recent utterances)
+  - ⏳ Task 4.8: Voice-first recap polish
+
 **Architecture Highlights:**
 - One omniscient ledger with narrative weight tiers
 - System events logged separately
@@ -820,18 +827,24 @@ VOICE_REPLY_COOLDOWN_MS=5000           # Cooldown between voice replies
 - Task 4.4: `/meepo say` command (DM-only TTS + playback test)
 - Task 4.5: Feedback loop protection (already gate implemented, needs testing)
 - Task 4.6: Wake-word voice reply (close loop on voice input→output)
+**What's Complete (Phase 3-4 Tasks 1-13):**
+- ✅ Phase 3 complete: Real STT (OpenAI Whisper) live with domain normalization
+- ✅ Phase 4 Tasks 1-4 complete: TTS provider + speaker pipeline + `/meepo say` command
+
+**What's Left (Phase 4 Tasks 5-8):**
+- Task 4.5: Feedback loop protection (already gate implemented, needs validation)
+- Task 4.6: Wake-word voice reply (close loop on voice input→output)
 - Task 4.7: LLM voice context (personas see recent voice utterances)
 - Task 4.8: Voice-first recap polish (narrative filtering)
 - (Phase 5+) Text elevation tools, NPC mind, more personas, audio persistence option
 
 
 **Next Steps - Immediate Priorities:**
-- **Task 4.4:** Implement `/meepo say` command for manual TTS testing
-- **Task 4.5-4.6:** Complete wake-word voice reply loop (connects STT→LLM→TTS)
+- **Task 4.5-4.6:** Complete wake-word voice reply loop with feedback protection (connects STT→LLM→TTS)
 - **Task 4.7:** Voice context in LLM prompts (personas respond to what they hear)
 - **Task 4.8:** Recap filtering (voice-primary narrative by default)
 
-**Test Voice Capture:**
+**Test Manual TTS (Task 4.4) — Ready to deploy:**
 ```bash
 npm run dev:bot
 ```
@@ -839,11 +852,16 @@ npm run dev:bot
 In Discord:
 ```
 /meepo wake
-Join voice channel
 /meepo join
+/meepo say "Hello, adventurers!"  # Should play in voice channel
+/meepo say "Long text here..." # Should chunk and queue
+```
+
+**Test Voice Capture (Phase 3 validation):**
+```
 /meepo stt on
-<speak normally> → Console shows: 🔇 Speaking ended: audioMs=..., activeMs=...
-<keyboard click> → Silently gated (too short)
+<speak normally> → Console shows STT transcript
+<stay quiet 700ms> → Silence gate prevents utterance
 ```
 
 ## Gotchas & Important Notes
