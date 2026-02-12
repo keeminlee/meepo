@@ -1,12 +1,13 @@
 import type { MeepoInstance } from "../meepo/state.js";
 import { getRecentLedgerText } from "../ledger/ledger.js";
 import { getPersona } from "../personas/index.js";
+import { getMeepoMemoriesSection } from "../ledger/meepo-mind.js";
 
-export function buildMeepoPrompt(opts: {
+export async function buildMeepoPrompt(opts: {
   meepo: MeepoInstance;
   recentContext?: string;
   hasVoiceContext?: boolean; // Task 4.7: Indicates voice entries in context
-}): string {
+}): Promise<string> {
   const persona = getPersona(opts.meepo.form_id);
   console.log("Using persona:", persona.displayName, `(${opts.meepo.form_id})`);
   
@@ -24,6 +25,11 @@ export function buildMeepoPrompt(opts: {
     : "";
 
   const memory = persona.memory ? `\n${persona.memory}` : "";
+  
+  // Fetch Meepo's foundational memories from database (only for Meepo form)
+  const meepoMemories = opts.meepo.form_id === "meepo" 
+    ? await getMeepoMemoriesSection()
+    : "";
 
   // Style guard (always included to prevent persona bleed)
   const styleGuard = persona.styleGuard || "";
@@ -31,12 +37,13 @@ export function buildMeepoPrompt(opts: {
     console.warn(`Warning: Persona ${opts.meepo.form_id} missing styleGuard`);
   }
 
-  // Order matters: Guardrails → Identity → Memory → Speech Style → Personality → Style Guard → Voice Hint → Custom → Context
+  // Order matters: Guardrails → Identity → Memory → Meepo Knowledge Base → Speech Style → Personality → Style Guard → Voice Hint → Custom → Context
   return (
     persona.systemGuardrails +
     "\n" +
     persona.identity +
     memory +
+    meepoMemories +
     "\n" +
     persona.speechStyle +
     "\n" +

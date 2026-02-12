@@ -194,7 +194,7 @@ function scanNames(): void {
 
       // Add example
       if (cand.examples.length < maxExamples) {
-        cand.examples.push(content.slice(0, 80));
+        cand.examples.push(content);
       }
     }
   }
@@ -289,7 +289,7 @@ function scanNames(): void {
   for (const cand of filtered) {
     console.log(`${cand.display} (${cand.count} total, ${cand.primaryCount} primary)`);
     for (const ex of cand.examples) {
-      console.log(`  > ${ex.slice(0, 60)}...`);
+      console.log(`  > ${ex}`);
     }
     console.log("");
   }

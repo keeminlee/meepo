@@ -18,7 +18,10 @@ npx tsc --noEmit      # Type-check
 /meepo wake                              # Start session (auto-generates UUID)
 meepo: hello                             # Auto-latch responds
 /session transcript range=since_start    # View all text+voice from this session
-/session recap range=since_start mode=primary  # LLM summary (voice-primary)
+/session meecap                          # Generate Meecap (4-8 scenes, 1-4 beats)
+/session recap range=since_start         # DM summary (default: style=dm, source=primary)
+/session recap range=since_start style=narrative  # Meecap-structured prose with detail
+/session recap range=since_start --force_meecap  # Regenerate Meecap first, then recap
 /meepo join                              # Enter voice channel
 /meepo stt on                            # Enable transcription
 <speak: "meepo, help me">               # STT → LLM → TTS closed loop
@@ -79,7 +82,50 @@ Discord Message/Voice → Ledger Entry → Session Recap / NPC Mind Retrieval
 
 ---
 
-## V0 Complete: What Exists
+## Recent Command Architecture Updates (Feb 11)
+
+### Meecap Promoted to First-Class Command
+**Before (Stub):**
+- `/session recap mode=meecap` - Generated stub + persisted
+- **Problem:** Recap and Meecap generation conflated in single UX
+  
+**After (Proper separation of concerns):**
+- `/session meecap [--force] [--source primary|full]` - Generate/regenerate Meecap
+- `/session recap [style] [source] [--force_meecap]` - Consume Meecap (or regenerate if needed)
+
+**Philosophy:** Ledger (immutable) → Meecap (regenerable derived artifact) → Recap (view over Meecap)
+
+### Recap Command Refactored
+**Before:**
+- `/session recap range=... mode=[primary|full|meecap]`
+- **Problem:** `mode` conflated two concerns (ledger filtering + output format)
+
+**After:**
+```
+/session recap range=...
+           [style=dm|narrative|party]      # Output format
+           [source=primary|full]            # Ledger filtering
+           [--force_meecap]                 # Regenerate Meecap first
+```
+
+**Options explained:**
+- **style:** Controls recap prose structure
+  - `dm` - Structured sections (overview, beats, NPCs, etc.)
+  - `narrative` - **NEW** — Scene headings from Meecap, prose from transcript
+  - `party` - Party-focused recap
+- **source:** Controls which ledger entries to include
+  - `primary` - Voice + elevated text only (narrative-primary)
+  - `full` - All entries including secondary chatter
+- **--force_meecap:** If set, regenerates Meecap before rendering (ensures fresh structure)
+
+**UX benefit:**
+- Clearer mental model: Ledger filtering is separate from output formatting
+- Narrative style enables prose recap with structural guidance from Meecap
+- `--force_meecap` convenience flag for "update everything" workflow
+
+---
+
+
 
 ### Systems
 - ✅ Text + Voice I/O (STT+LLM+TTS closed loop)
@@ -272,8 +318,12 @@ voiceLog.error("STT failed", { err });
 ### Ledger & Memory
 - `src/ledger/ledger.ts` - Append-only log + queries (includes content_norm dual-column support)
 - `src/ledger/system.ts` - System event logging helper
-- `src/sessions/sessions.ts` - Session tracking
-- `src/sessions/meecap.ts` - Meecap stub generator (Phase 1 bridge)
+- `src/sessions/sessions.ts` - Session tracking (UUID-based, auto-start on wake)
+- `src/sessions/meecap.ts` - **Meecap V1 generator (530 lines)**
+  - Types: LineSpan, LedgerIdRange, MeecapBeat, MeecapScene, Meecap
+  - Functions: generateMeecapStub(), buildMeecapTranscript(), validateMeecapV1(), buildMeecapPrompts()
+  - Output: Structured JSON with scenes → beats, ledger ID ranges, evidence citations
+  - Validation: Schema conformance + ledger ID existence checking
 
 ### Character Registry (Phase 1)
 - `src/registry/loadRegistry.ts` - Multi-file YAML loader + collision detection
@@ -473,7 +523,72 @@ sqlite3 .\data\test_ingest.sqlite "SELECT session_id, COUNT(*) as entry_count FR
 
 ## MeepoMind Dev Entry Points
 
-### Latest: Session Architecture + Recording Range ✅ Complete (Feb 11)
+### Latest: Meecap V1 + Command Refactoring ✅ Complete (Feb 11)
+
+**Sprint Summary:** Promoted Meecap V1 to first-class command and refactored recap to consume it as a derived view.
+
+#### Task 1: `/session meecap` Command ✅
+- New first-class subcommand with `--force` and `--source` options
+- Resolves most recent session (prefers ingested, falls back to active)
+- Generates Meecap with validated schema (4-8 scenes, 1-4 beats)
+- Validates pre-persistence using `validateMeecapV1()`
+- Persists to SQLite with UPSERT (regenerable, overwrites on conflict)
+- Exports to disk (`data/meecaps/{session_id}__{timestamp}.json` + `latest.json`)
+- Attaches JSON to Discord for manual review/editing
+
+**Design Philosophy:**
+- Ledger = immutable source of truth
+- Meecap = regenerable derived artifact (not sacred, can be overwritten)
+- Recap = view over Meecap (consumes, doesn't generate)
+
+#### Task 2: `/session recap` Refactored ✅
+- **Old mode=meecap behavior:** Generated fresh Meecap each time ❌
+- **New behavior:** Loads existing Meecap from database ✅
+- Falls back gracefully: "Run `/session meecap` first"
+- If Meecap missing but `--force_meecap` flag set: regenerate on-demand
+- Makes Meecap the source of truth, recap the consumer
+
+#### Task 3: `style=narrative` Recap Type ✅
+- **Replaced option:** `mode` → `style` + `source` (separate concerns)
+- **Style options:**
+  - `dm` (default): Structured DM summary with sections (overview, beats, NPCs, decisions, conflicts, loot, threads)
+  - `narrative`: **NEW** — Meecap-structured prose (scenes as headings) with transcript detail
+  - `party`: Party-focused recap
+- **Source options:**
+  - `primary`: Voice-focused entries only
+  - `full`: All ledger entries
+- **Narrative generation:** LLM call with meecap structure + transcript, produces 800-1500 word prose
+
+#### Task 4: Token/Length Guardrails ✅
+- **DM/Party recap:** `maxTokens: 3000` (~1500 words max)
+- **Narrative recap:** `maxTokens: 2500` (~1500 words max)
+- **Meecap generation:** `maxTokens: 16000` (unchanged, allows detailed segmentation)
+- **System prompts updated:** Added "TARGET: 800-1500 words" guidance
+- All LLM calls now have explicit token bounds (prevents runaway generations)
+
+#### Task 5: `--force_meecap` Convenience Flag ✅
+- New boolean option: `/session recap [style=narrative] --force_meecap`
+- When set: regenerates Meecap before rendering recap
+- Validates fresh Meecap, persists it, then proceeds with narrative rendering
+- Graceful error handling if regeneration fails
+- Helpful message suggests `--force_meecap` when Meecap not found
+
+**Current Command State:**
+```
+/session meecap [--force] [--source primary|full]
+  ↓ (validates + persists)
+/session recap [range] [style=dm|narrative|party] [source=primary|full] [--force_meecap]
+```
+
+**Validation:**
+- ✅ TypeScript: `npx tsc --noEmit` clean
+- ✅ Discord validation: All option descriptions ≤100 chars
+- ✅ Bot startup: No errors, all commands registered
+- ✅ UPSERT pattern: Correct MVÏ behavior (regenerable Meecap)
+
+---
+
+### Session Architecture + Recording Range ✅ Complete (Feb 11)
 
 **What was fixed:**
 - Session ID now generated as UUID (from `startSession()` and ingestion tool)
@@ -490,6 +605,53 @@ sqlite3 .\data\test_ingest.sqlite "SELECT session_id, COUNT(*) as entry_count FR
 **Key validations:**
 - ✅ TypeScript compilation clean
 - ✅ Migrations auto-apply (created_at_ms backfilled from started_at_ms)
+
+### Identity Model Clarification + Label Filtering ✅ Complete (Feb 11)
+
+**Problem Solved:**  
+"one meecap per session" looked ambiguous when users might ingest "C2E01" multiple times (retries, edits, partial runs).
+
+**Solution:**  
+- `session_id` = **UUID generated per ingest/run** (unique, immutable invariant)
+- `label` = user-provided episode label like "C2E01" (metadata, NOT unique; multiple runs can share)
+- Deterministic "latest session" relies on `created_at_ms` (immutable creation timestamp)
+
+**Implementation:**
+- ✅ Added identity model comments in [schema.sql](src/db/schema.sql#L62-L70) and [ingest-media.ts](tools/ingest-media.ts#L530-L533)
+- ✅ Added `getLatestSessionForLabel(label)` helper in [sessions.ts](src/sessions/sessions.ts#L92-L100)
+- ✅ Respect label filter in `getLedgerSlice()` for "recording" range [session.ts](src/commands/session.ts#L14-L63)
+
+**UX Improvement: `--label` Option**  
+Both commands now accept optional `--label` to select "latest session for this episode":
+
+```
+/session meecap --label C2E01
+/session recap range=recording --label C2E01 style=narrative
+```
+
+If omitted, defaults to "latest ingested overall" (current behavior).
+
+**Acceptance Test:**  
+Ingest twice with same label into same DB (no wipe):
+```bash
+npx tsx tools/ingest-media.ts --mediaPath <file> --outDb <db> --sessionLabel C2E01
+npx tsx tools/ingest-media.ts --mediaPath <file> --outDb <db> --sessionLabel C2E01
+```
+
+Verify both sessions exist with different UUIDs:
+```sql
+SELECT session_id, label, created_at_ms FROM sessions WHERE label='C2E01' ORDER BY created_at_ms DESC;
+-- Expected: 2 rows, different session_ids, deterministic ordering
+```
+
+Then:
+```
+/session meecap --label C2E01
+/session recap range=recording --label C2E01 style=narrative
+```
+
+Both should use the *latest* session UUID (deterministic via `created_at_ms DESC`).  
+✅ If both commands pick the same session, identity model is correct.
 - ✅ Both live text and voice entries tagged with session_id
 - ✅ Ingestion tool produces collision-free sessions (new UUID each run)
 - ✅ Recording range query deterministic (ordered by created_at_ms)
@@ -546,12 +708,36 @@ sqlite3 .\data\test_ingest.sqlite "SELECT session_id, COUNT(*) as entry_count FR
 - `tools/ingest-media.ts` - Offline ingestion: normalizes after STT, writes both fields
 - **Dual-column approach:** Preserves fidelity (raw STT) while enabling consistency (normalized)
 
-#### Meecap Stub Plumbing (Phase 1 bridge to Phase 2)
-- `src/sessions/meecap.ts` - Placeholder generator (80 lines)
-- `src/db/schema.sql` - Added `meecaps` table (session_id PK, meecap_json, timestamps)
-- **Handler:** `/session recap mode=meecap` branches to stub generator + DB upsert
-- **Current output:** Debug response + empty structure `{ version: 1, session_id, scenes: [] }`
-- **Status:** Wired and ready for Phase 2 LLM prompt implementation
+#### Meecap V1 Full Implementation (Phase 2 Complete) ✅
+- `src/sessions/meecap.ts` - Complete V1 generator (~530 lines)
+  - **Types:** LineSpan, LedgerIdRange, MeecapBeat, MeecapScene, Meecap
+  - **Generator:** `generateMeecapStub()` - Calls LLM, parses JSON, validates, returns structured output
+  - **Transcript builder:** `buildMeecapTranscript()` - Formats entries as `[L# id=uuid]` with normalized content
+  - **Validator:** `validateMeecapV1()` - Comprehensive schema + ledger consistency checks
+  - **Prompt builder:** `buildMeecapPrompts()` - System + user prompts with V1 schema template
+- **Meecap V1 Contract:**
+  - Line indices [L0, L1, ...] for editing convenience
+  - Ledger IDs for stable references across transcript re-filtering
+  - Ranges (not arrays) for scenes; small evidence lists for beats
+  - Every scene/beat has ledger_id_range or evidence_ledger_ids
+  - Validators run pre-persistence (no bad data in DB)
+- **Database:** `meecaps` table with UPSERT pattern
+  - Primary key: `session_id`
+  - Columns: `meecap_json (TEXT)`, `created_at_ms (INTEGER)`, `updated_at_ms (INTEGER)`
+  - On regeneration: `meecap_json` overwrites, `updated_at_ms` updates, `created_at_ms` preserved
+- **Tested:** Generates 3-8 scenes, 8+ beats; JSON exports to Discord; validation catches invalid IDs
+
+**Validation Errors Caught:**
+- Missing/invalid version, session_id, session_span
+- Ledger IDs not found in entries
+- Range ordering violations (start > end)
+- Empty evidence_ledger_ids
+- Non-matching scene/beat line ranges
+
+#### Meecap Stub Plumbing (OLD - ARCHIVED)
+- ~~`src/sessions/meecap.ts` - Placeholder generator~~ → **Now full V1 implementation**
+- ~~Handler: `/session recap mode=meecap` branches to stub~~ → **Now separate `/session meecap` command**
+- ~~Status: Wired and ready for Phase 2 LLM prompt~~ → **Phase 2 complete, ready for Phase 3 gravity scoring**
 
 #### Mode Option Refactor (UX Polish)
 - Renamed `/session recap` mode choices for cleaner Discord UI:
@@ -570,14 +756,27 @@ sqlite3 .\data\test_ingest.sqlite "SELECT session_id, COUNT(*) as entry_count FR
 - ✅ TypeScript: `npx tsc --noEmit` clean
 - ✅ End-to-end: Offline ingestion → normalization → recap all working
 
-### Phase 2: Meecap Generator
-- `src/meecap/meecap.ts` (new) - Core segmentation engine
-- `src/meecap/beats.ts` (new) - Beat extraction logic
-- `src/meecap/gravity.ts` (new) - Gravity scoring (LLM-driven)
+### Phase 2: Meecap V1 Generator ✅ Complete
+- ✅ Meecap V1 schema fully defined and validated
+- ✅ Ledger-ID anchoring (stable range references)
+- ✅ LLM-driven generation with conservative constraints (4-8 scenes, 1-4 beats)
+- ✅ Comprehensive validator (ID existence, range ordering, evidence non-empty)
+- ✅ Database persistence + disk export for git diffing
+- ✅ First-class command `/session meecap` with regeneration support
+- ✅ Recap consumes Meecap (no longer generates)
+- ✅ Narrative style recap with meecap structure + transcript detail
+- ✅ Token/length guardrails (800-1500 words per recap)
 
-### Phase 3: Character-Scoped Retrieval
-- `src/meepo/memory.ts` (new) - Scoped beat retrieval
-- Update `src/llm/prompts.ts` - Inject retrieved beats into prompt context
+**What's next (Phase 3 - Character-Scoped Retrieval):**
+- Gravity scoring (Tier 1: Costly Love, Tier 2: Tenderness, Tier 3: Moral Fracture)
+- Character impression tracking (beats involving PC)
+- LLM-driven beat analysis for gravity assignment
+- Memory retrieval + injection into response prompts
+
+### Phase 3: Character-Scoped Retrieval (Future)
+- `src/meepo/memory.ts` (new) - Scoped beat retrieval by character
+- Update `src/sessions/meecap.ts` - Add gravity scoring post-generation
+- Update `src/llm/prompts.ts` - Inject retrieved beats with gravity weighting
 
 ### Database Evolution
 Current schema has what you need. As Meecap matures, add tables:

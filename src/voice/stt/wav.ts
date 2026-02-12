@@ -17,17 +17,26 @@ export function pcmToWav(
   sampleRate: number,
   channels: number = 1
 ): Buffer {
+  // **FIX 1: Align PCM to sample boundaries (2 bytes for 16-bit mono, 4 for stereo)**
+  const bytesPerFrame = channels * 2; // 2 bytes per sample × channels
+  let alignedPcmLength = pcm.length - (pcm.length % bytesPerFrame);
+  
+  // If length became 0 or negative, return minimal WAV
+  if (alignedPcmLength <= 0) {
+    alignedPcmLength = 0;
+  }
+
   const bitsPerSample = 16;
   const bytesPerSample = bitsPerSample / 8;
   const byteRate = sampleRate * channels * bytesPerSample;
   const blockAlign = channels * bytesPerSample;
-  const subChunk2Size = pcm.length; // Data size
+  const subChunk2Size = alignedPcmLength;
 
   // Total file size (everything after the 8-byte RIFF header)
   const fileSize = 36 + subChunk2Size;
 
   // Allocate buffer for full WAV file
-  const wav = Buffer.alloc(44 + pcm.length);
+  const wav = Buffer.alloc(44 + alignedPcmLength);
 
   // Write RIFF header
   let offset = 0;
@@ -62,8 +71,14 @@ export function pcmToWav(
   wav.writeUInt32LE(subChunk2Size, offset); // SubChunk2Size
   offset += 4;
 
-  // Copy PCM data
-  pcm.copy(wav, offset);
+  // **FIX 2: Clamp offset and length to buffer boundaries**
+  const startOffset = Math.max(0, Math.min(offset, wav.length));
+  const copyLength = Math.max(0, Math.min(alignedPcmLength, wav.length - startOffset));
+
+  // Copy PCM data (only aligned portion)
+  if (copyLength > 0) {
+    pcm.copy(wav, startOffset, 0, copyLength);
+  }
 
   return wav;
 }

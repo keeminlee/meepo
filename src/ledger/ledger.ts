@@ -243,3 +243,41 @@ export function getVoiceAwareContext(opts: {
 
   return { context: formatted, hasVoice };
 }
+
+/**
+ * Task 7: Get ledger entries by ID range
+ * 
+ * Enables targeted re-LLM by returning a slice of entries.
+ * Used when regenerating a single Meecap scene without reprocessing the whole session.
+ * 
+ * @param opts.startId - First ledger entry ID (inclusive)
+ * @param opts.endId - Last ledger entry ID (inclusive)
+ * @returns Ordered entries from startId to endId
+ * 
+ * Note: Assumes IDs are stable and belong to same session. Returns empty if not found.
+ */
+export function getSliceByLedgerIdRange(opts: {
+  startId: string;
+  endId: string;
+}): LedgerEntry[] {
+  const db = getDb();
+  const { startId, endId } = opts;
+
+  // First pass: find the position of start and end entries
+  const startEntry = db.prepare("SELECT id, timestamp_ms FROM ledger_entries WHERE id = ?").get(startId) as { id: string; timestamp_ms: number } | undefined;
+  const endEntry = db.prepare("SELECT id, timestamp_ms FROM ledger_entries WHERE id = ?").get(endId) as { id: string; timestamp_ms: number } | undefined;
+
+  if (!startEntry || !endEntry) {
+    return [];
+  }
+
+  // Get all entries in the time window (inclusive on both ends)
+  const rows = db
+    .prepare(
+      "SELECT * FROM ledger_entries WHERE timestamp_ms >= ? AND timestamp_ms <= ? ORDER BY timestamp_ms ASC, id ASC"
+    )
+    .all(startEntry.timestamp_ms, endEntry.timestamp_ms) as LedgerEntry[];
+
+  return rows;
+}
+

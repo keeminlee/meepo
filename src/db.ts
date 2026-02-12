@@ -31,9 +31,69 @@ export function getDb(): Database.Database {
 }
 
 function applyMigrations(db: Database.Database) {
-  // Migration: Add form_id to npc_instances (Day 7)
+  // Migration: Fix npc_instances schema (id should be TEXT, correct column order)
   const npcColumns = db.pragma("table_info(npc_instances)") as any[];
-  const hasFormId = npcColumns.some((col: any) => col.name === "form_id");
+  const idColumn = npcColumns.find((col: any) => col.name === "id");
+  
+  // Check if id is INTEGER (old schema) instead of TEXT
+  if (idColumn && idColumn.type === "INTEGER") {
+    console.log("Migrating: Recreating npc_instances table with correct schema");
+    
+    // Check if table is empty before recreating
+    const count = db.prepare("SELECT COUNT(*) as cnt FROM npc_instances").get() as any;
+    
+    if (count.cnt > 0) {
+      console.warn("⚠️  npc_instances has data but schema is wrong. Backing up...");
+      db.exec(`
+        CREATE TABLE npc_instances_backup AS SELECT * FROM npc_instances;
+        DROP TABLE npc_instances;
+        
+        CREATE TABLE npc_instances (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          guild_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          persona_seed TEXT,
+          form_id TEXT NOT NULL DEFAULT 'meepo',
+          created_at_ms INTEGER NOT NULL,
+          is_active INTEGER NOT NULL DEFAULT 1
+        );
+        
+        CREATE INDEX idx_npc_instances_guild_channel
+        ON npc_instances(guild_id, channel_id);
+        
+        -- Attempt to restore data (may fail if id values are not valid UUIDs)
+        INSERT OR IGNORE INTO npc_instances 
+        SELECT id, name, guild_id, channel_id, persona_seed, form_id, created_at_ms, is_active 
+        FROM npc_instances_backup;
+        
+        DROP TABLE npc_instances_backup;
+      `);
+    } else {
+      // Table is empty, safe to recreate
+      db.exec(`
+        DROP TABLE npc_instances;
+        
+        CREATE TABLE npc_instances (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          guild_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          persona_seed TEXT,
+          form_id TEXT NOT NULL DEFAULT 'meepo',
+          created_at_ms INTEGER NOT NULL,
+          is_active INTEGER NOT NULL DEFAULT 1
+        );
+        
+        CREATE INDEX idx_npc_instances_guild_channel
+        ON npc_instances(guild_id, channel_id);
+      `);
+    }
+  }
+  
+  // Migration: Add form_id to npc_instances (Day 7)
+  const npcColumnsRefreshed = db.pragma("table_info(npc_instances)") as any[];
+  const hasFormId = npcColumnsRefreshed.some((col: any) => col.name === "form_id");
   
   if (!hasFormId) {
     console.log("Migrating: Adding form_id to npc_instances");
@@ -96,16 +156,129 @@ function applyMigrations(db: Database.Database) {
     db.exec(`
       CREATE TABLE meecaps (
         session_id TEXT PRIMARY KEY,
-        meecap_json TEXT NOT NULL,
+        meecap_json TEXT,
+        meecap_narrative TEXT,
+        model TEXT,
+        token_count INTEGER,
         created_at_ms INTEGER NOT NULL,
         updated_at_ms INTEGER NOT NULL
       );
     `);
   }
 
-  // Migration: Add source to sessions table (Phase 1 - ingestion support)
+  // Migration: Add narrative mode support to meecaps table (Phase 2)
+  const meecapColumns = db.pragma("table_info(meecaps)") as any[];
+  const hasMeecapNarrative = meecapColumns.some((col: any) => col.name === "meecap_narrative");
+  const meecapJsonCol = meecapColumns.find((col: any) => col.name === "meecap_json");
+  const hasNotNullJsonCol = meecapJsonCol?.notnull === 1; // Check for NOT NULL constraint
+  
+  if (!hasMeecapNarrative || hasNotNullJsonCol) {
+    if (!hasMeecapNarrative) {
+      console.log("Migrating: Adding meecap_narrative, model, and token_count to meecaps table");
+    }
+    
+    if (hasNotNullJsonCol) {
+      console.log("Migrating: Recreating meecaps table to make meecap_json nullable");
+      db.exec(`
+        -- Backup existing data
+        CREATE TABLE meecaps_backup AS SELECT * FROM meecaps;
+        
+        -- Drop old table
+        DROP TABLE meecaps;
+        
+        -- Create new table with updated schema
+        CREATE TABLE meecaps (
+          session_id TEXT PRIMARY KEY,
+          meecap_json TEXT,
+          meecap_narrative TEXT,
+          model TEXT,
+          token_count INTEGER,
+          created_at_ms INTEGER NOT NULL,
+          updated_at_ms INTEGER NOT NULL
+        );
+        
+        -- Restore data (preserve existing meecap_json and created/updated times)
+        INSERT INTO meecaps (session_id, meecap_json, created_at_ms, updated_at_ms)
+        SELECT session_id, meecap_json, created_at_ms, updated_at_ms FROM meecaps_backup;
+        
+        -- Drop backup
+        DROP TABLE meecaps_backup;
+      `);
+    } else {
+      // Just add the columns if table was already flexible
+      db.exec(`
+        ALTER TABLE meecaps ADD COLUMN meecap_narrative TEXT;
+        ALTER TABLE meecaps ADD COLUMN model TEXT;
+        ALTER TABLE meecaps ADD COLUMN token_count INTEGER;
+      `);
+    }
+  }
+
+  // Migration: Fix sessions table schema (started_by_id/name should be nullable)
   const sessionColumns = db.pragma("table_info(sessions)") as any[];
-  const hasSessionSource = sessionColumns.some((col: any) => col.name === "source");
+  const startedByIdCol = sessionColumns.find((col: any) => col.name === "started_by_id");
+  
+  // Check if started_by_id has NOT NULL constraint (wrong)
+  if (startedByIdCol && startedByIdCol.notnull === 1) {
+    console.log("Migrating: Recreating sessions table with correct schema (nullable started_by_*)");
+    
+    // Backup existing data
+    const sessionCount = db.prepare("SELECT COUNT(*) as cnt FROM sessions").get() as any;
+    
+    if (sessionCount.cnt > 0) {
+      console.warn("⚠️  sessions table has data, backing up before schema fix...");
+      db.exec(`
+        CREATE TABLE sessions_backup AS SELECT * FROM sessions;
+        DROP TABLE sessions;
+        
+        CREATE TABLE sessions (
+          session_id TEXT PRIMARY KEY,
+          guild_id TEXT NOT NULL,
+          label TEXT,
+          created_at_ms INTEGER NOT NULL,
+          started_at_ms INTEGER NOT NULL,
+          ended_at_ms INTEGER,
+          started_by_id TEXT,
+          started_by_name TEXT,
+          source TEXT NOT NULL DEFAULT 'live'
+        );
+        
+        CREATE INDEX idx_sessions_guild_active
+        ON sessions(guild_id, ended_at_ms);
+        
+        -- Restore data
+        INSERT INTO sessions 
+        SELECT session_id, guild_id, label, created_at_ms, started_at_ms, ended_at_ms, started_by_id, started_by_name, source 
+        FROM sessions_backup;
+        
+        DROP TABLE sessions_backup;
+      `);
+    } else {
+      // Empty table, safe to recreate
+      db.exec(`
+        DROP TABLE sessions;
+        
+        CREATE TABLE sessions (
+          session_id TEXT PRIMARY KEY,
+          guild_id TEXT NOT NULL,
+          label TEXT,
+          created_at_ms INTEGER NOT NULL,
+          started_at_ms INTEGER NOT NULL,
+          ended_at_ms INTEGER,
+          started_by_id TEXT,
+          started_by_name TEXT,
+          source TEXT NOT NULL DEFAULT 'live'
+        );
+        
+        CREATE INDEX idx_sessions_guild_active
+        ON sessions(guild_id, ended_at_ms);
+      `);
+    }
+  }
+
+  // Migration: Add source to sessions table (Phase 1 - ingestion support)
+  const sessionColumnsRefreshed = db.pragma("table_info(sessions)") as any[];
+  const hasSessionSource = sessionColumnsRefreshed.some((col: any) => col.name === "source");
   
   if (!hasSessionSource) {
     console.log("Migrating: Adding source to sessions table (Phase 1)");
@@ -119,7 +292,7 @@ function applyMigrations(db: Database.Database) {
   }
 
   // Migration: Add label to sessions table (Phase 1 - ingestion metadata)
-  const hasSessionLabel = sessionColumns.some((col: any) => col.name === "label");
+  const hasSessionLabel = sessionColumnsRefreshed.some((col: any) => col.name === "label");
   
   if (!hasSessionLabel) {
     console.log("Migrating: Adding label to sessions table (Phase 1)");
@@ -129,7 +302,7 @@ function applyMigrations(db: Database.Database) {
   }
 
   // Migration: Add created_at_ms to sessions table (Phase 1 - reliable ordering for "latest ingested")
-  const hasCreatedAtMs = sessionColumns.some((col: any) => col.name === "created_at_ms");
+  const hasCreatedAtMs = sessionColumnsRefreshed.some((col: any) => col.name === "created_at_ms");
   
   if (!hasCreatedAtMs) {
     console.log("Migrating: Adding created_at_ms to sessions table (Phase 1)");
@@ -146,5 +319,32 @@ function applyMigrations(db: Database.Database) {
     // New sessions will always populate created_at_ms in startSession()
   }
 
+  // Migration: Create meepo_mind table (Knowledge Base v1)
+  const meepoMindTables = db.pragma("table_list") as any[];
+  const hasMeepoMind = meepoMindTables.some((t: any) => t.name === "meepo_mind");
+  
+  if (!hasMeepoMind) {
+    console.log("Migrating: Creating meepo_mind table (Knowledge Base v1)");
+    db.exec(`
+      CREATE TABLE meepo_mind (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        gravity REAL NOT NULL,
+        certainty REAL NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        last_accessed_at_ms INTEGER
+      );
+      
+      CREATE INDEX idx_meepo_mind_gravity
+      ON meepo_mind(gravity DESC);
+    `);
+  }
+
   // (Future migrations can go here)
+}
+
+export async function seedMeepoMemories(): Promise<void> {
+  const { seedInitialMeepoMemories } = await import("./ledger/meepo-mind.js");
+  await seedInitialMeepoMemories();
 }

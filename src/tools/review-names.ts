@@ -174,6 +174,7 @@ async function reviewNames(): Promise<void> {
   const npcsPath = path.join(registryDir, "npcs.yml");
   const locationsPath = path.join(registryDir, "locations.yml");
   const factionsPath = path.join(registryDir, "factions.yml");
+  const pcsPath = path.join(registryDir, "pcs.yml");
   const ignorePath = path.join(registryDir, "ignore.yml");
 
   let index = 0;
@@ -187,7 +188,7 @@ async function reviewNames(): Promise<void> {
     console.log(`  Count: ${candidate.count} total, ${candidate.primaryCount} primary`);
     console.log(`\nExamples:`);
     for (const ex of candidate.examples) {
-      console.log(`  > ${ex.slice(0, 70)}...`);
+      console.log(`  > ${ex}`);
     }
     
     // Check if already in registry
@@ -197,9 +198,11 @@ async function reviewNames(): Promise<void> {
     }
 
     console.log(`\nActions:`);
+    console.log(`  [p] new pc`);
     console.log(`  [n] new npc`);
     console.log(`  [l] new location`);
     console.log(`  [f] new faction`);
+    console.log(`  [m] new miscellaneous`);
     console.log(`  [i] add to ignore`);
     console.log(`  [d] delete from pending`);
     console.log(`  [s] skip (leave in pending)`);
@@ -228,35 +231,206 @@ async function reviewNames(): Promise<void> {
       savePending(pendingPath, pendingData);
       console.log(`✅ Deleted from pending`);
       continue; // Don't increment index, next candidate shifts down
-    } else if (choice === "n" || choice === "l" || choice === "f") {
+    } else if (choice === "n" || choice === "l" || choice === "f" || choice === "m" || choice === "p") {
+      // Unified handler for all registry types
+      const miscPath = path.join(registryDir, "misc.yml");
       const typeMap: Record<string, { prefix: string; path: string; arrayKey: string; label: string }> = {
+        p: { prefix: "pc", path: pcsPath, arrayKey: "characters", label: "Player Character" },
         n: { prefix: "npc", path: npcsPath, arrayKey: "characters", label: "NPC" },
         l: { prefix: "loc", path: locationsPath, arrayKey: "locations", label: "Location" },
         f: { prefix: "faction", path: factionsPath, arrayKey: "factions", label: "Faction" },
+        m: { prefix: "misc", path: miscPath, arrayKey: "misc", label: "Miscellaneous" },
       };
 
       const selected = typeMap[choice];
-      const id = generateUniqueId(selected.prefix, candidate.display, registry);
 
-      const entry: any = {
-        id,
-        canonical_name: candidate.display,
-        aliases: [],
-        notes: "",
+      // Ask user for canonical name
+      const userInput = await rl.question(`Enter canonical name for ${selected.label} (or press Enter to use "${candidate.display}"): `);
+      let canonicalName = userInput.trim();
+
+      if (!canonicalName) {
+        canonicalName = candidate.display;
+      }
+
+      const canonicalKey = normKey(canonicalName);
+
+      // Load current type's YAML to check for existing matches
+      let currentTypeData: any = { version: 1 };
+      if (fs.existsSync(selected.path)) {
+        const content = fs.readFileSync(selected.path, "utf-8");
+        currentTypeData = yaml.parse(content) || { version: 1 };
+      }
+
+      const itemsInType = currentTypeData[selected.arrayKey] || [];
+      let existingEntryInType = null;
+
+      // Check if canonical_name already exists in this type
+      for (const item of itemsInType) {
+        if (normKey(item.canonical_name) === canonicalKey) {
+          existingEntryInType = item;
+          break;
+        }
+        if (item.aliases) {
+          for (const alias of item.aliases) {
+            if (normKey(alias) === canonicalKey) {
+              existingEntryInType = item;
+              break;
+            }
+          }
+        }
+      }
+
+      // Smart cross-reference check: see if this name exists in OTHER types
+      let conflictFound = false;
+      const otherTypesMap: Record<string, Array<{ type: string; path: string; label: string; arrayKey: string }>> = {
+        p: [
+          { type: "npcs", path: npcsPath, label: "NPC", arrayKey: "characters" },
+          { type: "locations", path: locationsPath, label: "Location", arrayKey: "locations" },
+          { type: "factions", path: factionsPath, label: "Faction", arrayKey: "factions" },
+        ],
+        n: [
+          { type: "players", path: pcsPath, label: "Player Character", arrayKey: "characters" },
+          { type: "locations", path: locationsPath, label: "Location", arrayKey: "locations" },
+          { type: "factions", path: factionsPath, label: "Faction", arrayKey: "factions" },
+        ],
+        l: [
+          { type: "players", path: pcsPath, label: "Player Character", arrayKey: "characters" },
+          { type: "characters", path: npcsPath, label: "NPC", arrayKey: "characters" },
+          { type: "factions", path: factionsPath, label: "Faction", arrayKey: "factions" },
+        ],
+        f: [
+          { type: "players", path: pcsPath, label: "Player Character", arrayKey: "characters" },
+          { type: "characters", path: npcsPath, label: "NPC", arrayKey: "characters" },
+          { type: "locations", path: locationsPath, label: "Location", arrayKey: "locations" },
+        ],
+        m: [
+          { type: "players", path: pcsPath, label: "Player Character", arrayKey: "characters" },
+          { type: "characters", path: npcsPath, label: "NPC", arrayKey: "characters" },
+          { type: "locations", path: locationsPath, label: "Location", arrayKey: "locations" },
+          { type: "factions", path: factionsPath, label: "Faction", arrayKey: "factions" },
+        ],
       };
 
-      console.log(`➕ Adding ${selected.label}: ${candidate.display} (${id})`);
-      appendToYaml(selected.path, entry, selected.arrayKey);
-      
-      pendingData.pending.splice(index, 1);
-     savePending(pendingPath, pendingData);
-      
-      console.log(`✅ Added to ${path.basename(selected.path)}`);
-      
-      // Reload registry to pick up new entry
-      const updatedRegistry = loadRegistry();
-      Object.assign(registry, updatedRegistry);
-      
+      const otherTypes = otherTypesMap[choice] || [];
+
+      // Only check for conflicts if this is a NEW canonical name in this type
+      if (!existingEntryInType) {
+        for (const otherType of otherTypes) {
+          if (fs.existsSync(otherType.path)) {
+            const content = fs.readFileSync(otherType.path, "utf-8");
+            const data = yaml.parse(content) || {};
+            const items = data[otherType.arrayKey] || [];
+
+            for (const item of items) {
+              if (normKey(item.canonical_name) === canonicalKey) {
+                console.log(`\n⚠️  CONFLICT: "${canonicalName}" already exists as a ${otherType.label}!`);
+                const override = await rl.question(`Are you sure you want to create it as a ${selected.label}? (y/n): `);
+                if (override.trim().toLowerCase() !== "y") {
+                  console.log(`❌ Cancelled.`);
+                  conflictFound = true;
+                  break;
+                }
+              }
+
+              // Also check aliases
+              if (item.aliases) {
+                for (const alias of item.aliases) {
+                  if (normKey(alias) === canonicalKey) {
+                    console.log(`\n⚠️  CONFLICT: "${canonicalName}" is an alias for ${otherType.label} "${item.canonical_name}"!`);
+                    const override = await rl.question(`Are you sure you want to create it as a ${selected.label}? (y/n): `);
+                    if (override.trim().toLowerCase() !== "y") {
+                      console.log(`❌ Cancelled.`);
+                      conflictFound = true;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+
+            if (conflictFound) break;
+          }
+        }
+      }
+
+      if (conflictFound) {
+        continue; // Re-prompt for same candidate
+      }
+
+      // Process the entry
+      if (existingEntryInType) {
+        // Canonical name already exists in this type, add current name as alias
+        const currentKey = normKey(candidate.display);
+
+        if (!existingEntryInType.aliases) {
+          existingEntryInType.aliases = [];
+        }
+
+        const aliasExists =
+          existingEntryInType.aliases.some((a: string) => normKey(a) === currentKey) ||
+          normKey(existingEntryInType.canonical_name) === currentKey;
+
+        if (!aliasExists) {
+          existingEntryInType.aliases.push(candidate.display);
+
+          // Update the YAML file
+          const idx = itemsInType.findIndex((item: any) => item.id === existingEntryInType.id);
+          if (idx >= 0) {
+            currentTypeData[selected.arrayKey][idx] = existingEntryInType;
+            fs.writeFileSync(selected.path, yaml.stringify(currentTypeData));
+            console.log(
+              `✅ Added alias "${candidate.display}" to existing ${selected.label} "${existingEntryInType.canonical_name}"`
+            );
+          }
+        } else {
+          console.log(`ℹ️  "${candidate.display}" already exists as a name for this entry.`);
+        }
+
+        // Remove from pending
+        pendingData.pending.splice(index, 1);
+        savePending(pendingPath, pendingData);
+      } else {
+        // Create new entry
+        const id = generateUniqueId(selected.prefix, canonicalName, registry);
+
+        const entry: any = {
+          id,
+          canonical_name: canonicalName,
+        };
+
+        // For PCs, ask for discord_user_id
+        if (choice === "p") {
+          const discordId = await rl.question("Discord User ID (or press Enter to skip): ");
+          if (discordId.trim()) {
+            entry.discord_user_id = discordId.trim();
+          }
+        }
+
+        // Add original name as alias if different from canonical name
+        const originalKey = normKey(candidate.display);
+        if (originalKey !== canonicalKey) {
+          entry.aliases = [candidate.display];
+        }
+
+        entry.notes = "";
+
+        console.log(`➕ Adding ${selected.label}: ${canonicalName} (${id})`);
+        if (entry.aliases) {
+          console.log(`   Alias: ${entry.aliases.join(", ")}`);
+        }
+        appendToYaml(selected.path, entry, selected.arrayKey);
+
+        console.log(`✅ Added to ${path.basename(selected.path)}`);
+
+        // Remove from pending
+        pendingData.pending.splice(index, 1);
+        savePending(pendingPath, pendingData);
+
+        // Reload registry to pick up new entry
+        const updatedRegistry = loadRegistry();
+        Object.assign(registry, updatedRegistry);
+      }
+
       continue; // Don't increment index
     } else {
       console.log(`❌ Invalid choice. Try again.`);

@@ -53,22 +53,39 @@ export class OpenAiSttProvider implements SttProvider {
   /**
    * Downmix stereo PCM to mono by averaging L and R channels.
    * Improves STT clarity on speech models.
+   * Handles alignment: ensures output is aligned to sample boundaries.
    */
   private downmixToMono(pcm: Buffer, originalChannels: number): Buffer {
     if (originalChannels === 1) return pcm;
 
     // Assuming 16-bit samples (2 bytes per sample)
-    const samples = pcm.length / 2;
-    const monoBuffer = Buffer.alloc(samples);
+    const bytesPerFrame = originalChannels * 2;
+    
+    // **FIX: Clamp to aligned length (must be multiple of bytesPerFrame)**
+    const alignedBytes = pcm.length - (pcm.length % bytesPerFrame);
+    
+    if (alignedBytes <= 0) {
+      // Not enough data for even one frame, return empty mono buffer
+      return Buffer.alloc(0);
+    }
+
+    const samples = alignedBytes / 2; // Total 16-bit samples
+    const monoBuffer = Buffer.alloc((samples / originalChannels) * 2);
 
     for (let i = 0; i < samples; i += originalChannels) {
       let sum = 0;
       for (let ch = 0; ch < originalChannels; ch++) {
         const idx = (i + ch) * 2;
-        sum += pcm.readInt16LE(idx);
+        // **FIX: Clamp index to buffer bounds before reading**
+        if (idx + 1 < pcm.length) {
+          sum += pcm.readInt16LE(idx);
+        }
       }
       const avg = Math.round(sum / originalChannels);
-      monoBuffer.writeInt16LE(Math.max(-32768, Math.min(32767, avg)), (i / originalChannels) * 2);
+      const outIdx = (i / originalChannels) * 2;
+      if (outIdx + 1 <= monoBuffer.length) {
+        monoBuffer.writeInt16LE(Math.max(-32768, Math.min(32767, avg)), outIdx);
+      }
     }
 
     return monoBuffer;

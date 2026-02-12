@@ -94,7 +94,10 @@ export function loadRegistry(opts?: {
   for (const char of allCharacters) {
     if (!char.id) throw new Error(`Character missing id`);
     if (!char.canonical_name) throw new Error(`Character ${char.id} missing canonical_name`);
-    if (!Array.isArray(char.aliases)) throw new Error(`Character ${char.id} missing aliases`);
+    // Default aliases to empty array if missing
+    if (!Array.isArray(char.aliases)) {
+      char.aliases = [];
+    }
 
     if (byId.has(char.id)) throw new Error(`Duplicate id: ${char.id}`);
 
@@ -139,7 +142,10 @@ export function loadRegistry(opts?: {
   for (const loc of allLocations) {
     if (!loc.id) throw new Error(`Location missing id`);
     if (!loc.canonical_name) throw new Error(`Location ${loc.id} missing canonical_name`);
-    if (!Array.isArray(loc.aliases)) throw new Error(`Location ${loc.id} missing aliases`);
+    // Default aliases to empty array if missing
+    if (!Array.isArray(loc.aliases)) {
+      loc.aliases = [];
+    }
 
     if (byId.has(loc.id)) throw new Error(`Duplicate id: ${loc.id}`);
 
@@ -168,7 +174,10 @@ export function loadRegistry(opts?: {
   for (const fac of allFactions) {
     if (!fac.id) throw new Error(`Faction missing id`);
     if (!fac.canonical_name) throw new Error(`Faction ${fac.id} missing canonical_name`);
-    if (!Array.isArray(fac.aliases)) throw new Error(`Faction ${fac.id} missing aliases`);
+    // Default aliases to empty array if missing
+    if (!Array.isArray(fac.aliases)) {
+      fac.aliases = [];
+    }
 
     if (byId.has(fac.id)) throw new Error(`Duplicate id: ${fac.id}`);
 

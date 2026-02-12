@@ -403,7 +403,7 @@ function initializeDb(dbPath: string): Database.Database {
     );
 
     CREATE TABLE IF NOT EXISTS ledger_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT PRIMARY KEY,
       guild_id TEXT NOT NULL,
       channel_id TEXT NOT NULL,
       message_id TEXT NOT NULL,
@@ -463,10 +463,10 @@ function writeLedgerEntries(
   
   const insertStmt = db.prepare(`
     INSERT INTO ledger_entries (
-      guild_id, channel_id, message_id, author_id, author_name,
+      id, guild_id, channel_id, message_id, author_id, author_name,
       timestamp_ms, content, content_norm, session_id, tags, source, narrative_weight,
       speaker_id, t_start_ms, t_end_ms, confidence
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const baseTimestamp = Date.now();
@@ -484,6 +484,7 @@ function writeLedgerEntries(
       const contentNorm = normalizeText(result.transcript);
 
       insertStmt.run(
+        randomUUID(),        // id (generate UUID)
         args.guildId,        // guild_id
         args.channelId,      // channel_id
         messageId,           // message_id
@@ -525,7 +526,9 @@ function createSessionRecord(
   const startedAtMs = baseTimestamp + Math.floor(firstChunk.startSec * 1000);
   const endedAtMs = baseTimestamp + Math.floor(lastChunk.endSec * 1000);
 
-  // Generate UUID as the true session_id invariant
+  // Generate UUID as the true session_id invariant.
+  // session_id is per ingest/run (unique, immutable).
+  // sessionLabel is just a grouping label (can repeat across runs, e.g., "C2E01" ingested twice).
   const sessionId = randomUUID();
 
   const insertStmt = db.prepare(`

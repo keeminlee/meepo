@@ -29,8 +29,8 @@ export function startSession(
   const sessionLabel = opts?.label ?? null;
 
   db.prepare(
-    "INSERT INTO sessions (session_id, guild_id, label, created_at_ms, started_at_ms, ended_at_ms, started_by_id, started_by_name, source) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)"
-  ).run(sessionId, guildId, sessionLabel, now, now, startedById, startedByName, sessionSource);
+    "INSERT INTO sessions (session_id, guild_id, label, created_at_ms, started_at_ms, ended_at_ms, started_by_id, started_by_name, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(sessionId, guildId, sessionLabel, now, now, null, startedById, startedByName, sessionSource);
 
   return {
     session_id: sessionId,
@@ -86,4 +86,16 @@ export function getLatestIngestedSession(guildId: string): Session | null {
     .get() as Session | undefined;
 
   return fallbackRow ?? null;
+}
+
+export function getLatestSessionForLabel(label: string): Session | null {
+  const db = getDb();
+  
+  // Find the most recent session with the given label
+  // Ordered by created_at_ms DESC (immutable creation time ensures deterministic "latest")
+  const row = db
+    .prepare("SELECT * FROM sessions WHERE label = ? ORDER BY created_at_ms DESC LIMIT 1")
+    .get(label) as Session | undefined;
+
+  return row ?? null;
 }

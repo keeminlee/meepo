@@ -20,8 +20,12 @@ import { chat } from "../llm/client.js";
 import { getLedgerInRange, getVoiceAwareContext } from "../ledger/ledger.js";
 import { logSystemEvent } from "../ledger/system.js";
 import { applyPostTtsFx } from "./audioFx.js";
+import { getDiscordClient } from "../bot.js";
+import { appendLedgerEntry } from "../ledger/ledger.js";
+import type { TextChannel } from "discord.js";
 
 const DEBUG_VOICE = process.env.DEBUG_VOICE === "true";
+const VOICE_REPLY_ENABLED = process.env.MEEPO_VOICE_REPLY_ENABLED !== "false"; // Default: true
 
 // Per-guild voice reply cooldown (prevents rapid-fire replies)
 const guildLastVoiceReply = new Map<string, number>();
@@ -92,7 +96,7 @@ export async function respondToVoiceUtterance({
     });
 
     // Build system prompt with persona
-    const systemPrompt = buildMeepoPrompt({
+    const systemPrompt = await buildMeepoPrompt({
       meepo: active,
       recentContext: recentContext || undefined,
       hasVoiceContext: hasVoice,
@@ -113,6 +117,37 @@ export async function respondToVoiceUtterance({
 
     if (DEBUG_VOICE) {
       console.log(`[VoiceReply] LLM response: "${responseText.substring(0, 50)}..."`);
+    }
+
+    // Check if voice replies are enabled
+    if (!VOICE_REPLY_ENABLED) {
+      // Send text reply instead of voice
+      try {
+        const client = getDiscordClient();
+        const channel = await client.channels.fetch(channelId) as TextChannel;
+        
+        if (channel?.isTextBased()) {
+          const reply = await channel.send(responseText);
+          
+          // Log bot's reply to ledger
+          appendLedgerEntry({
+            guild_id: guildId,
+            channel_id: channelId,
+            message_id: reply.id,
+            author_id: client.user!.id,
+            author_name: client.user!.username,
+            timestamp_ms: reply.createdTimestamp,
+            content: responseText,
+            tags: "npc,meepo,spoken",
+          });
+          
+          console.log(`[VoiceReply] Sent text reply (voice disabled) for guild ${guildId}`);
+          return true;
+        }
+      } catch (err: any) {
+        console.error(`[VoiceReply] Error sending text reply:`, err.message ?? err);
+        return false;
+      }
     }
 
     // TTS synthesize

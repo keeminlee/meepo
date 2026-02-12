@@ -39,7 +39,7 @@ export function wakeMeepo(opts: {
 
   // Always start with meepo form on wake (transformations happen after wake)
   db.prepare(
-    "INSERT INTO npc_instances (id, name, guild_id, channel_id, persona_seed, form_id, created_at_ms, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)"
+    "INSERT INTO npc_instances (id, name, guild_id, channel_id, persona_seed, form_id, created_at_ms, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
     id,
     "Meepo",
@@ -47,7 +47,8 @@ export function wakeMeepo(opts: {
     opts.channelId,
     opts.personaSeed ?? null,
     "meepo", // Always start as default meepo
-    now
+    now,
+    1 // is_active
   );
 
   console.log("Meepo woke up as form_id: meepo");

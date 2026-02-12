@@ -10,6 +10,7 @@ import { chat } from "./llm/client.js";
 import { buildMeepoPrompt, buildUserMessage } from "./llm/prompts.js";
 import { setBotNicknameForPersona } from "./meepo/nickname.js";
 import { acquireLock } from "./pidlock.js";
+import { seedMeepoMemories } from "./db.js";
 
 // PID lock: prevent multiple instances
 if (!acquireLock()) {
@@ -25,10 +26,22 @@ const client = new Client({
   ],
 });
 
+// Export client for use in voice reply handler
+export function getDiscordClient(): Client {
+  return client;
+}
+
 registerHandlers(client);
 
-client.once("ready", () => {
+client.once("ready", async () => {
   console.log("Meepo online as " + (client.user?.tag ?? "<unknown>"));
+  
+  // Initialize MeepoMind (seed foundational memories on first run)
+  try {
+    await seedMeepoMemories();
+  } catch (err: any) {
+    console.error("Failed to seed MeepoMind:", err.message ?? err);
+  }
 });
 
 client.on("messageCreate", async (message: any) => {
@@ -283,7 +296,7 @@ client.on("messageCreate", async (message: any) => {
         channelId: message.channelId,
       });
 
-      const systemPrompt = buildMeepoPrompt({
+      const systemPrompt = await buildMeepoPrompt({
         meepo: active,
         recentContext,
         hasVoiceContext: hasVoice,

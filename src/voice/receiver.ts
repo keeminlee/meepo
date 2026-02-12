@@ -48,8 +48,8 @@ const FRAME_BYTES = Math.round(BYTES_PER_SEC * (FRAME_MS / 1000)); // 3840 bytes
 const FRAME_RMS_THRESH = 700;    // permissive
 const MIN_ACTIVE_MS = 200;       // require ~200ms of active audio (10 frames)
 
-// Memory safety: max PCM buffer size (10 seconds @ 48kHz stereo 16-bit = ~2MB)
-const MAX_PCM_BYTES = 10 * BYTES_PER_SEC; // 1,920,000 bytes
+// Memory safety: max PCM buffer size (20 seconds @ 48kHz stereo 16-bit = ~4MB)
+const MAX_PCM_BYTES = 60 * BYTES_PER_SEC; // 3,840,000 bytes
 
 // Singleton STT provider (lazy-initialized)
 let sttProvider: Awaited<ReturnType<typeof getSttProvider>> | null = null;
