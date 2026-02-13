@@ -156,7 +156,7 @@ export function getLedgerInRange(opts: {
     query += " AND narrative_weight IN ('primary', 'elevated')";
   }
   
-  query += " ORDER BY timestamp_ms ASC LIMIT ?";
+  query += " ORDER BY timestamp_ms ASC, id ASC LIMIT ?";
 
   const rows = db.prepare(query).all(opts.guildId, opts.startMs, endMs, limit) as LedgerEntry[];
 
@@ -215,7 +215,7 @@ export function getVoiceAwareContext(opts: {
       AND timestamp_ms >= ? 
       AND narrative_weight IN ('primary', 'elevated')
       AND tags NOT LIKE '%system%'
-    ORDER BY timestamp_ms ASC 
+    ORDER BY timestamp_ms ASC, id ASC
     LIMIT ?
   `;
 

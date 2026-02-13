@@ -99,3 +99,34 @@ export function getLatestSessionForLabel(label: string): Session | null {
 
   return row ?? null;
 }
+
+/**
+ * Fetch all ingested sessions, optionally filtered by guild.
+ * Returns sessions ordered by created_at_ms DESC (most recent first).
+ * 
+ * Useful for:
+ * - Running batch operations (normalization, meecap generation) on multiple ingests
+ * - Gathering all session IDs from a batch of backlog recordings
+ * 
+ * @param guildId - Optional: filter to specific guild (default: all guilds)
+ * @param limit - Optional: max number of sessions to return (default: no limit)
+ * @returns Array of ingested sessions, sorted newest-first
+ */
+export function getIngestedSessions(guildId?: string, limit?: number): Session[] {
+  const db = getDb();
+  
+  let query = "SELECT * FROM sessions WHERE source = 'ingest-media' ORDER BY created_at_ms DESC";
+  const params: any[] = [];
+
+  if (guildId) {
+    query = "SELECT * FROM sessions WHERE source = 'ingest-media' AND guild_id = ? ORDER BY created_at_ms DESC";
+    params.push(guildId);
+  }
+
+  if (limit) {
+    query += ` LIMIT ${limit}`;
+  }
+
+  const rows = db.prepare(query).all(...params) as Session[];
+  return rows;
+}

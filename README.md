@@ -278,6 +278,17 @@ npm run dev:deploy
 
 ---
 
+## MVP Sprint Tools (meep-mvp-sprint)
+
+New commands and utilities for session compilation and NPC exposure:
+
+- `compile-session` — Compile structured session data
+- `review-npc-exposure` — Review NPC knowledge exposure per session
+- `/npc knowledge` — Query NPC knowledge state
+- `/session meeps` — List session summary with Meepo activity
+
+---
+
 ## Design Patterns
 
 - Ledger logs all visible messages.

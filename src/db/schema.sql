@@ -122,3 +122,89 @@ CREATE TABLE IF NOT EXISTS meepo_mind (
 
 CREATE INDEX IF NOT EXISTS idx_meepo_mind_gravity
 ON meepo_mind(gravity DESC);
+
+-- Phase 1C: Structured event extraction
+-- events: Extract structured narrative events from session transcripts
+-- Bridges ledger (raw) → meecaps (narrative) with deterministic event records
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY,                     -- UUID
+  session_id TEXT NOT NULL,                -- FK to sessions
+  event_type TEXT NOT NULL,                -- 'action', 'dialogue', 'discovery', 'emotional', 'conflict'
+  participants TEXT NOT NULL,              -- JSON array of normalized character names
+  description TEXT NOT NULL,               -- Structured event summary
+  confidence REAL NOT NULL,                -- Extraction confidence (0.0–1.0)
+  start_index INTEGER,                     -- Start index in transcript (0-based)
+  end_index INTEGER,                       -- End index in transcript (0-based, inclusive)
+  timestamp_ms INTEGER NOT NULL,           -- When event occurred in session
+  created_at_ms INTEGER NOT NULL,
+  is_recap INTEGER DEFAULT 0,              -- 0 = gameplay event, 1 = recap/OOC preamble (skipped in analysis)
+  
+  -- Stable identity: recompiling same session produces same event IDs
+  UNIQUE(session_id, start_index, end_index, event_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_session
+ON events(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_events_type
+ON events(event_type);
+
+-- character_event_index: Map PCs to events with exposure classification
+-- Supports lookup of "what events involved this PC" and how they were exposed (direct/witnessed)
+CREATE TABLE IF NOT EXISTS character_event_index (
+  event_id TEXT NOT NULL,                   -- FK to events
+  pc_id TEXT NOT NULL,                      -- PC identifier from registry (e.g., 'pc_jamison')
+  exposure_type TEXT NOT NULL,              -- 'direct' (spoke in span) or 'witnessed' (party member present but didn't speak)
+  created_at_ms INTEGER NOT NULL,
+  
+  PRIMARY KEY (event_id, pc_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_char_event_pc
+ON character_event_index(pc_id);
+
+CREATE INDEX IF NOT EXISTS idx_char_event_exposure
+ON character_event_index(exposure_type);
+
+-- meep_usages: Track when and how Meepo responded
+-- Supports analysis of response patterns, cost tracking, memory usage
+CREATE TABLE IF NOT EXISTS meep_usages (
+  id TEXT PRIMARY KEY,                     -- UUID
+  session_id TEXT,                         -- FK to sessions (nullable for non-session triggers)
+  message_id TEXT NOT NULL,                -- Discord message ID that triggered response
+  guild_id TEXT NOT NULL,                  -- Context
+  channel_id TEXT NOT NULL,                -- Context
+  triggered_at_ms INTEGER NOT NULL,        -- When response was triggered
+  response_tokens INTEGER,                 -- LLM tokens in response (null if LLM disabled)
+  used_memories TEXT,                      -- JSON array of memory IDs referenced
+  created_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_meep_usages_session
+ON meep_usages(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_meep_usages_time
+ON meep_usages(guild_id, channel_id, triggered_at_ms);
+
+-- meepomind_beats: Narrative beats in Meepo's emotional arc
+-- Links structured events to Meepo's memory formation
+-- Bridges events → meepo_mind with emotional/narrative significance
+CREATE TABLE IF NOT EXISTS meepomind_beats (
+  id TEXT PRIMARY KEY,                     -- UUID
+  session_id TEXT NOT NULL,                -- FK to sessions
+  memory_id TEXT,                          -- FK to meepo_mind (nullable if beat not yet materialized into memory)
+  event_id TEXT,                           -- FK to events (nullable if beat is abstract/cross-session)
+  beat_type TEXT NOT NULL,                 -- 'growth', 'fracture', 'bonding', 'revelation', 'loss'
+  description TEXT NOT NULL,               -- Why this moment mattered
+  gravity REAL NOT NULL,                   -- Importance (0.0–1.0), used for memory retrieval weighting
+  created_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_meepomind_beats_session
+ON meepomind_beats(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_meepomind_beats_memory
+ON meepomind_beats(memory_id);
+
+CREATE INDEX IF NOT EXISTS idx_meepomind_beats_gravity
+ON meepomind_beats(gravity DESC);
