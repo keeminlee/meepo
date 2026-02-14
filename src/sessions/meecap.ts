@@ -18,6 +18,8 @@
 
 import { chat } from "../llm/client.js";
 import type { LedgerEntry } from "../ledger/ledger.js";
+import { getLedgerForSession } from "../ledger/ledger.js";
+import { buildTranscript } from "../ledger/transcripts.js";
 import { loadRegistry } from "../registry/loadRegistry.js";
 import fs from "fs";
 import path from "path";
@@ -136,10 +138,31 @@ export type Meecap = {
   scenes: MeecapScene[];
 };
 
+// ============================================================================
+// Types: Meecap Beats-Only Schema (Deterministic)
+// ============================================================================
+
+export type MeecapBeatLite = {
+  text: string;          // Literal sentence from narrative (citations removed)
+  lines: number[];       // Explicit line list (e.g., [0,1,2,3])
+};
+
+export type MeecapBeats = {
+  version: 1;
+  session_id: string;
+  session_span: {
+    lines: LineSpan;
+    ledger_id_range: LedgerIdRange;
+    timestamp_range: { start: string; end: string };
+  };
+  beats: MeecapBeatLite[];
+};
+
 export type MeecapGenerationResult = {
   text: string;        // Discord message response
   meecap?: Meecap;     // Structured output (V1 only)
   narrative?: string;  // Prose narrative (narrative mode)
+  beatsJson?: MeecapBeats; // Deterministic beats-only JSON (from narrative)
 };
 
 /**
@@ -157,6 +180,7 @@ export async function generateMeecapStub(args: {
   sessionId: string;
   sessionLabel?: string | null;
   entries: LedgerEntry[];
+  buildBeatsJson?: boolean;
 }): Promise<MeecapGenerationResult> {
   const mode = getMeecapMode();
 
@@ -176,24 +200,32 @@ async function generateMeecapNarrative(args: {
   sessionId: string;
   sessionLabel?: string | null;
   entries: LedgerEntry[];
+  buildBeatsJson?: boolean;
 }): Promise<MeecapGenerationResult> {
-  const { sessionId, sessionLabel, entries } = args;
-
-  if (!entries || entries.length === 0) {
-    return {
-      text: "❌ No ledger entries found for this session.",
-    };
-  }
+  const { sessionId, sessionLabel, entries: _entries, buildBeatsJson = true } = args;
 
   try {
-    // Build transcript with line indices
-    const transcript = buildMeecapTranscript(entries);
+    // Build transcript with line indices using shared builder
+    const transcript = buildMeecapTranscript(sessionId, true);
+    
+    // Get transcript entries to determine entry count
+    const transcriptEntries = buildTranscript(sessionId, true);
+    const entryCount = transcriptEntries.length;
+    
+    // Get ledger entries for beats JSON generation (needs ledger IDs)
+    const entries = getLedgerForSession({ sessionId, primaryOnly: true });
+    
+    if (entryCount === 0) {
+      return {
+        text: "❌ No ledger entries found for this session.",
+      };
+    }
 
     // Build narrative-specific prompts
     const { systemPrompt, userMessage } = buildNarrativeMeecapPrompts({
       sessionId,
       transcript,
-      entryCount: entries.length,
+      entryCount,
     });
 
     // Call LLM
@@ -221,6 +253,22 @@ async function generateMeecapNarrative(args: {
 
 ${transcript}`;
 
+    // Deterministically derive beats-only JSON from narrative output
+    let beatsJson: MeecapBeats | undefined;
+    let beatsWarning = "";
+    if (buildBeatsJson) {
+      const beatsResult = buildBeatsJsonFromNarrative({
+        sessionId,
+        lineCount: entryCount,
+        narrative: fullMeecap,
+        entries,
+      });
+      beatsJson = beatsResult.ok ? beatsResult.beats : undefined;
+      beatsWarning = beatsResult.ok ? "" : `\n**Beats JSON:** Not generated (${beatsResult.error})`;
+    } else {
+      beatsWarning = "\n**Beats JSON:** Skipped by flag";
+    }
+
     // Save to file system
     const filepath = saveNarrativeToFile({
       sessionId,
@@ -237,16 +285,17 @@ ${transcript}`;
 **Stats:**
 - Narrative word count: ~${narrativeWordCount}
 - Total word count (with transcript): ~${fullWordCount}
-- Transcript lines: ${entries.length}
+- Transcript lines: ${entryCount}
 
 **Storage:** Database (meecaps table)${fileLocation}
 **Retrieval:** Use \`/session recap range=recording style=narrative\` to retrieve
 
-The narrative Meecap has been saved and is ready for review/editing.`;
+The narrative Meecap has been saved and is ready for review/editing.${beatsWarning}`;
 
     return {
       text,
       narrative: fullMeecap,
+      beatsJson,
     };
   } catch (err: any) {
     return {
@@ -265,17 +314,21 @@ async function generateMeecapV1Json(args: {
   sessionLabel?: string | null;
   entries: LedgerEntry[];
 }): Promise<MeecapGenerationResult> {
-  const { sessionId, sessionLabel, entries } = args;
-
-  if (!entries || entries.length === 0) {
-    return {
-      text: "❌ No ledger entries found for this session.",
-    };
-  }
+  const { sessionId, sessionLabel, entries: _entries } = args;
 
   try {
-    // Build transcript with line indices and IDs
-    const transcript = buildMeecapTranscript(entries);
+    // Build transcript with line indices using shared builder
+    const transcript = buildMeecapTranscript(sessionId, true);
+    
+    // Get entries for validation - using ledger query for compatibility with validateMeecapV1
+    // which needs ledger IDs for reference validation
+    const entries = getLedgerForSession({ sessionId, primaryOnly: true });
+    
+    if (!entries || entries.length === 0) {
+      return {
+        text: "❌ No ledger entries found for this session.",
+      };
+    }
 
     // Pre-fill session span (immutable)
     const sessionSpan = {
@@ -757,14 +810,138 @@ function validateMeecapNarrative(prose: string): string[] {
  * [L0 id=abc123] [timestamp] speaker: content
  * [L1 id=def456] [timestamp] speaker: content
  */
-export function buildMeecapTranscript(entries: LedgerEntry[]): string {
+/**
+ * Build narrative-style transcript string from transcript entries.
+ * Format: [L#] Author: Content
+ */
+export function buildMeecapTranscript(sessionId: string, primaryOnly: boolean = true): string {
+  const entries = buildTranscript(sessionId, primaryOnly);
   return entries
-    .map((e, idx) => {
-      // Use normalized content if available, fallback to raw
-      const content = e.content_norm ?? e.content;
-      return `[L${idx}] ${e.author_name}: ${content}`;
-    })
+    .map((e) => `[L${e.line_index}] ${e.author_name}: ${e.content}`)
     .join("\n");
+}
+
+/**
+ * Legacy wrapper for compatibility (may be removed after migration).
+ * Use buildMeecapTranscript(sessionId) instead.
+ */
+export function buildMeecapTranscriptFromEntries(entries: LedgerEntry[]): string {
+  return entries
+    .map((e, idx) => `[L${idx}] ${e.author_name}: ${e.content_norm ?? e.content}`)
+    .join("\n");
+}
+
+// ============================================================================
+// Deterministic Narrative -> Beats JSON
+// ============================================================================
+
+function extractSection(fullText: string, startMarker: string, endMarker: string): string | null {
+  const startIdx = fullText.indexOf(startMarker);
+  if (startIdx === -1) {
+    return null;
+  }
+  const endIdx = fullText.indexOf(endMarker, startIdx + startMarker.length);
+  if (endIdx === -1) {
+    return null;
+  }
+  return fullText.slice(startIdx + startMarker.length, endIdx).trim();
+}
+
+function parseLineRef(ref: string): number[] {
+  const normalized = ref.replace(/[–—]/g, "-");
+  const match = normalized.match(/L(\d+)(?:-L(\d+))?/);
+  if (!match) {
+    return [];
+  }
+  const start = Number(match[1]);
+  const end = match[2] ? Number(match[2]) : start;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return [];
+  }
+  const min = Math.min(start, end);
+  const max = Math.max(start, end);
+  const lines: number[] = [];
+  for (let i = min; i <= max; i++) {
+    lines.push(i);
+  }
+  return lines;
+}
+
+export function buildBeatsJsonFromNarrative(args: {
+  sessionId: string;
+  lineCount: number;
+  narrative: string;
+  entries?: LedgerEntry[];
+}): { ok: true; beats: MeecapBeats } | { ok: false; error: string } {
+  const { sessionId, lineCount, narrative, entries } = args;
+
+  const narrativeSection = extractSection(narrative, "=== NARRATIVE ===", "=== SOURCE TRANSCRIPT ===");
+  if (!narrativeSection) {
+    return { ok: false, error: "Missing NARRATIVE or SOURCE TRANSCRIPT section" };
+  }
+
+  const beats: MeecapBeatLite[] = [];
+  const linesSeen = new Set<number>();
+  const lineMax = lineCount - 1;
+
+  const lines = narrativeSection.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const sentenceRegex = /(.+?)\s*\((L\d+(?:-L\d+)?)\)/g;
+
+  for (const line of lines) {
+    let match: RegExpExecArray | null;
+    while ((match = sentenceRegex.exec(line)) !== null) {
+      const rawText = match[1].trim();
+      const lineRef = match[2];
+      const lineList = parseLineRef(lineRef);
+      const filtered = lineList.filter((n) => n >= 0 && n <= lineMax);
+      const uniqueSorted = Array.from(new Set(filtered)).sort((a, b) => a - b);
+
+      if (!rawText || uniqueSorted.length === 0) {
+        continue;
+      }
+
+      for (const n of uniqueSorted) {
+        linesSeen.add(n);
+      }
+
+      beats.push({
+        text: rawText,
+        lines: uniqueSorted,
+      });
+    }
+  }
+
+  if (beats.length === 0) {
+    return { ok: false, error: "No beats parsed from narrative (missing citations?)" };
+  }
+
+  const sessionSpan = {
+    lines: { start: 0, end: lineMax },
+    ledger_id_range: entries ? {
+      start: entries[0]?.id ?? "",
+      end: entries[lineMax]?.id ?? "",
+    } : {
+      start: "unknown",
+      end: "unknown",
+    },
+    timestamp_range: entries ? {
+      start: new Date(entries[0]?.timestamp_ms ?? 0).toISOString(),
+      end: new Date(entries[lineMax]?.timestamp_ms ?? 0).toISOString(),
+    } : {
+      start: new Date(0).toISOString(),
+      end: new Date(0).toISOString(),
+    },
+  };
+
+  return {
+    ok: true,
+    beats: {
+      version: 1,
+      session_id: sessionId,
+      session_span: sessionSpan,
+      beats,
+    },
+  };
 }
 
 // ============================================================================

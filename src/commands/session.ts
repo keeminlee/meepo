@@ -3,7 +3,7 @@ import { getActiveSession, getLatestIngestedSession, getLatestSessionForLabel } 
 import { getLedgerInRange, getLedgerForSession } from "../ledger/ledger.js";
 import type { LedgerEntry } from "../ledger/ledger.js";
 import { chat } from "../llm/client.js";
-import { generateMeecapStub, validateMeecapV1 } from "../sessions/meecap.js";
+import { buildBeatsJsonFromNarrative, generateMeecapStub, validateMeecapV1 } from "../sessions/meecap.js";
 import { getDb } from "../db.js";
 import { loadRegistry } from "../registry/loadRegistry.js";
 import path from "path";
@@ -171,6 +171,18 @@ export const session = {
           opt
             .setName("force")
             .setDescription("Regenerate even if meecap already exists. Default: false")
+            .setRequired(false)
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName("all")
+            .setDescription("Generate missing meecaps for all labeled sessions (skips labels with test/chat)")
+            .setRequired(false)
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName("no_json")
+            .setDescription("Do not derive beats JSON from narrative meecap")
             .setRequired(false)
         )
         .addStringOption((opt) =>
@@ -450,9 +462,276 @@ This recap should feel like:
 
     if (sub === "meecap") {
       const force = interaction.options.getBoolean("force") ?? false;
+      const all = interaction.options.getBoolean("all") ?? false;
+      const noJson = interaction.options.getBoolean("no_json") ?? false;
       const source = interaction.options.getString("source") ?? "primary";
       const label = interaction.options.getString("label") ?? null;
       const primaryOnly = source === "primary";
+
+      const db = getDb();
+      const meecapMode = process.env.MEECAP_MODE ?? "narrative";
+      const columns = db.pragma("table_info(meecaps)") as any[];
+      const hasNarrativeCol = columns.some((col: any) => col.name === "meecap_narrative");
+
+      const deriveBeatsJson = async (session: any, narrative: string) => {
+        const entries = getLedgerForSession({ sessionId: session.session_id, primaryOnly });
+        if (!entries || entries.length === 0) {
+          return { ok: false, message: `No ledger entries found for session ${session.session_id}` };
+        }
+
+        const beatsResult = buildBeatsJsonFromNarrative({
+          sessionId: session.session_id,
+          lineCount: entries.length,
+          narrative,
+        });
+
+        if (!beatsResult.ok) {
+          return { ok: false, message: beatsResult.error };
+        }
+
+        db.prepare(`
+          UPDATE meecaps
+          SET meecap_json = ?, updated_at_ms = ?
+          WHERE session_id = ?
+        `).run(
+          JSON.stringify(beatsResult.beats),
+          Date.now(),
+          session.session_id
+        );
+
+        return { ok: true, message: "Derived beats JSON from existing narrative meecap." };
+      };
+
+      const generateAndPersist = async (session: any, entries: LedgerEntry[], emitAttachments: boolean) => {
+        console.info("Meecap start", {
+          sessionId: session.session_id,
+          label: session.label ?? null,
+          mode: meecapMode,
+        });
+        const meecapResult = await generateMeecapStub({
+          sessionId: session.session_id,
+          sessionLabel: session.label,
+          entries,
+          buildBeatsJson: !noJson,
+        });
+
+        if (meecapMode === "narrative") {
+          if (!meecapResult.narrative) {
+            console.info("Meecap end", {
+              sessionId: session.session_id,
+              label: session.label ?? null,
+              mode: meecapMode,
+              ok: false,
+            });
+            return { ok: false, message: "Failed to generate narrative: " + meecapResult.text };
+          }
+
+          if (!hasNarrativeCol) {
+            console.info("Meecap end", {
+              sessionId: session.session_id,
+              label: session.label ?? null,
+              mode: meecapMode,
+              ok: false,
+            });
+            return { ok: false, message: "Database schema outdated. Please restart the bot to apply migrations." };
+          }
+
+          const now = Date.now();
+          db.prepare(`
+            INSERT INTO meecaps (session_id, meecap_json, meecap_narrative, model, created_at_ms, updated_at_ms)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+              meecap_json = excluded.meecap_json,
+              meecap_narrative = excluded.meecap_narrative,
+              model = excluded.model,
+              updated_at_ms = excluded.updated_at_ms
+          `).run(
+            session.session_id,
+            meecapResult.beatsJson ? JSON.stringify(meecapResult.beatsJson) : null,
+            meecapResult.narrative,
+            "claude-opus",
+            now,
+            now
+          );
+
+          if (emitAttachments) {
+            const mdBuffer = Buffer.from(meecapResult.narrative, "utf-8");
+            const attachment = new AttachmentBuilder(mdBuffer, {
+              name: `meecap-narrative-${Date.now()}.md`,
+            });
+            await interaction.editReply({
+              content: meecapResult.text,
+              files: [attachment],
+            });
+          }
+
+          console.info("Meecap end", {
+            sessionId: session.session_id,
+            label: session.label ?? null,
+            mode: meecapMode,
+            ok: true,
+          });
+          return { ok: true, message: meecapResult.text };
+        }
+
+        if (!meecapResult.meecap) {
+          console.info("Meecap end", {
+            sessionId: session.session_id,
+            label: session.label ?? null,
+            mode: meecapMode,
+            ok: false,
+          });
+          return { ok: false, message: "Failed to generate meecap: " + meecapResult.text };
+        }
+
+        const validationErrors = validateMeecapV1(meecapResult.meecap, entries);
+        if (validationErrors.length > 0) {
+          const errorSummary = validationErrors.map((e) => `- ${e.field}: ${e.message}`).join("\n");
+          console.error("Meecap validation failed:", errorSummary);
+          console.info("Meecap end", {
+            sessionId: session.session_id,
+            label: session.label ?? null,
+            mode: meecapMode,
+            ok: false,
+          });
+          return { ok: false, message: `Meecap validation failed:\n${errorSummary}` };
+        }
+
+        const now = Date.now();
+        db.prepare(`
+          INSERT INTO meecaps (session_id, meecap_json, meecap_narrative, model, created_at_ms, updated_at_ms)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(session_id) DO UPDATE SET
+            meecap_json = excluded.meecap_json,
+            meecap_narrative = excluded.meecap_narrative,
+            model = excluded.model,
+            updated_at_ms = excluded.updated_at_ms
+        `).run(
+          session.session_id,
+          JSON.stringify(meecapResult.meecap),
+          null,
+          "claude-opus",
+          now,
+          now
+        );
+
+        const meecapsDir = path.join(process.cwd(), "data", "meecaps");
+        if (!fs.existsSync(meecapsDir)) {
+          fs.mkdirSync(meecapsDir, { recursive: true });
+        }
+        const meecapFilename = `${session.session_id}__${now}.json`;
+        const meecapPath = path.join(meecapsDir, meecapFilename);
+        fs.writeFileSync(meecapPath, JSON.stringify(meecapResult.meecap, null, 2));
+
+        const latestPath = path.join(meecapsDir, "latest.json");
+        fs.writeFileSync(latestPath, JSON.stringify(meecapResult.meecap, null, 2));
+
+        if (emitAttachments) {
+          const jsonBuffer = Buffer.from(JSON.stringify(meecapResult.meecap, null, 2), "utf-8");
+          const attachment = new AttachmentBuilder(jsonBuffer, {
+            name: `meecap_${meecapResult.meecap.session_id}_${Date.now()}.json`,
+          });
+          await interaction.editReply({
+            content: meecapResult.text,
+            files: [attachment],
+          });
+        }
+
+        console.info("Meecap end", {
+          sessionId: session.session_id,
+          label: session.label ?? null,
+          mode: meecapMode,
+          ok: true,
+        });
+        return { ok: true, message: meecapResult.text };
+      };
+
+      if (all) {
+        await interaction.deferReply({ ephemeral: true });
+
+        const sessions = db
+          .prepare(`
+            SELECT s.session_id, s.label, s.created_at_ms, m.meecap_json, m.meecap_narrative
+            FROM sessions s
+            LEFT JOIN meecaps m ON m.session_id = s.session_id
+            WHERE s.label IS NOT NULL
+              AND trim(s.label) <> ''
+              AND lower(s.label) NOT LIKE '%test%'
+              AND lower(s.label) NOT LIKE '%chat%'
+              AND (m.session_id IS NULL OR m.meecap_json IS NULL)
+            ORDER BY s.created_at_ms DESC
+          `)
+          .all() as Array<{
+            session_id: string;
+            label: string | null;
+            created_at_ms: number;
+            meecap_json: string | null;
+            meecap_narrative: string | null;
+          }>;
+
+        if (sessions.length === 0) {
+          await interaction.editReply({
+            content: "No eligible labeled sessions without meecaps found.",
+          });
+          return;
+        }
+
+        let created = 0;
+        let skipped = 0;
+        let failed = 0;
+        const errors: string[] = [];
+
+        for (const s of sessions) {
+          if (s.meecap_json) {
+            skipped++;
+            continue;
+          }
+
+          if (s.meecap_narrative) {
+            if (noJson) {
+              skipped++;
+              continue;
+            }
+
+            const result = await deriveBeatsJson(s, s.meecap_narrative);
+            if (result.ok) {
+              created++;
+            } else {
+              failed++;
+              errors.push(`${s.label ?? s.session_id}: ${result.message}`);
+            }
+            continue;
+          }
+
+          const entries = getLedgerForSession({ sessionId: s.session_id, primaryOnly });
+          if (!entries || entries.length === 0) {
+            skipped++;
+            continue;
+          }
+
+          try {
+            const result = await generateAndPersist(s, entries, false);
+            if (result.ok) {
+              created++;
+            } else {
+              failed++;
+              errors.push(`${s.label ?? s.session_id}: ${result.message}`);
+            }
+          } catch (err: any) {
+            failed++;
+            errors.push(`${s.label ?? s.session_id}: ${err.message ?? "Unknown error"}`);
+          }
+        }
+
+        const errorSummary = errors.length > 0
+          ? `\nErrors (first 5):\n- ${errors.slice(0, 5).join("\n- ")}`
+          : "";
+
+        await interaction.editReply({
+          content: `Meecap batch complete. Created: ${created}, skipped: ${skipped}, failed: ${failed}.${errorSummary}`,
+        });
+        return;
+      }
 
       // Resolve most recent session
       let session: any = null;
@@ -484,16 +763,34 @@ This recap should feel like:
 
       // Check if meecap already exists (unless --force)
       if (!force) {
-        const db = getDb();
         const existing = db
-          .prepare("SELECT session_id FROM meecaps WHERE session_id = ?")
-          .get(session.session_id);
-        
-        if (existing) {
+          .prepare("SELECT meecap_json, meecap_narrative FROM meecaps WHERE session_id = ?")
+          .get(session.session_id) as { meecap_json?: string | null; meecap_narrative?: string | null } | undefined;
+
+        if (existing?.meecap_json) {
           await interaction.reply({
-            content: `✅ Meecap already exists for this session. Use \`--force\` to regenerate.`,
+            content: `✅ Meecap JSON already exists for this session. Use \`--force\` to regenerate.`,
             ephemeral: true,
           });
+          return;
+        }
+
+        if (existing?.meecap_narrative) {
+          if (noJson) {
+            await interaction.reply({
+              content: "✅ Meecap narrative exists. JSON derivation skipped by flag.",
+              ephemeral: true,
+            });
+            return;
+          }
+
+          await interaction.deferReply({ ephemeral: true });
+          const result = await deriveBeatsJson(session, existing.meecap_narrative);
+          if (result.ok) {
+            await interaction.editReply({ content: result.message });
+          } else {
+            await interaction.editReply({ content: `Failed to derive beats JSON: ${result.message}` });
+          }
           return;
         }
       }
@@ -512,132 +809,10 @@ This recap should feel like:
       await interaction.deferReply({ ephemeral: true });
 
       try {
-        const meecapResult = await generateMeecapStub({
-          sessionId: session.session_id,
-          sessionLabel: session.label,
-          entries,
-        });
-
-        const meecapMode = process.env.MEECAP_MODE ?? "narrative";
-
-        // Handle based on mode
-        if (meecapMode === "narrative") {
-          // Narrative mode: persist prose
-          if (!meecapResult.narrative) {
-            await interaction.editReply({
-              content: "Failed to generate narrative: " + meecapResult.text,
-            });
-            return;
-          }
-
-          const db = getDb();
-          const now = Date.now();
-          
-          // Check if new narrative columns exist (migration check)
-          const columns = db.pragma("table_info(meecaps)") as any[];
-          const hasNarrativeCol = columns.some((col: any) => col.name === "meecap_narrative");
-          
-          if (hasNarrativeCol) {
-            // New schema: use narrative columns
-            db.prepare(`
-              INSERT INTO meecaps (session_id, meecap_json, meecap_narrative, model, created_at_ms, updated_at_ms)
-              VALUES (?, ?, ?, ?, ?, ?)
-              ON CONFLICT(session_id) DO UPDATE SET
-                meecap_json = excluded.meecap_json,
-                meecap_narrative = excluded.meecap_narrative,
-                model = excluded.model,
-                updated_at_ms = excluded.updated_at_ms
-            `).run(
-              session.session_id,
-              null,
-              meecapResult.narrative,
-              "claude-opus",
-              now,
-              now
-            );
-          } else {
-            // Old schema fallback: store in meecap_json (narrative mode not supported on old schema)
-            await interaction.editReply({
-              content: "⚠️ Database schema outdated. Please restart the bot to apply migrations, then try again.",
-            });
-            return;
-          }
-
-          // Export prose as attachment for Discord
-          const mdBuffer = Buffer.from(meecapResult.narrative, 'utf-8');
-          const attachment = new AttachmentBuilder(mdBuffer, {
-            name: `meecap-narrative-${Date.now()}.md`,
-          });
-
+        const result = await generateAndPersist(session, entries, true);
+        if (!result.ok) {
           await interaction.editReply({
-            content: meecapResult.text,
-            files: [attachment],
-          });
-        } else {
-          // V1 JSON mode: validate and persist JSON
-          if (!meecapResult.meecap) {
-            await interaction.editReply({
-              content: "Failed to generate meecap: " + meecapResult.text,
-            });
-            return;
-          }
-
-          const validationErrors = validateMeecapV1(meecapResult.meecap, entries);
-          
-          if (validationErrors.length > 0) {
-            const errorSummary = validationErrors
-              .map((e) => `- ${e.field}: ${e.message}`)
-              .join("\n");
-            console.error("Meecap validation failed:", errorSummary);
-            await interaction.editReply({
-              content: `❌ Meecap validation failed:\n\`\`\`\n${errorSummary}\n\`\`\``,
-            });
-            return;
-          }
-
-          // Validation passed, persist to database
-          const db = getDb();
-          const now = Date.now();
-          
-          db.prepare(`
-            INSERT INTO meecaps (session_id, meecap_json, meecap_narrative, model, created_at_ms, updated_at_ms)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(session_id) DO UPDATE SET
-              meecap_json = excluded.meecap_json,
-              meecap_narrative = excluded.meecap_narrative,
-              model = excluded.model,
-              updated_at_ms = excluded.updated_at_ms
-          `).run(
-            session.session_id,
-            JSON.stringify(meecapResult.meecap),
-            null,
-            "claude-opus", // TODO: Extract actual model from chat response
-            now,
-            now
-          );
-
-          // Export to disk for inspection/diffing
-          const meecapsDir = path.join(process.cwd(), "data", "meecaps");
-          if (!fs.existsSync(meecapsDir)) {
-            fs.mkdirSync(meecapsDir, { recursive: true });
-          }
-          const meecapFilename = `${session.session_id}__${now}.json`;
-          const meecapPath = path.join(meecapsDir, meecapFilename);
-          fs.writeFileSync(meecapPath, JSON.stringify(meecapResult.meecap, null, 2));
-
-          // Also write latest.json for quick diffing
-          const latestPath = path.join(meecapsDir, "latest.json");
-          fs.writeFileSync(latestPath, JSON.stringify(meecapResult.meecap, null, 2));
-
-          // Export meecap JSON as attachment
-          const jsonBuffer = Buffer.from(JSON.stringify(meecapResult.meecap, null, 2), 'utf-8');
-          const attachment = new AttachmentBuilder(jsonBuffer, {
-            name: `meecap_${meecapResult.meecap.session_id}_${Date.now()}.json`,
-          });
-
-          await interaction.editReply({
-            content: meecapResult.text,
-            files: [attachment],
+            content: result.message ?? "Failed to generate meecap.",
           });
         }
       } catch (err: any) {

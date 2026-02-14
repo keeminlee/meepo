@@ -23,9 +23,10 @@ import path from "node:path";
 import * as readline from "node:readline";
 import YAML from "yaml";
 import { getDb } from "../db.js";
+import { buildTranscript } from "../ledger/transcripts.js";
+import { chat } from "../llm/client.js";
 
 const DEFAULT_NARRATIVE_WEIGHT = "primary";
-import { chat } from "../llm/client.js";
 
 // Parse CLI arguments
 function parseArgs(): { sessionLabel: string | null; force: boolean } {
@@ -60,37 +61,18 @@ function getSession(sessionLabel: string) {
 }
 
 // Load transcript for session (in chronological order)
-// Uses content_norm (normalized) if available, falls back to raw content
+// Uses shared transcript builder to ensure consistency with Meecap
 function loadSessionTranscript(sessionId: string): {
   text: string;
   entries: Array<{ index: number; author: string; content: string; timestamp: number }>;
 } {
-  const db = getDb();
+  const transcriptEntries = buildTranscript(sessionId, true); // primaryOnly=true
 
-  // Accept both 'text' (Discord messages) and 'offline_ingest' (ingested audio transcripts)
-  // Only include primary narrative entries by default
-  // CRITICAL: Sort by timestamp_ms + id for deterministic ordering
-  const rows = db
-    .prepare(
-      `SELECT author_name, content, content_norm, timestamp_ms 
-       FROM ledger_entries 
-       WHERE session_id = ?
-         AND source IN ('text', 'offline_ingest')
-         AND narrative_weight = ?
-       ORDER BY timestamp_ms ASC, id ASC`
-    )
-    .all(sessionId, DEFAULT_NARRATIVE_WEIGHT) as Array<{ author_name: string; content: string; content_norm: string | null; timestamp_ms: number }>;
-
-  if (rows.length === 0) {
-    throw new Error(`No transcript found for session: ${sessionId} (checked for 'text' and 'offline_ingest' sources with narrative_weight = '${DEFAULT_NARRATIVE_WEIGHT}')`);
-  }
-
-  const entries = rows.map((r, idx) => ({
-    index: idx,
-    author: r.author_name,
-    // Use normalized content if available, otherwise fall back to raw content
-    content: r.content_norm ?? r.content,
-    timestamp: r.timestamp_ms,
+  const entries = transcriptEntries.map((e) => ({
+    index: e.line_index,
+    author: e.author_name,
+    content: e.content,
+    timestamp: e.timestamp_ms,
   }));
 
   const text = entries

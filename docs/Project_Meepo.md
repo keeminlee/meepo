@@ -1,7 +1,8 @@
 # Project Meepo
 
-**Status:** Meepo V0 Complete  
-**Current Phase:** MeepoMind (Meepo V0.1)
+**Status:** Meepo V0 Complete, MeepoMind Phases 1-2 Complete, Phase 3 In Progress  
+**Current Phase:** Character-Scoped Memory Retrieval (Phase 3)  
+**Last Updated:** February 14, 2026
 
 ---
 
@@ -50,14 +51,20 @@ Meepo is a **diegetic NPC system for Discord D&D sessions**.
 
 ### What Meepo V0 Gave Us
 
-- ✅ Ears (voice input)
+- ✅ Ears (voice input via STT)
 - ✅ A voice (TTS output)
 - ✅ A body (in imagination)
 - ✅ A consistent personality
+- ✅ An omniscient ledger (session-scoped, voice-primary)
+- ✅ Natural conversation (address-triggered, latch-windowed)
 
-### What's Missing
+### What We're Building Now
 
-**Memory shaped by character** — That is the next mountain.
+**Memory shaped by character** — Phases 1-2 complete, Phase 3 in progress.
+- ✅ Phase 1: Character registry + name discovery
+- ✅ Phase 2: Meecap generator (structured emotional segmentation)
+- 🔄 Phase 3: Character-scoped memory retrieval (gravity-ordered)
+- ⏳ Phase 4+: Gravity scoring, impressions, embodied reflection
 
 ---
 
@@ -211,60 +218,68 @@ Meepo may act physically in imagination:
 
 ## 6. Development Roadmap
 
-### Phase 1 – Registry & Name Scanner
+### Phase 1 – Registry & Name Scanner ✅ Complete
 
-**Build:**
-- YAML character registry
-- Ledger name extraction tool
-- Proposal generation
-- STT normalization pass
+**Built:**
+- ✅ YAML character registry (6 PCs, 3 NPCs, 3 locations in `data/registry/*.yml`)
+- ✅ Ledger name extraction tool (`src/tools/scan-names.ts`)
+- ✅ Proposal generation with human review interface (`src/tools/review-names.ts`)
+- ✅ STT normalization pass (regex-based, longest-match-first)
+- ✅ Live integration: Voice transcripts normalized at ingest + storage of both raw + normalized
 
-**Exit Condition:** Canonical names stabilized
-
----
-
-### Phase 2 – Meecap Generator
-
-**Build:**
-- Scene segmentation
-- Beat extraction
-- Participant tagging
-- Gravity placeholder scoring
-
-**Exit Condition:** Readable structured memory per session
+**Result:** Canonical names stabilized, virtuous feedback loop enabled (Ledger → Scanner → Registry → Better STT → Better Meecap)
 
 ---
 
-### Phase 3 – Character-Scoped Retrieval
+### Phase 2 – Meecap Generator ✅ Complete
 
-**Build:**
-- Retrieve beats by character
-- Inject into prompt
-- Minimal gravity sorting
+**Built:**
+- ✅ Meecap V1 schema (4-8 scenes, 1-4 beats, ledger-ID anchored)
+- ✅ Scene segmentation + beat extraction (LLM-driven with validated JSON)
+- ✅ Participant tagging (who was involved)
+- ✅ Evidence lists (which ledger entries support each beat)
+- ✅ Comprehensive validator (ID existence, range ordering, evidence non-empty)
+- ✅ Database persistence + disk export (`meecaps` table with UPSERT pattern)
+- ✅ First-class command `/session meecap` with regeneration support
+- ✅ Separation of concerns: Ledger → Meecap → Recap (immutable source → regenerable artifact → consumer view)
 
-**Exit Condition:** Meepo recalls past moments tied to specific PCs
-
----
-
-### Phase 4 – Gravity & Pruning
-
-**Build:**
-- LLM gravity scoring (offline)
-- Retrieval ordering by gravity
-- Memory decay strategy
-
-**Exit Condition:** Costly love rises naturally in recall
+**Result:** Readable structured memory per session, ready for gravity assignment
 
 ---
 
-### Phase 5 – Impressions Layer
+### Phase 3 – Character-Scoped Retrieval 🔄 In Progress
 
-**Build:**
-- Aggregate beats into character impressions
-- Gentle prophetic nudges
-- Pattern-based memory synthesis
+**Current Work:**
+- 🔄 Implement character impression index (which beats involve each PC)
+- 🔄 Add beats retrieval API (filter by character + session)
+- 🔄 LLM prompt injection (inject retrieved beats as emotional context)
+- 🔄 Integration with response generation pipeline
 
-**Exit Condition:** Meepo reflects essence, not just events
+**Expected Result:** When PC speaks, Meepo retrieves and uses relevant high-gravity beats in response prompt
+
+---
+
+### Phase 4 – Gravity & Pruning ⏳ Deferred
+
+**Future Work:**
+- Assign gravity scores to Meecap beats (offline, post-session)
+- LLM-driven tier assignment (Costly Love, Tenderness, Moral Fracture)
+- Retrieval ordering by gravity (emotional relevance)
+- Memory pruning strategy (what to keep vs forget)
+
+**Expected Result:** Costly love rises naturally in recall; tenderness guides responses
+
+---
+
+### Phase 5 – Impressions Layer ⏳ Deferred
+
+**Future Work:**
+- Aggregate beats into character impressions (relationship arcs)
+- Gentle prophetic nudges (Meepo sensing patterns)
+- Pattern-based memory synthesis (not literal recall)
+- Embodied physical reactions (perch, hug, nuzzle, glow)
+
+**Expected Result:** Meepo reflects essence, not just events
 
 ---
 
@@ -310,9 +325,11 @@ Meepo may act physically in imagination:
 
 | Version | Focus | Status |
 |---------|-------|--------|
-| **V0** | Voice, Presence, Persona | ✅ Complete |
-| **V0.1** | Memory, Character Continuity | 🚧 In Progress (MeepoMind) |
-| **V1** | Impressions & Embodied Moral Reflection | 📅 Future |
+| **V0** | Voice, Presence, Persona, Ledger | ✅ Complete |
+| **V0.1 Phase 1-2** | Character Registry + Meecap Generator | ✅ Complete |
+| **V0.1 Phase 3** | Character-Scoped Retrieval | 🔄 In Progress |
+| **V0.1 Phase 4+** | Gravity Scoring, Impressions, Embodiment | ⏳ Deferred |
+| **V1** | Impressions & Embodied Moral Reflection | 📅 Future (Post-V0.1) |
 
 ---
 
@@ -326,4 +343,4 @@ Meepo may act physically in imagination:
 
 ---
 
-*For implementation details, see [HANDOFF.md](HANDOFF.md). For archived V0 deep-dive, see [HANDOFF_V0.md](HANDOFF_V0.md).*
+*For current implementation details, see [CURRENT_STATE.md](CURRENT_STATE.md). For archived phase breakdowns and deep-dives, see HANDOFF.md, HANDOFF_V0.md, and related docs.*
