@@ -158,6 +158,7 @@ Recap      Emotion Beats         LLM Response
 - `tools/ingest-media.ts` — Offline media ingestion (extract audio, transcribe, generate session)
 - `src/tools/compile-and-export-events.ts` — Bronze → Silver event compilation
 - `src/tools/compile-and-export-events-batch.ts` — Batch compile multiple sessions
+- `src/tools/regenerate-meecap-beats.ts` — Regenerate beats table from existing narratives (no LLM)
 - `src/tools/scan-names.ts` — Find unknown names in ledger
 - `src/tools/review-names.ts` — Interactive CLI for registry triage
 - `src/tools/cleanup-canonical-aliases.ts` — Validate alias consistency
@@ -193,16 +194,25 @@ sessions
   · started_by_id, started_by_name
   · created_at_ms (immutable creation timestamp, used for "latest ingested" ordering)
 
--- Meecaps (derived artifact / under review Feb 14)
+-- Meecaps (derived artifact - dual storage)
 meecaps
   · session_id (PK → sessions.session_id)
   · meecap_narrative (TEXT, generated prose + transcript)
-  · meecap_json (TEXT, beats-only JSON derived deterministically from narrative)
   · model (model name, e.g. 'claude-opus')
   · created_at_ms, updated_at_ms
 
-⚠️  Narrative-mode meecaps need regeneration after Feb 14 transcript consolidation.
-    Consider truncating table before batch regeneration.
+-- Meecap Beats (normalized beat rows from narrative)
+meecap_beats
+  · id (TEXT PK, UUID)
+  · session_id (FK → meecaps.session_id)
+  · beat_index (INT, ordering within session)
+  · beat_text (TEXT, narrative text of the beat)
+  · line_refs (TEXT, JSON array of line numbers)
+  · created_at_ms, updated_at_ms
+  · UNIQUE(session_id, beat_index) for stable ordering
+
+⏳ Migration Note (Feb 14): meecap_json column removed in favor of meecap_beats table.
+   Beats must be regenerated via /session meecap --all or regenerate-meecap-beats.ts tool.
 
 -- Latches (conversation window state)
 latches
@@ -236,7 +246,7 @@ latches
 - **Gravity Scoring:** Post-session emotional weight assignment (Costly Love, Tenderness, Moral Fracture)
 - **Character-Scoped Retrieval:** Filter beats by PC involved, order by gravity
 - **Memory Integration:** Inject retrieved beats into LLM response prompts
-- **Meecap Table Redesign:** Current structure under review; may require schema changes
+- **Meecap Table Redesign:** ✅ Beats normalized to table (Feb 14); ⏳ Gravity columns, character indexing pending
 
 ### ⏳ Future (Deferred)
 - Pronoun resolution (for cleaner narrative)
@@ -355,6 +365,7 @@ src/
 └── tools/
     ├── compile-and-export-events.ts      # Event compilation
     ├── compile-and-export-events-batch.ts # Batch compiler
+    ├── regenerate-meecap-beats.ts        # Beats table regeneration
     ├── scan-names.ts                      # Name discovery
     ├── review-names.ts                    # Registry triage
     └── cleanup-canonical-aliases.ts       # Validation
@@ -459,13 +470,48 @@ Consolidated duplicate transcript-building logic from Meecap and Events tools in
 - ✅ Reduced maintenance burden
 - ✅ Clear separation: filtering upstream, formatting downstream
 
-**Migration Note:**
-All existing Meecap narratives must be regenerated. Previous meecaps were built with the old transcript logic
-and may have slight inconsistencies. Consider:
-```sql
-DELETE FROM meecaps;  -- Clear old narratives
-```
-Then run `/session meecap --all --force` to regenerate all labeled sessions.
+### Meecap Beats Table Migration ✨ **NEW Feb 14**
+Restructured meecap storage to support dual-lane Silver architecture (Meecaps + Events as two independent ways to understand sessions):
+
+**Schema Changes:**
+- **New `meecap_beats` table** (normalized beat rows)
+  - Columns: `id, session_id, beat_index, beat_text, line_refs, created_at_ms, updated_at_ms`
+  - One row per beat with stable ordering (UNIQUE on session_id, beat_index)
+  - Enables efficient querying for character involvement, gravity scoring, etc.
+  - Index on session_id for fast lookups by session
+
+- **Removed `meecap_json` column** from meecaps table
+  - Never actually used (was phantom infrastructure for "work already done?" checks)
+  - Logic preserved but now hits meecap_beats table instead
+
+**Code Changes:**
+- `buildBeatsJsonFromNarrative()` enhanced with `insertToDB` parameter
+  - When true, persists beats to meecap_beats table (idempotent, deletes old beats first)
+  - Maintains backward compatibility for non-DB usage
+  
+- `src/commands/session.ts` refactored
+  - All `meecap_json` column checks → `meecap_beats` table queries
+  - Batch generation now filters on beats existence (not JSON column)
+  - Narrative and beats generation now happen in separate steps (clean separation)
+
+**Architecture:**
+- **Meecaps = dual product** for humans + machines
+  - Narrative: Source of truth, persisted in DB + filesystem (`data/meecaps/narrative/`)
+  - Beats: Derived artifact, normalized in DB table + filesystem (`data/meecaps/beats/`)
+  - Beats are deterministically extracted from narrative (no LLM cost, regenerable)
+
+- **Why this structure?**
+  - Humans read narrative prose (beautiful, coherent, discoverable in Discord)
+  - Machines query beats table (efficient filtering for Gold layer future work)
+  - Narrative never deleted/moved (beats depend on it)
+  - Beats independently queryable (character involvement? beat pagination? gravity? all doable)
+
+**Migration Path:**
+- Database migration auto-creates meecap_beats table on bot startup
+- Existing narratives preserved; beats need regeneration via:
+  - `/session meecap --all` (generates both narrative + beats for missing sessions)
+  - `regenerate-meecap-beats.ts` tool (regenerates just beats from existing narratives)
+- No data loss; safe rollback possible
 
 ---
 
