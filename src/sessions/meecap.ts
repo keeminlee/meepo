@@ -152,6 +152,7 @@ export type MeecapBeatLite = {
 export type MeecapBeats = {
   version: 1;
   session_id: string;
+  label?: string;
   session_span: {
     lines: LineSpan;
     ledger_id_range: LedgerIdRange;
@@ -874,9 +875,10 @@ export function buildBeatsJsonFromNarrative(args: {
   lineCount: number;
   narrative: string;
   entries?: LedgerEntry[];
+  label?: string;
   insertToDB?: boolean;
 }): { ok: true; beats: MeecapBeats } | { ok: false; error: string } {
-  const { sessionId, lineCount, narrative, entries, insertToDB = false } = args;
+  const { sessionId, lineCount, narrative, entries, label, insertToDB = false } = args;
 
   const narrativeSection = extractSection(narrative, "=== NARRATIVE ===", "=== SOURCE TRANSCRIPT ===");
   if (!narrativeSection) {
@@ -924,13 +926,17 @@ export function buildBeatsJsonFromNarrative(args: {
       const db = getDb();
       const now = Date.now();
       
+      // Get session label for backfill
+      const sessionRow = db.prepare("SELECT label FROM sessions WHERE session_id = ? LIMIT 1").get(sessionId) as { label: string | null } | undefined;
+      const label = sessionRow?.label || null;
+      
       // Delete existing beats for this session (idempotent)
       db.prepare("DELETE FROM meecap_beats WHERE session_id = ?").run(sessionId);
       
       // Insert new beats
       const insertStmt = db.prepare(`
-        INSERT INTO meecap_beats (id, session_id, beat_index, beat_text, line_refs, created_at_ms, updated_at_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO meecap_beats (id, session_id, label, beat_index, beat_text, line_refs, created_at_ms, updated_at_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
       
       for (let i = 0; i < beats.length; i++) {
@@ -938,6 +944,7 @@ export function buildBeatsJsonFromNarrative(args: {
         insertStmt.run(
           randomUUID(),                           // id
           sessionId,                              // session_id
+          label,                                  // label (from sessions table)
           i,                                      // beat_index
           beat.text,                              // beat_text
           JSON.stringify(beat.lines),             // line_refs (JSON array)
@@ -974,6 +981,7 @@ export function buildBeatsJsonFromNarrative(args: {
     beats: {
       version: 1,
       session_id: sessionId,
+      ...(label && { label }),
       session_span: sessionSpan,
       beats,
     },

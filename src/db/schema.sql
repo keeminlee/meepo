@@ -107,13 +107,14 @@ CREATE TABLE IF NOT EXISTS meecaps (
 CREATE TABLE IF NOT EXISTS meecap_beats (
   id TEXT PRIMARY KEY,                     -- UUID
   session_id TEXT NOT NULL,                -- FK to meecaps.session_id
+  label TEXT,                              -- Session label (e.g., "C2E6") for human-readable filenames
   beat_index INTEGER NOT NULL,             -- Order within session (0, 1, 2, ...)
   beat_text TEXT NOT NULL,                 -- Narrative text of the beat
   line_refs TEXT NOT NULL,                 -- JSON array: [1, 2, 3] or "1-3"
   created_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL,
   
-  FOREIGN KEY (session_id) REFERENCES meecaps(session_id),
+  FOREIGN KEY (session_id) REFERENCES meecaps(session_id) ON DELETE CASCADE,
   UNIQUE(session_id, beat_index)
 );
 

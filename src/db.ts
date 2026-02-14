@@ -238,6 +238,28 @@ function applyMigrations(db: Database.Database) {
     `);
   }
 
+  // Migration: Add label column to meecap_beats (Feb 14+)
+  const beatsColumns = db.pragma("table_info(meecap_beats)") as any[];
+  const hasLabelColumn = beatsColumns.some((col: any) => col.name === "label");
+  
+  if (!hasLabelColumn) {
+    console.log("Migrating: Adding label column to meecap_beats and backfilling from sessions");
+    db.exec(`
+      ALTER TABLE meecap_beats ADD COLUMN label TEXT;
+    `);
+    
+    // Backfill labels from sessions table
+    try {
+      db.prepare(`
+        UPDATE meecap_beats 
+        SET label = (SELECT label FROM sessions WHERE sessions.session_id = meecap_beats.session_id)
+      `).run();
+      console.log("Migrating: Backfilled meecap_beats.label from sessions table");
+    } catch (err: any) {
+      console.warn("Migrating: Could not backfill meecap_beats.label (may not exist yet):", err.message);
+    }
+  }
+
   // Migration: Fix sessions table schema (started_by_id/name should be nullable)
   const sessionColumns = db.pragma("table_info(sessions)") as any[];
   const startedByIdCol = sessionColumns.find((col: any) => col.name === "started_by_id");
