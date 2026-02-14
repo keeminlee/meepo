@@ -214,6 +214,30 @@ function applyMigrations(db: Database.Database) {
     }
   }
 
+  // Migration: Create meecap_beats table (Feb 14 - Normalized beats from narratives)
+  const tablesForBeats = db.pragma("table_list") as any[];
+  const hasMeecapBeatsTable = tablesForBeats.some((t: any) => t.name === "meecap_beats");
+  
+  if (!hasMeecapBeatsTable) {
+    console.log("Migrating: Creating meecap_beats table (Normalized narrative beats)");
+    db.exec(`
+      CREATE TABLE meecap_beats (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        beat_index INTEGER NOT NULL,
+        beat_text TEXT NOT NULL,
+        line_refs TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        
+        FOREIGN KEY (session_id) REFERENCES meecaps(session_id),
+        UNIQUE(session_id, beat_index)
+      );
+      
+      CREATE INDEX idx_meecap_beats_session ON meecap_beats(session_id);
+    `);
+  }
+
   // Migration: Fix sessions table schema (started_by_id/name should be nullable)
   const sessionColumns = db.pragma("table_info(sessions)") as any[];
   const startedByIdCol = sessionColumns.find((col: any) => col.name === "started_by_id");

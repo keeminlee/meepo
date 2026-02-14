@@ -21,6 +21,8 @@ import type { LedgerEntry } from "../ledger/ledger.js";
 import { getLedgerForSession } from "../ledger/ledger.js";
 import { buildTranscript } from "../ledger/transcripts.js";
 import { loadRegistry } from "../registry/loadRegistry.js";
+import { getDb } from "../db.js";
+import { randomUUID } from "node:crypto";
 import fs from "fs";
 import path from "path";
 
@@ -872,8 +874,9 @@ export function buildBeatsJsonFromNarrative(args: {
   lineCount: number;
   narrative: string;
   entries?: LedgerEntry[];
+  insertToDB?: boolean;
 }): { ok: true; beats: MeecapBeats } | { ok: false; error: string } {
-  const { sessionId, lineCount, narrative, entries } = args;
+  const { sessionId, lineCount, narrative, entries, insertToDB = false } = args;
 
   const narrativeSection = extractSection(narrative, "=== NARRATIVE ===", "=== SOURCE TRANSCRIPT ===");
   if (!narrativeSection) {
@@ -913,6 +916,39 @@ export function buildBeatsJsonFromNarrative(args: {
 
   if (beats.length === 0) {
     return { ok: false, error: "No beats parsed from narrative (missing citations?)" };
+  }
+
+  // Optionally insert beats into database
+  if (insertToDB) {
+    try {
+      const db = getDb();
+      const now = Date.now();
+      
+      // Delete existing beats for this session (idempotent)
+      db.prepare("DELETE FROM meecap_beats WHERE session_id = ?").run(sessionId);
+      
+      // Insert new beats
+      const insertStmt = db.prepare(`
+        INSERT INTO meecap_beats (id, session_id, beat_index, beat_text, line_refs, created_at_ms, updated_at_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      
+      for (let i = 0; i < beats.length; i++) {
+        const beat = beats[i];
+        insertStmt.run(
+          randomUUID(),                           // id
+          sessionId,                              // session_id
+          i,                                      // beat_index
+          beat.text,                              // beat_text
+          JSON.stringify(beat.lines),             // line_refs (JSON array)
+          now,                                    // created_at_ms
+          now                                     // updated_at_ms
+        );
+      }
+    } catch (err: any) {
+      console.error("Failed to insert beats into meecap_beats table:", err.message);
+      return { ok: false, error: `DB insertion failed: ${err.message}` };
+    }
   }
 
   const sessionSpan = {

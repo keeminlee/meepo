@@ -343,10 +343,10 @@ export const session = {
       // Check if meecap exists for this session
       const db = getDb();
       const meecapRow = db
-        .prepare("SELECT meecap_json, meecap_narrative FROM meecaps WHERE session_id = ?")
-        .get(session.session_id) as { meecap_json?: string; meecap_narrative?: string } | undefined;
+        .prepare("SELECT meecap_narrative FROM meecaps WHERE session_id = ?")
+        .get(session.session_id) as { meecap_narrative?: string } | undefined;
       
-      if (!meecapRow || (!meecapRow.meecap_json && !meecapRow.meecap_narrative)) {
+      if (!meecapRow || !meecapRow.meecap_narrative) {
         await interaction.reply({
           content: `❯ No meecap found for this session. Run \`/session meecap\` first to generate one.`,
           ephemeral: true,
@@ -483,21 +483,13 @@ This recap should feel like:
           sessionId: session.session_id,
           lineCount: entries.length,
           narrative,
+          entries,
+          insertToDB: true,
         });
 
         if (!beatsResult.ok) {
           return { ok: false, message: beatsResult.error };
         }
-
-        db.prepare(`
-          UPDATE meecaps
-          SET meecap_json = ?, updated_at_ms = ?
-          WHERE session_id = ?
-        `).run(
-          JSON.stringify(beatsResult.beats),
-          Date.now(),
-          session.session_id
-        );
 
         return { ok: true, message: "Derived beats JSON from existing narrative meecap." };
       };
@@ -538,21 +530,33 @@ This recap should feel like:
 
           const now = Date.now();
           db.prepare(`
-            INSERT INTO meecaps (session_id, meecap_json, meecap_narrative, model, created_at_ms, updated_at_ms)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO meecaps (session_id, meecap_narrative, model, created_at_ms, updated_at_ms)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
-              meecap_json = excluded.meecap_json,
               meecap_narrative = excluded.meecap_narrative,
               model = excluded.model,
               updated_at_ms = excluded.updated_at_ms
           `).run(
             session.session_id,
-            meecapResult.beatsJson ? JSON.stringify(meecapResult.beatsJson) : null,
             meecapResult.narrative,
             "claude-opus",
             now,
             now
           );
+
+          // Generate and persist beats if enabled
+          if (!noJson && meecapResult.narrative) {
+            const entries = getLedgerForSession({ sessionId: session.session_id, primaryOnly });
+            if (entries && entries.length > 0) {
+              buildBeatsJsonFromNarrative({
+                sessionId: session.session_id,
+                lineCount: entries.length,
+                narrative: meecapResult.narrative,
+                entries,
+                insertToDB: true,
+              });
+            }
+          }
 
           if (emitAttachments) {
             const mdBuffer = Buffer.from(meecapResult.narrative, "utf-8");
@@ -651,21 +655,21 @@ This recap should feel like:
 
         const sessions = db
           .prepare(`
-            SELECT s.session_id, s.label, s.created_at_ms, m.meecap_json, m.meecap_narrative
+            SELECT s.session_id, s.label, s.created_at_ms, m.meecap_narrative
             FROM sessions s
             LEFT JOIN meecaps m ON m.session_id = s.session_id
+            LEFT JOIN meecap_beats b ON b.session_id = s.session_id
             WHERE s.label IS NOT NULL
               AND trim(s.label) <> ''
               AND lower(s.label) NOT LIKE '%test%'
               AND lower(s.label) NOT LIKE '%chat%'
-              AND (m.session_id IS NULL OR m.meecap_json IS NULL)
+              AND (m.session_id IS NULL OR m.meecap_narrative IS NULL OR b.session_id IS NULL)
             ORDER BY s.created_at_ms DESC
           `)
           .all() as Array<{
             session_id: string;
             label: string | null;
             created_at_ms: number;
-            meecap_json: string | null;
             meecap_narrative: string | null;
           }>;
 
@@ -682,7 +686,12 @@ This recap should feel like:
         const errors: string[] = [];
 
         for (const s of sessions) {
-          if (s.meecap_json) {
+          // Check if beats already exist for this session
+          const existingBeats = db
+            .prepare("SELECT id FROM meecap_beats WHERE session_id = ? LIMIT 1")
+            .get(s.session_id);
+          
+          if (existingBeats) {
             skipped++;
             continue;
           }
@@ -764,18 +773,23 @@ This recap should feel like:
       // Check if meecap already exists (unless --force)
       if (!force) {
         const existing = db
-          .prepare("SELECT meecap_json, meecap_narrative FROM meecaps WHERE session_id = ?")
-          .get(session.session_id) as { meecap_json?: string | null; meecap_narrative?: string | null } | undefined;
-
-        if (existing?.meecap_json) {
-          await interaction.reply({
-            content: `✅ Meecap JSON already exists for this session. Use \`--force\` to regenerate.`,
-            ephemeral: true,
-          });
-          return;
-        }
+          .prepare("SELECT meecap_narrative FROM meecaps WHERE session_id = ?")
+          .get(session.session_id) as { meecap_narrative?: string | null } | undefined;
 
         if (existing?.meecap_narrative) {
+          // Check if beats already exist
+          const beatsExist = db
+            .prepare("SELECT id FROM meecap_beats WHERE session_id = ? LIMIT 1")
+            .get(session.session_id);
+          
+          if (beatsExist && !force) {
+            await interaction.reply({
+              content: `✅ Meecap already exists for this session. Use \`--force\` to regenerate.`,
+              ephemeral: true,
+            });
+            return;
+          }
+
           if (noJson) {
             await interaction.reply({
               content: "✅ Meecap narrative exists. JSON derivation skipped by flag.",

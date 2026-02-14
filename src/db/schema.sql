@@ -101,6 +101,25 @@ CREATE TABLE IF NOT EXISTS meecaps (
   updated_at_ms INTEGER NOT NULL
 );
 
+-- Meecap Beats: Normalized beat data from narrative meecaps
+-- One row per beat; enables efficient querying for character involvement, gravity scoring, etc.
+-- Derived deterministically from meecap_narrative (no LLM)
+CREATE TABLE IF NOT EXISTS meecap_beats (
+  id TEXT PRIMARY KEY,                     -- UUID
+  session_id TEXT NOT NULL,                -- FK to meecaps.session_id
+  beat_index INTEGER NOT NULL,             -- Order within session (0, 1, 2, ...)
+  beat_text TEXT NOT NULL,                 -- Narrative text of the beat
+  line_refs TEXT NOT NULL,                 -- JSON array: [1, 2, 3] or "1-3"
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  
+  FOREIGN KEY (session_id) REFERENCES meecaps(session_id),
+  UNIQUE(session_id, beat_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_meecap_beats_session
+ON meecap_beats(session_id);
+
 -- Ledger idempotency: unique constraint scoped to text messages only
 -- (Voice/system use synthetic message_ids that don't need deduplication)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_unique_message
