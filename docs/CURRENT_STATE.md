@@ -204,15 +204,15 @@ meecaps
 -- Meecap Beats (normalized beat rows from narrative)
 meecap_beats
   · id (TEXT PK, UUID)
-  · session_id (FK → meecaps.session_id)
+  · session_id (FK → meecaps.session_id, ON DELETE CASCADE)
+  · label (TEXT, human-readable session label like "C2E6")
   · beat_index (INT, ordering within session)
   · beat_text (TEXT, narrative text of the beat)
   · line_refs (TEXT, JSON array of line numbers)
   · created_at_ms, updated_at_ms
   · UNIQUE(session_id, beat_index) for stable ordering
 
-⏳ Migration Note (Feb 14): meecap_json column removed in favor of meecap_beats table.
-   Beats must be regenerated via /session meecap --all or regenerate-meecap-beats.ts tool.
+✅ Migration Note (Feb 14): meecap_json column removed. Label column added. All 19 C2E sessions backfilled (434 beats).
 
 -- Latches (conversation window state)
 latches
@@ -243,10 +243,13 @@ latches
 - **Unified Transcript Builder** (consolidated Meecap + Events logic) ✨ **NEW Feb 14**
 
 ### 🔄 Phase 2-3 (In Progress)
-- **Gravity Scoring:** Post-session emotional weight assignment (Costly Love, Tenderness, Moral Fracture)
-- **Character-Scoped Retrieval:** Filter beats by PC involved, order by gravity
-- **Memory Integration:** Inject retrieved beats into LLM response prompts
-- **Meecap Table Redesign:** ✅ Beats normalized to table (Feb 14); ⏳ Gravity columns, character indexing pending
+- ✅ **Beats Normalization:** Meecap beats now in dedicated table with label column (Feb 14)
+- ✅ **Bootstrap Infrastructure:** generate-beats.ts tool and gptcaps filesystem structure (Feb 14)
+- ⏳ **Gravity Scoring:** Post-session emotional weight assignment (Costly Love, Tenderness, Moral Fracture)
+- ⏳ **Character-Scoped Retrieval:** Filter beats by PC involved, order by gravity
+- ⏳ **Memory Integration:** Inject retrieved beats into LLM response prompts
+- ⏳ **Gravity Columns:** Add gravity score columns to meecap_beats table
+- ⏳ **Character Indexing:** Build efficient PC involvement queries on beats
 
 ### ⏳ Future (Deferred)
 - Pronoun resolution (for cleaner narrative)
@@ -365,6 +368,7 @@ src/
 └── tools/
     ├── compile-and-export-events.ts      # Event compilation
     ├── compile-and-export-events-batch.ts # Batch compiler
+    ├── generate-beats.ts                 # Beats generation (meecaps ↔ gptcaps)
     ├── regenerate-meecap-beats.ts        # Beats table regeneration
     ├── scan-names.ts                      # Name discovery
     ├── review-names.ts                    # Registry triage
@@ -437,7 +441,62 @@ LOG_LEVEL=trace npm run dev:bot
 
 ---
 
-## Recent Changes (February 14, 2026)
+## Recent Changes (February 14, 2026 - Afternoon)
+
+### Bootstrap Infrastructure & Beats Normalization ✨
+Prepared modularity for GPU-enhanced meecaps (gptcaps) bootstrapping by establishing parallel filesystem storage for experimental narratives and beats:
+
+**New Tool:**
+- `src/tools/generate-beats.ts` — Unified beats generation for meecaps and gptcaps
+  - Supports `--source meecaps|gptcaps` for flexible bootstrap/canonical use
+  - For meecaps: reads from filesystem, looks up UUID session_id in DB, inserts beats
+  - For gptcaps: pure filesystem mode (no DB dependency, allows offline workflows)
+  - Flags: `--db` (insert to meecap_beats), `--force` (overwrite), `--session` (filter by label)
+  - Output: `beats_{label}.json` files with self-documenting label field
+  - Enhanced logging: NAMING DRIFT detection for filename mismatches
+
+**Schema Enhancements:**
+- Added `label TEXT` column to meecap_beats
+  - Enables human-readable querying without joins to sessions table
+  - Auto-created and backfilled on bot startup
+- Updated FK constraint: Added `ON DELETE CASCADE` for safety
+  - Prevents orphaned beats if a meecap narrative is deleted
+
+**Type/Storage Updates:**
+- `MeecapBeats` type now includes optional `label?: string` field
+  - Makes beats self-contained (no need to parse filename for label)
+  - Consistent with filesystem naming (both use label)
+- `buildBeatsJsonFromNarrative()` now accepts label parameter
+  - Label automatically stored in beats JSON output
+
+**Filesystem Restructuring:**
+- Renamed all beats files from UUID-based to label-based: `{uuid}.json` → `beats_{label}.json`
+  - All 19 C2E sessions now human-readable: `beats_C2E1.json` through `beats_C2E19.json`
+  - Regenerated with `generate-beats.ts --source meecaps --db --force` (434 beats total)
+- Directory structure now mirrors meecaps naming:
+  ```
+  data/meecaps/narratives/meecap_C2E6.md
+  data/meecaps/beats/beats_C2E6.json
+  data/gptcaps/narratives/meecap_C2E6.md    ← future: from ChatGPT
+  data/gptcaps/beats/beats_C2E6.json        ← future: derived from gptcap
+  ```
+
+**Database Backfill:**
+- All 434 beats now have label column populated from sessions table
+- Verified: 19 sessions with beat counts: C2E1(24), C2E2(32), ..., C2E19(26)
+- Safe, idempotent: can regenerate with --force flag anytime
+
+**Benefits for Bootstrap:**
+- Meecaps storage: filesystem-first modularity (can work offline)
+- Gptcaps isolation: DB-free, completely separate from canonical data
+- Easy promotion: gptcap → meecap is just a filesystem copy + DB insert
+- Label consistency: narratives and beats both use same naming convention
+
+**Directory Refactoring:**
+- Renamed `data/session-events` → `data/events` (parity with other data dirs)
+- Updated 3 references in `compile-and-export-events.ts`
+
+## Recent Changes (February 14, 2026 - Morning)
 
 ### Transcript Consolidation Refactoring ✨
 Consolidated duplicate transcript-building logic from Meecap and Events tools into a unified `buildTranscript()` utility:
