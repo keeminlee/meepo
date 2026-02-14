@@ -193,11 +193,16 @@ sessions
   · started_by_id, started_by_name
   · created_at_ms (immutable creation timestamp, used for "latest ingested" ordering)
 
--- Meecaps (derived artifact)
+-- Meecaps (derived artifact / under review Feb 14)
 meecaps
   · session_id (PK → sessions.session_id)
-  · meecap_json (TEXT, full V1 structure)
+  · meecap_narrative (TEXT, generated prose + transcript)
+  · meecap_json (TEXT, beats-only JSON derived deterministically from narrative)
+  · model (model name, e.g. 'claude-opus')
   · created_at_ms, updated_at_ms
+
+⚠️  Narrative-mode meecaps need regeneration after Feb 14 transcript consolidation.
+    Consider truncating table before batch regeneration.
 
 -- Latches (conversation window state)
 latches
@@ -225,11 +230,13 @@ latches
 - Character registry (YAML, with name discovery tools)
 - Meecap generation (scene/beat segmentation, ledger-anchored)
 - Batch ingestion tools (offline media → session DB)
+- **Unified Transcript Builder** (consolidated Meecap + Events logic) ✨ **NEW Feb 14**
 
 ### 🔄 Phase 2-3 (In Progress)
 - **Gravity Scoring:** Post-session emotional weight assignment (Costly Love, Tenderness, Moral Fracture)
 - **Character-Scoped Retrieval:** Filter beats by PC involved, order by gravity
 - **Memory Integration:** Inject retrieved beats into LLM response prompts
+- **Meecap Table Redesign:** Current structure under review; may require schema changes
 
 ### ⏳ Future (Deferred)
 - Pronoun resolution (for cleaner narrative)
@@ -315,6 +322,7 @@ src/
 │
 ├── ledger/
 │   ├── ledger.ts                   # Append-only queries
+│   ├── transcripts.ts              # Unified transcript builder (Meecap + Events)
 │   ├── meepo-mind.ts               # (future) Character retrieval
 │   └── system.ts                   # System event helper
 │
@@ -415,6 +423,49 @@ LOG_LEVEL=trace npm run dev:bot
 4. **Emotional Memory, Not Omniscience** — Meepo remembers *because* something mattered
 5. **Graceful Degradation** — Log errors, don't crash; fallbacks everywhere
 6. **Scoped Authority** — NPC Mind only sees what Meepo perceives
+
+---
+
+## Recent Changes (February 14, 2026)
+
+### Transcript Consolidation Refactoring ✨
+Consolidated duplicate transcript-building logic from Meecap and Events tools into a unified `buildTranscript()` utility:
+
+**New Module:**
+- `src/ledger/transcripts.ts` — Shared transcript builder
+  - Single source of truth for ledger querying
+  - Filters: `source IN ('text', 'voice', 'offline_ingest')` + optional `narrative_weight='primary'`
+  - Always prefers normalized content (`content_norm` → fallback to raw)
+  - Returns `TranscriptEntry[]` with stable `line_index`, `author_name`, `content`, `timestamp_ms`
+
+**Updated Modules:**
+- `src/sessions/meecap.ts`
+  - `buildMeecapTranscript()` now calls unified builder
+  - `generateMeecapNarrative()` refactored to use shared builder
+  - `generateMeecapV1Json()` refactored to use shared builder
+  - `buildBeatsJsonFromNarrative()` simplified (takes `lineCount` parameter)
+
+- `src/tools/compile-and-export-events.ts`
+  - `loadSessionTranscript()` now uses unified builder
+  - Fixed potential bug: raw content normalization now guaranteed
+
+- `src/commands/session.ts`
+  - `/session meecap` command updated for new architecture
+
+**Benefits:**
+- ✅ Single source of truth for filtering logic
+- ✅ Consistent content normalization across tools
+- ✅ Fixed Events tool edge case (raw content not always normalized)
+- ✅ Reduced maintenance burden
+- ✅ Clear separation: filtering upstream, formatting downstream
+
+**Migration Note:**
+All existing Meecap narratives must be regenerated. Previous meecaps were built with the old transcript logic
+and may have slight inconsistencies. Consider:
+```sql
+DELETE FROM meecaps;  -- Clear old narratives
+```
+Then run `/session meecap --all --force` to regenerate all labeled sessions.
 
 ---
 
