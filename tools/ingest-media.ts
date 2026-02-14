@@ -322,7 +322,7 @@ async function transcribeChunks(
   const sttProvider = await getSttProvider();
   const results: TranscriptResult[] = [];
 
-  // Import cli-progress
+  // @ts-ignore - cli-progress lacks type definitions
   const cliProgress = await import("cli-progress");
   const progressBar = new cliProgress.SingleBar({
     format: 'Transcribing |{bar}| {percentage}% | {value}/{total} chunks | ETA: {eta}s',
