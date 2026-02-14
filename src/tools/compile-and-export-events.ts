@@ -13,7 +13,7 @@
  * 4. Validate: no gaps, no overlaps, ascending coverage
  * 5. UPSERT events into database (idempotent)
  * 6. Populate character_event_index with PC exposure classification
- * 7. Export human-readable visualization to data/session-events/events_{label}.txt
+ * 7. Export human-readable visualization to data/events/events_{label}.txt
  */
 
 import "dotenv/config";
@@ -394,7 +394,7 @@ function exportEventsToJSON(
   events: ExtractedEvent[],
   entries: Array<{ author: string; content: string; timestamp: number }>
 ): void {
-  const eventsDir = path.join(process.cwd(), "data", "session-events");
+  const eventsDir = path.join(process.cwd(), "data", "events");
   if (!fs.existsSync(eventsDir)) {
     fs.mkdirSync(eventsDir, { recursive: true });
   }
@@ -780,7 +780,7 @@ export async function compileAndExportSession(sessionLabel: string, force: boole
     const visualization = buildEventVisualization(session.session_id, entriesForViz, session);
 
     // Write files
-    const eventsDir = path.join(process.cwd(), "data", "session-events");
+    const eventsDir = path.join(process.cwd(), "data", "events");
     if (!fs.existsSync(eventsDir)) {
       fs.mkdirSync(eventsDir, { recursive: true });
     }
