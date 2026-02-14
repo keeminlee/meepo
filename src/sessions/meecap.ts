@@ -18,8 +18,26 @@
 
 import { chat } from "../llm/client.js";
 import type { LedgerEntry } from "../ledger/ledger.js";
+import { loadRegistry } from "../registry/loadRegistry.js";
 import fs from "fs";
 import path from "path";
+
+/**
+ * Get formatted list of PC names from registry for prompt context
+ */
+function getPCNamesForPrompt(): string {
+  try {
+    const registry = loadRegistry();
+    const pcNames = registry.characters
+      .filter(c => c.type === "pc")
+      .map(c => c.canonical_name)
+      .sort();
+    return pcNames.join(", ");
+  } catch (err) {
+    console.warn("Failed to load PC names from registry:", err);
+    return "(registry unavailable)";
+  }
+}
 
 // ============================================================================
 // Configuration: Meecap Mode
@@ -28,21 +46,23 @@ import path from "path";
 export type MeecapMode = "narrative" | "v1_json";
 
 function getMeecapMode(): MeecapMode {
-  const mode = process.env.MEE_CAP_MODE ?? "narrative";
+  const mode = process.env.MEECAP_MODE ?? "narrative";
   return mode === "v1_json" ? "v1_json" : "narrative";
 }
 
 /**
  * Save narrative meecap to file system.
  * 
- * Writes to data/meecaps/{session_id}__{timestamp}.md
+ * Writes to data/meecaps/meecap_{sessionLabel}.md if label provided,
+ * otherwise falls back to meecap_{sessionId}.md
  * Creates directory if needed.
  */
 function saveNarrativeToFile(args: {
   sessionId: string;
+  sessionLabel?: string | null;
   narrative: string;
 }): string | null {
-  const { sessionId, narrative } = args;
+  const { sessionId, sessionLabel, narrative } = args;
 
   try {
     const meecapsDir = path.resolve("data", "meecaps");
@@ -52,9 +72,10 @@ function saveNarrativeToFile(args: {
       fs.mkdirSync(meecapsDir, { recursive: true });
     }
 
-    // Filename: {sessionId}__{timestamp}.md
-    const timestamp = Date.now();
-    const filename = `${sessionId}__${timestamp}.md`;
+    // Filename: meecap_{sessionLabel}.md or meecap_{sessionId}.md
+    const filename = sessionLabel 
+      ? `meecap_${sessionLabel}.md`
+      : `meecap_${sessionId}.md`;
     const filepath = path.join(meecapsDir, filename);
 
     // Write file
@@ -134,6 +155,7 @@ export type MeecapGenerationResult = {
  */
 export async function generateMeecapStub(args: {
   sessionId: string;
+  sessionLabel?: string | null;
   entries: LedgerEntry[];
 }): Promise<MeecapGenerationResult> {
   const mode = getMeecapMode();
@@ -152,9 +174,10 @@ export async function generateMeecapStub(args: {
  */
 async function generateMeecapNarrative(args: {
   sessionId: string;
+  sessionLabel?: string | null;
   entries: LedgerEntry[];
 }): Promise<MeecapGenerationResult> {
-  const { sessionId, entries } = args;
+  const { sessionId, sessionLabel, entries } = args;
 
   if (!entries || entries.length === 0) {
     return {
@@ -192,9 +215,7 @@ async function generateMeecapNarrative(args: {
     }
 
     // Append SOURCE TRANSCRIPT section (system-side, not LLM-generated)
-    const fullMeecap = `=== MEECAP NARRATIVE ===
-
-${modelOutput.trim()}
+    const fullMeecap = `${modelOutput.trim()}
 
 === SOURCE TRANSCRIPT ===
 
@@ -203,6 +224,7 @@ ${transcript}`;
     // Save to file system
     const filepath = saveNarrativeToFile({
       sessionId,
+      sessionLabel,
       narrative: fullMeecap,
     });
 
@@ -240,9 +262,10 @@ The narrative Meecap has been saved and is ready for review/editing.`;
  */
 async function generateMeecapV1Json(args: {
   sessionId: string;
+  sessionLabel?: string | null;
   entries: LedgerEntry[];
 }): Promise<MeecapGenerationResult> {
-  const { sessionId, entries } = args;
+  const { sessionId, sessionLabel, entries } = args;
 
   if (!entries || entries.length === 0) {
     return {
@@ -346,6 +369,7 @@ function buildNarrativeMeecapPrompts(args: {
   entryCount: number;
 }): { systemPrompt: string; userMessage: string } {
   const { sessionId, transcript, entryCount } = args;
+  const pcNames = getPCNamesForPrompt();
 
   const systemPrompt = `You are Meecap, the session chronicler of a D&D game.
 
@@ -357,15 +381,60 @@ This is restructuring, NOT compression.
 The transcript is the source of truth.
 
 ------------------------------------------------------------
-OUT-OF-CHARACTER (OOC) EXCLUSION RULE (CRITICAL)
+PLAYER CHARACTERS (PCs)
 ------------------------------------------------------------
 
-The transcript may include out-of-character/table talk (rules discussion, real-life chat, scheduling, tech issues, "good game", etc.).
+The following are the player characters in this campaign: ${pcNames}
+All other named characters in the transcript are NPCs (non-player characters).
 
-You MUST EXCLUDE OOC content from the narrative.
-Only include in-character (IC) gameplay: in-world narration, roleplay, in-world planning, actions, checks, combat, and in-world consequences.
+------------------------------------------------------------
+SESSION RECAP HANDLING (CRITICAL)
+------------------------------------------------------------
 
-If you are unsure whether a line is IC or OOC, TREAT IT AS IC AND INCLUDE IT IN THE NARRATIVE.
+Most D&D sessions begin with a RECAP of the previous session. This is typically:
+- DM summarizing "Last time on..." or "Previously..."
+- Players catching up late joiners
+- Quick review of where the party left off
+- Out-of-character planning or logistics discussion
+
+You MUST identify and separate recap content from the main session narrative.
+
+RECAP SECTION RULES:
+- If the transcript starts with recap/summary of previous events, capture it in the RECAP section
+- Summarize what was being recapped (prior session events), NOT the meta-discussion
+- Example: If DM says "Last time you fought the dragon and escaped to the tavern", 
+  write: "The party had previously fought a dragon and escaped to a tavern (L0-L5)."
+- Keep recap section brief and factual
+- If there's no clear recap at the start, write "None" for the recap section
+
+After the recap section (if any), the NARRATIVE section begins with the actual gameplay of THIS session.
+
+OUT-OF-CHARACTER (OOC) EXCLUSION:
+- Exclude table talk, rules discussion, tech issues, scheduling from both sections
+- Focus on in-world events (whether recapped or happening now)
+- When unsure if something is IC or OOC, treat it as IC
+
+------------------------------------------------------------
+CITATION RULE (MANDATORY)
+------------------------------------------------------------
+
+You MUST cite the transcript line number for EVERY sentence or dialogue line in your narrative.
+
+Citation format:
+- Single line: (L42)
+- Short range: (L42-L44) — only if lines are tightly related
+
+Citation placement:
+- Place citations IMMEDIATELY after the sentence or dialogue they support.
+- Do NOT wait until end of paragraph to cite.
+
+Example of CORRECT citation:
+"Jamison stepped forward, hand on his sword hilt (L15). 'We need to investigate that tower,' he said firmly (L16). Minx nodded in agreement, her eyes scanning the crumbling stonework (L17-L18)."
+
+Example of INCORRECT (missing citations):
+"Jamison stepped forward, hand on his sword hilt. 'We need to investigate that tower,' he said firmly. Minx nodded in agreement, her eyes scanning the crumbling stonework."
+
+CRITICAL: If a sentence has no citation, it will be rejected. Every fact, action, and line of dialogue MUST have a citation showing which transcript line(s) it came from.
 
 ------------------------------------------------------------
 LINE COVERAGE RULE (CRITICAL — THIS PREVENTS COMPRESSION)
@@ -413,21 +482,19 @@ Some transcript lines are in-world narration or scene framing (often from the DM
 
 Player speech should appear as dialogue, preserving original wording as closely as possible.
 
+In fact, dialogue (from both players and NPCs) should be always quoted directly, with only minor grammar fixes for readability. Avoid paraphrasing dialogue unless the original is very fragmented or unclear.
+
 Proper names may drift due to speech-to-text. You may correct obvious misspellings when context clearly supports it.
 
-------------------------------------------------------------
-STYLE RULES
-------------------------------------------------------------
+=== SESSION RECAP ===
+<Summary of what was recapped from previous session(s), with citations>
+OR
+None
 
-- Third-person omniscient narration.
-- Do NOT mention “the DM” or “players.”
-- Exposition should read like a chronicle: clear, literal, grounded.
-- Dialogue should be written as dialogue, preserving original wording as closely as possible.
-- Preserve chronological order.
-- Preserve physical actions and staging.
+=== NARRATIVE ===
+<Faithful narrative reconstruction of THIS session's IC gameplay with citations>
 
-Avoid:
-- Grand metaphors
+Do not include any other commentary or sections
 - Thematic conclusions
 - Cinematic trailer phrasing
 - Invented internal thoughts or motivations
@@ -436,13 +503,7 @@ Avoid:
 OUTPUT FORMAT
 ------------------------------------------------------------
 
-Return EXACTLY:
-
-=== MEECAP NARRATIVE ===
-<faithful narrative reconstruction of IC lines with citations>
-
-[Optional, only if any OOC excluded]
-OOC_EXCLUDED_LINES: [L#, L#, ...]
+Return a faithful narrative reconstruction of IC lines with citations.
 
 Do not include any other commentary.`;
 
@@ -450,16 +511,31 @@ Do not include any other commentary.`;
   const userMessage = `You will be given a raw transcript.
 
 Each line is formatted as:
-[L{index} id={ledger_uuid}] [ISO_TIMESTAMP] SPEAKER: TEXT
+Create a two-part meecap:
+1. SESSION RECAP section: Summary of prior session events being recapped (if any)
+2. NARRATIVE section: Faithful reconstruction of THIS session's in-character gameplay
 
-TASK:
-Write a faithful reconstruction of ONLY the in-character (IC) gameplay as narrative + dialogue.
+CITATION REQUIREMENT (CRITICAL):
+- You MUST add a citation (L#) or (L#-L#) IMMEDIATELY after EVERY sentence.
+- Every line of dialogue must have a citation showing which transcript line it came from.
+- Every narrated action must have a citation.
+- If you write a sentence without a citation, you are doing it wrong.
+
+Example output:
+=== SESSION RECAP ===
+The party had previously investigated the mysterious tower and discovered a hidden basement (L0-L3). They found a map pointing to an ancient ruin (L4-L6).
+
+=== NARRATIVE ===
+Jamison approached the tower cautiously (L7). 'This place gives me a bad feeling,' he muttered (L8). The group paused at the entrance, weapons drawn (L9-L10).
 
 IMPORTANT:
+- If no recap exists at transcript start, write "None" for SESSION RECAP
+- Exclude out-of-character/table talk from both sections
+- Use direct quotes wherever possible (light grammar cleanup allowed)
+- Every IC line must be reflected in the narrative (not merely cited)
 - Exclude out-of-character/table talk from the narrative.
 - Use direct quotes wherever possible (light grammar cleanup allowed).
 - Every IC line must be reflected in the narrative (not merely cited).
-- Cite every IC line at least once using (L#) or (L#–L#).
 
 TRANSCRIPT:
 ${transcript}`;
@@ -481,6 +557,7 @@ function buildV1MeecapPrompts(args: {
   transcript: string;
 }): { systemPrompt: string; userMessage: string } {
   const { sessionId, sessionSpan, transcript } = args;
+  const pcNames = getPCNamesForPrompt();
 
 const systemPrompt = `You are Meecap, an offline D&D session structurer.
 
@@ -501,14 +578,9 @@ CRITICAL RULES:
 - Beat evidence_ledger_ids must be a non-empty list.
 - Use only ledger IDs that appear in the transcript input. Never fabricate IDs.
 
-PRIMARY PLAYER CHARACTERS:
-Jamison
-Minx
-Snowflake
-Cyril
-Evanora
-Louis
-
+PLAYER CHARACTERS (PCs):
+The following are the player characters in this campaign: ${pcNames}
+All other named characters in the transcript are NPCs (non-player characters).
 When these characters appear in the transcript, refer to them by name.
 
 SPECIFICITY RULES:
@@ -688,10 +760,9 @@ function validateMeecapNarrative(prose: string): string[] {
 export function buildMeecapTranscript(entries: LedgerEntry[]): string {
   return entries
     .map((e, idx) => {
-      const t = new Date(e.timestamp_ms).toISOString();
       // Use normalized content if available, fallback to raw
       const content = e.content_norm ?? e.content;
-      return `[L${idx} id=${e.id}] [${t}] ${e.author_name}: ${content}`;
+      return `[L${idx}] ${e.author_name}: ${content}`;
     })
     .join("\n");
 }

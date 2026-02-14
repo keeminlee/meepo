@@ -6,20 +6,12 @@ import { generateMeecapStub } from "../sessions/meecap.js";
 
 console.log("🧪 Testing Meecap stub...\n");
 
-const testTranscript = `[2026-02-11T10:00:00.000Z] Jamison: We need to investigate the tower.
-[2026-02-11T10:01:00.000Z] Minx: I agree, but let's be careful.
-[2026-02-11T10:02:00.000Z] DM: You approach the crumbling tower...`;
-
-const testTranscriptNorm = `[2026-02-11T10:00:00.000Z] Jamison: We need to investigate the tower.
-[2026-02-11T10:01:00.000Z] Minx: I agree, but let's be careful.
-[2026-02-11T10:02:00.000Z] DM: You approach the crumbling tower...`;
-
 async function testMeecap() {
   try {
     const result = await generateMeecapStub({
       sessionId: "test_session_001",
-      transcript: testTranscript,
-      transcriptNorm: testTranscriptNorm,
+      sessionLabel: "TEST01",
+      entries: [], // Empty entries array for stub test
     });
 
     console.log("✅ Meecap stub generated successfully!\n");

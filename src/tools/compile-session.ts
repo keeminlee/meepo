@@ -1,7 +1,7 @@
 /**
  * compile-session.ts: Generate structured events from session transcript
  * 
- * CLI: npx tsx src/tools/compile-session.ts --session <SESSION_ID>
+ * CLI: npx tsx src/tools/compile-session.ts --session <SESSION_LABEL>
  * 
  * Behavior:
  * 1. Load session transcript from ledger
@@ -35,14 +35,14 @@ function parseArgs(): { sessionId: string | null } {
 }
 
 // Get session info
-function getSession(sessionId: string) {
+function getSession(sessionLabel: string) {
   const db = getDb();
   const session = db
-    .prepare("SELECT * FROM sessions WHERE session_id = ?")
-    .get(sessionId) as any;
+    .prepare("SELECT * FROM sessions WHERE label = ?")
+    .get(sessionLabel) as any;
 
   if (!session) {
-    throw new Error(`Session not found: ${sessionId}`);
+    throw new Error(`Session not found: ${sessionLabel}`);
   }
 
   return session;
@@ -439,8 +439,8 @@ async function main() {
   const { sessionId } = parseArgs();
 
   if (!sessionId) {
-    console.error("❌ Missing required argument: --session <SESSION_ID>");
-    console.error("Usage: npx tsx src/tools/compile-session.ts --session <SESSION_ID>");
+    console.error("❌ Missing required argument: --session <SESSION_LABEL>");
+    console.error("Usage: npx tsx src/tools/compile-session.ts --session <SESSION_LABEL>");
     process.exit(1);
   }
 
@@ -453,7 +453,7 @@ async function main() {
 
     // Load transcript
     console.log("Loading transcript from ledger...");
-    const { text: transcript, entries } = loadSessionTranscript(sessionId);
+    const { text: transcript, entries } = loadSessionTranscript(session.session_id);
     console.log(`✓ Loaded ${entries.length} messages`);
 
     // Extract events via LLM
@@ -482,11 +482,11 @@ async function main() {
 
     // UPSERT into database
     console.log("\nUpserting events into database...");
-    upsertEvents(sessionId, events, entries);
+    upsertEvents(session.session_id, events, entries);
 
     // Populate PC exposure index
     console.log("\nPopulating PC exposure classification...");
-    populateCharacterEventIndex(sessionId, events);
+    populateCharacterEventIndex(session.session_id, events);
 
     // Summary
     console.log(`\n✅ Generated ${events.length} events for session\n`);

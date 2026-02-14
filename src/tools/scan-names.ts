@@ -156,6 +156,10 @@ function scanNames(): void {
       // will count separately in known-hit pass below)
       if (registry.byName.has(phraseNorm)) continue;
 
+      // Filter: skip if any word is a known canonical name
+      const words = phraseNorm.split(/\s+/);
+      if (words.some((w) => registry.byName.has(w))) continue;
+
       // Filter: "The X" pattern (1-2 words after "The")
       if (phraseTrimmed.startsWith("The ")) {
         const restWords = phraseTrimmed.slice(4).split(/\s+/).length;

@@ -90,7 +90,7 @@ ON sessions(guild_id, ended_at_ms);
 -- Supports two modes:
 --   - V1 JSON: schema-validated scenes/beats (legacy)
 --   - Narrative prose: story-like retelling (current/recommended)
--- Set MEE_CAP_MODE env var to control pipeline (default: "narrative")
+-- Set MEECAP_MODE env var to control pipeline (default: "narrative")
 CREATE TABLE IF NOT EXISTS meecaps (
   session_id TEXT PRIMARY KEY,
   meecap_json TEXT,                        -- V1 schema (legacy/compatibility only)

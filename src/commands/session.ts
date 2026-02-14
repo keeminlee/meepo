@@ -5,8 +5,54 @@ import type { LedgerEntry } from "../ledger/ledger.js";
 import { chat } from "../llm/client.js";
 import { generateMeecapStub, validateMeecapV1 } from "../sessions/meecap.js";
 import { getDb } from "../db.js";
+import { loadRegistry } from "../registry/loadRegistry.js";
 import path from "path";
 import fs from "fs";
+
+/**
+ * Get formatted list of PC names from registry for prompt context
+ */
+function getPCNamesForPrompt(): string {
+  try {
+    const registry = loadRegistry();
+    const pcNames = registry.characters
+      .filter(c => c.type === "pc")
+      .map(c => c.canonical_name)
+      .sort();
+    return pcNames.join(", ");
+  } catch (err) {
+    console.warn("Failed to load PC names from registry:", err);
+    return "(registry unavailable)";
+  }
+}
+
+/**
+ * Word wrap text at approximately maxWidth characters, breaking at word boundaries
+ */
+function wordWrap(text: string, maxWidth: number = 100): string {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    
+    if (testLine.length <= maxWidth) {
+      currentLine = testLine;
+    } else {
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+      currentLine = word;
+    }
+  }
+  
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+  
+  return lines.join('\n');
+}
 
 /**
  * Shared ledger slice logic for both transcript and recap commands
@@ -73,9 +119,15 @@ export const session = {
         .setDescription("Display session transcript from ledger.")
         .addStringOption((opt) =>
           opt
+            .setName("label")
+            .setDescription("Episode label (e.g., C2E6). If provided, shows that session's transcript.")
+            .setRequired(false)
+        )
+        .addStringOption((opt) =>
+          opt
             .setName("range")
-            .setDescription("Time range for transcript")
-            .setRequired(true)
+            .setDescription("Time range for transcript (default: since_start)")
+            .setRequired(false)
             .addChoices(
               { name: "Since session start", value: "since_start" },
               { name: "Last 5 hours", value: "last_5h" },
@@ -96,9 +148,15 @@ export const session = {
         .setDescription("Generate session recap summary from ledger.")
         .addStringOption((opt) =>
           opt
+            .setName("label")
+            .setDescription("Episode label (e.g., C2E6). If provided, recaps that session.")
+            .setRequired(false)
+        )
+        .addStringOption((opt) =>
+          opt
             .setName("range")
-            .setDescription("Time range for recap")
-            .setRequired(true)
+            .setDescription("Time range for recap (default: since_start)")
+            .setRequired(false)
             .addChoices(
               { name: "Since session start", value: "since_start" },
               { name: "Last 5 hours", value: "last_5h" },
@@ -133,12 +191,6 @@ export const session = {
             .setDescription("Regenerate meecap before rendering. Use with narrative/dm styles.")
             .setRequired(false)
         )
-        .addStringOption((opt) =>
-          opt
-            .setName("label")
-            .setDescription("Episode label filter (e.g., C2E01). Optional; uses latest ingested if omitted.")
-            .setRequired(false)
-        )
     )
     .addSubcommand((sub) =>
       sub
@@ -163,7 +215,7 @@ export const session = {
         .addStringOption((opt) =>
           opt
             .setName("label")
-            .setDescription("Episode label filter (e.g., C2E01). Optional; uses latest ingested if omitted.")
+            .setDescription("Episode label filter (e.g., C2E6). Optional; uses latest ingested if omitted.")
             .setRequired(false)
         )
     ),
@@ -190,27 +242,28 @@ export const session = {
     const sub = interaction.options.getSubcommand();
 
     if (sub === "transcript") {
-      const range = interaction.options.getString("range", true);
+      const label = interaction.options.getString("label") ?? null;
+      const range = interaction.options.getString("range") ?? (label ? "recording" : "since_start");
       const primaryOnly = interaction.options.getBoolean("primary") ?? false;
       
-      const result = getLedgerSlice({ guildId, range, primaryOnly });
+      const result = getLedgerSlice({ guildId, range, primaryOnly, sessionLabel: label });
 
       if ("error" in result) {
         await interaction.reply({ content: result.error, ephemeral: true });
         return;
       }
 
-      // Format with source and narrative_weight for debugging
+      // Format in human-readable format (no timestamps/metadata, word-wrapped)
       let transcript = result
         .map((e) => {
-          const t = new Date(e.timestamp_ms).toISOString();
-          const meta = `(${e.source}/${e.narrative_weight})`;
-          return `[${t}] ${meta} ${e.author_name}: ${e.content}`;
+          const line = `${e.author_name}: ${e.content}`;
+          return wordWrap(line, 100);
         })
-        .join("\n");
+        .join("\n\n");
 
       const mode = primaryOnly ? "primary" : "full";
-      const header = `**Session transcript (${range}, mode: ${mode}):**\n`;
+      const sessionInfo = label ? `${label}, ${mode}` : `${range}, ${mode}`;
+      const header = `**Session transcript (${sessionInfo}):**\n`;
 
       // Discord has a 2000 character limit per message
       // If transcript is too long, send as file attachment instead
@@ -219,9 +272,10 @@ export const session = {
       if (transcript.length > maxMessageLength) {
         // Send as file attachment
         const buffer = Buffer.from(transcript, 'utf-8');
-        const attachment = new AttachmentBuilder(buffer, { 
-          name: `session-transcript-${range}-${Date.now()}.txt` 
-        });
+        const filename = label 
+          ? `transcript-${label}-${Date.now()}.txt`
+          : `transcript-${range}-${Date.now()}.txt`;
+        const attachment = new AttachmentBuilder(buffer, { name: filename });
         
         await interaction.reply({
           content: `${header}(Transcript was too long for Discord, attached as file)`,
@@ -239,10 +293,10 @@ export const session = {
     }
 
     if (sub === "recap") {
-      const range = interaction.options.getString("range", true);
+      const label = interaction.options.getString("label") ?? null;
+      const range = interaction.options.getString("range") ?? (label ? "recording" : "since_start");
       const style = interaction.options.getString("style") ?? "dm";
       const source = interaction.options.getString("source") ?? "primary";
-      const label = interaction.options.getString("label") ?? null;
       const forceMeecap = interaction.options.getBoolean("force_meecap") ?? false;
       
       // Determine primaryOnly based on source
@@ -281,13 +335,14 @@ export const session = {
         const sessionId = activeSession?.session_id ?? `adhoc_${Date.now()}`;
 
         let meecap: any;
-        const meecapMode = process.env.MEE_CAP_MODE ?? "narrative";
+        const meecapMode = process.env.MEECAP_MODE ?? "narrative";
 
         // If force_meecap is true, generate a fresh meecap
         if (forceMeecap) {
           try {
             const meecapResult = await generateMeecapStub({
               sessionId,
+              sessionLabel: label,
               entries: result,
             });
             
@@ -453,9 +508,14 @@ export const session = {
             }
 
             // Build narrative recap using meecap structure + transcript detail
+            const pcNames = getPCNamesForPrompt();
             const systemPrompt = `You are a D&D session recorder for the DM. You will be given:
 1. A Meecap (structured scenes with beats and evidence references)
 2. A session transcript (detailed conversation)
+
+PLAYER CHARACTERS (PCs):
+The following are the player characters in this campaign: ${pcNames}
+All other named characters in the transcript are NPCs (non-player characters).
 
 Produce a narrative recap organized by scene headings from the meecap, but with rich detail from the transcript.
 
@@ -478,7 +538,7 @@ ${JSON.stringify(meecap.scenes.map((s: any) => ({
 })), null, 2)}
 
 Transcript:
-${transcript}`;
+${transcriptNorm}`;
 
             try {
               const narrative = await chat({
@@ -519,7 +579,12 @@ ${transcript}`;
       }
 
       // For dm and party styles, use LLM summarization
+      const pcNames = getPCNamesForPrompt();
       const systemPrompt = `You are a D&D session recorder for the DM. You will be given a session transcript (raw dialogue and events). Produce a structured DM recap that is detailed, skimmable, and strictly grounded in the transcript.
+
+PLAYER CHARACTERS (PCs):
+The following are the player characters in this campaign: ${pcNames}
+All other named characters in the transcript are NPCs (non-player characters).
 
 TARGET: 800-1500 words. Prioritize density and detail.
 
@@ -563,7 +628,7 @@ STYLE:
 - Prefer specifics (names, places, actions) over generalities, but never guess.
 - Keep total length roughly 300–900 words unless the transcript is extremely short.`;
 
-      const userMessage = `Transcript:\n${transcript}`;
+      const userMessage = `Transcript:\n${transcriptNorm}`;
 
       try {
         const summary = await chat({
@@ -672,10 +737,11 @@ STYLE:
       try {
         const meecapResult = await generateMeecapStub({
           sessionId: session.session_id,
+          sessionLabel: session.label,
           entries,
         });
 
-        const meecapMode = process.env.MEE_CAP_MODE ?? "narrative";
+        const meecapMode = process.env.MEECAP_MODE ?? "narrative";
 
         // Handle based on mode
         if (meecapMode === "narrative") {
@@ -720,16 +786,7 @@ STYLE:
             return;
           }
 
-          // Export prose to disk
-          const meecapsDir = path.join(process.cwd(), "data", "meecaps");
-          if (!fs.existsSync(meecapsDir)) {
-            fs.mkdirSync(meecapsDir, { recursive: true });
-          }
-          const meecapFilename = `${session.session_id}__${now}.md`;
-          const meecapPath = path.join(meecapsDir, meecapFilename);
-          fs.writeFileSync(meecapPath, meecapResult.narrative);
-
-          // Export prose as attachment
+          // Export prose as attachment for Discord
           const mdBuffer = Buffer.from(meecapResult.narrative, 'utf-8');
           const attachment = new AttachmentBuilder(mdBuffer, {
             name: `meecap-narrative-${Date.now()}.md`,
