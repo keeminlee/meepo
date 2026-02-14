@@ -440,15 +440,25 @@ function applyMigrations(db: Database.Database) {
       `);
     }
   }
-  // Migration: Add is_recap column to events table (Phase 1C - Recap Filtering)
-  const eventColumnsForIsRecap = db.pragma("table_info(events)") as any[];
-  const hasIsRecapColumn = eventColumnsForIsRecap.some((col: any) => col.name === "is_recap");
+  // Migration: Add is_ooc column to events table (Phase 1C - OOC Filtering)
+  const eventColumnsForIsOoc = db.pragma("table_info(events)") as any[];
+  const hasIsOocColumn = eventColumnsForIsOoc.some((col: any) => col.name === "is_ooc");
   
-  if (!hasIsRecapColumn) {
-    console.log("Migrating: Adding is_recap column to events table");
-    db.exec(`
-      ALTER TABLE events ADD COLUMN is_recap INTEGER DEFAULT 0;
-    `);
+  if (!hasIsOocColumn) {
+    // Check for old is_recap column and rename it
+    const hasIsRecapColumn = eventColumnsForIsOoc.some((col: any) => col.name === "is_recap");
+    
+    if (hasIsRecapColumn) {
+      console.log("Migrating: Renaming is_recap column to is_ooc in events table");
+      db.exec(`
+        ALTER TABLE events RENAME COLUMN is_recap TO is_ooc;
+      `);
+    } else {
+      console.log("Migrating: Adding is_ooc column to events table");
+      db.exec(`
+        ALTER TABLE events ADD COLUMN is_ooc INTEGER DEFAULT 0;
+      `);
+    }
   }
   // Migration: Create character_event_index table (Phase 1C - MVP Silver)
   // Schema: event_id + pc_id (PK), exposure_type (direct|witnessed)

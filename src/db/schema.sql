@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS events (
   end_index INTEGER,                       -- End index in transcript (0-based, inclusive)
   timestamp_ms INTEGER NOT NULL,           -- When event occurred in session
   created_at_ms INTEGER NOT NULL,
-  is_recap INTEGER DEFAULT 0,              -- 0 = gameplay event, 1 = recap/OOC preamble (skipped in analysis)
+  is_ooc INTEGER DEFAULT 0,                -- 0 = gameplay event, 1 = OOC/meta (skipped in PC exposure analysis)
   
   -- Stable identity: recompiling same session produces same event IDs
   UNIQUE(session_id, start_index, end_index, event_type)
