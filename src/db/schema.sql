@@ -129,7 +129,7 @@ ON meepo_mind(gravity DESC);
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,                     -- UUID
   session_id TEXT NOT NULL,                -- FK to sessions
-  event_type TEXT NOT NULL,                -- 'action', 'dialogue', 'discovery', 'emotional', 'conflict'
+  event_type TEXT NOT NULL,                -- 'action', 'dialogue', 'discovery', 'emotional', 'conflict', 'plan', 'transition', 'recap', 'ooc_logistics'
   participants TEXT NOT NULL,              -- JSON array of normalized character names
   description TEXT NOT NULL,               -- Structured event summary
   confidence REAL NOT NULL,                -- Extraction confidence (0.0–1.0)

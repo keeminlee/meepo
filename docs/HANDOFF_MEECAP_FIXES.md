@@ -1,5 +1,46 @@
 # Meecap Fixes & Session Label Improvements (Feb 13, 2026)
 
+## Update: Session Tools + Event Pipeline (Feb 14, 2026)
+
+### Summary
+Incremental quality-of-life improvements across session tooling, event compilation, and transcript utilities. Added batch event compilation, session metadata viewing/labeling improvements, narrative_weight filtering for event extraction, and progress bars for long-running transcript jobs.
+
+### Changes Made
+
+#### 1) /session Label + View UX
+**Files**: `src/commands/session.ts`
+
+- Added `/session label` with optional `session_id`.
+  - If active session exists and no `session_id` provided, label the active session.
+  - If no active session, shows unlabeled sessions with local timestamps and prompts to copy/paste a `session_id`.
+- Added `/session view` with `scope` option (`all`, `unlabeled`) to return session metadata ephemerally.
+- Session lists include local time (via `toLocaleString()`).
+
+#### 2) Event Compilation Filters + Batch Tool
+**Files**: `src/tools/compile-and-export-events.ts`, `src/tools/compile-and-export-events-batch.ts`
+
+- Event extraction now filters ledger to `narrative_weight = 'primary'` by default.
+- PC exposure index skips `recap`, `ooc_logistics`, and `transition` event types (plus `is_ooc=true`).
+- `getSession()` now uses the latest labeled session (`ORDER BY created_at_ms DESC LIMIT 1`).
+- Exported `compileAndExportSession()` for reuse by batch tooling.
+- Added batch compiler that skips unlabeled sessions and labels containing `test`:
+  - `npx tsx src/tools/compile-and-export-events-batch.ts [--force]`
+
+#### 3) Transcript Tool Progress Bars
+**Files**: `tools/ingest-media.ts`, `tools/cleanup-and-normalize-transcripts.ts`, `package.json`, `package-lock.json`
+
+- Added `cli-progress` dependency.
+- Added progress bars to offline transcription and cleanup/normalize scripts.
+- Fixed `cleanup-and-normalize-transcripts.ts` to use static `cli-progress` import (no `await import`).
+
+#### 4) Misc Improvements
+**Files**: `src/bot.ts`, `src/db/schema.sql`
+
+- Console log for incoming messages now uses guild display name (nickname) when available.
+- Updated `events.event_type` schema comment to list all 9 event types.
+
+---
+
 ## Summary
 Fixed duplicate meecap file generation and standardized session label lookups across tools. All meecap files now use the new `meecap_{label}.md` naming scheme. Session label-based lookups improve UX for humans (no more UUID hunting).
 
@@ -219,191 +260,9 @@ Location: `src/commands/session.ts:48-100`
 
 ---
 
-## Event System Refinement (Session 2)
-
-### 6. is_recap → is_ooc Column Rename
-**Database**: `bot.sqlite` `events` table  
-**Files Changed**:
-- `src/db/schema.sql` - column definition + comment
-- `src/db.ts` - migration logic (handles old `is_recap` → new `is_ooc`)
-- `src/tools/compile-and-export-events.ts` - all SQL queries + TypeScript types
-
-**Problem**: Column name `is_recap` was semantically confusing:
-- Conflated "recap as narrative type" with "recap as hygiene flag"
-- When we added `recap` as an event_type, the flag meaning became unclear
-
-**Solution**: Renamed to `is_ooc` (out-of-character)
-- `is_ooc = 1`: Table talk, meta discussion, rules, scheduling, tech issues
-- `is_ooc = 0`: In-game narrative events (including recap-type events)
-- "recap" now purely an event_type, not a boolean hygiene flag
-
-**Migration Strategy**:
-- DB migration in `db.ts` checks for both old + new column names
-- Renames `is_recap` → `is_ooc` if exists
-- Creates `is_ooc` if neither exists
-- Support for fresh databases + existing databases with old schema
-
-**JSON Export**: Now exports `"is_ooc"` field (was `"is_recap"`)
-
----
-
-### 7. Expanded Event Type System
-**File**: `src/tools/compile-and-export-events.ts` (lines 164-235)
-
-**Before**: 5 event types
-```
-action, dialogue, discovery, emotional, conflict
-is_recap: true|false
-```
-
-**After**: 9 event types + is_ooc flag
-```
-action, dialogue, discovery, emotional, conflict, 
-plan, transition, recap, ooc_logistics
-is_ooc: true|false (orthogonal)
-```
-
-**New Types**:
-- **plan**: In-world strategizing, deciding what to do next (before action occurs)
-- **transition**: Scene changes, time skips, location shifts, session openings/closings  
-- **recap**: Summaries of prior in-world events (was attribute, now type)
-- **ooc_logistics**: Table talk, rules, scheduling, tech (mutually exclusive with is_ooc=true safeguard)
-
-**Dominance Rules** (updated LLM prompt):
-```
-1. conflict > dialogue (if disagreement present)
-2. emotional > dialogue (if bonding/vulnerability primary)
-3. plan > dialogue (if deciding next action)
-4. discovery > dialogue (if info revealed)
-5. Otherwise → dialogue
-```
-
-**Test Results for C2E6**:
-- 47 events extracted (vs 32 with old system)
-- Better granularity: combat broken into multiple action events
-- Clear distinction: plan events before action events
-- Emotional moments properly classified (not dialogue)
-- 282 PC exposure entries created
-
----
-
-### 8. --force Recompile Flag
-**File**: `src/tools/compile-and-export-events.ts`  
-**CLI**: `npx tsx src/tools/compile-and-export-events.ts --session <LABEL> [--force]`
-
-**Problem**: Events use UUID primary key. If LLM extracts different boundaries on recompile, orphaned events accumulate.
-
-**Solution**: `--force` flag with cascade delete + user confirmation
-
-**Behavior**:
-1. Check for dependent memories (future-proofing for memory system)
-2. If memories found:
-   - Warn user: "X memories reference events in this session"
-   - Prompt: "Recompile will DELETE these memories. Proceed? (yes/no)"
-   - User confirms → cascade delete: memories → PC index → events
-   - User declines → abort, no changes
-3. If no memories:
-   - Silently delete character_event_index + events
-4. Extract fresh events with new UUIDs
-5. Regenerate visualization + PC exposure index
-
-**New Functions**:
-- `countDependentMemories()` - checks if memories table exists + counts references
-- `promptForConfirmation()` - readline-based yes/no prompt (blocking)
-- `cascadeDeleteForRecompile()` - transaction-based delete with logging
-
-**Safety**:
-- Uses `IN (SELECT id FROM events WHERE session_id = ?)` subquery
-- Only deletes for specific session_id (no cross-session risk)
-- Transactional (all-or-nothing)
-- Reports changes: deleted memories, indexes, events
-
----
-
-## Testing Completed
-
-### C2E6 End-to-End Test
-```bash
-# Clean slate
-sqlite3 .\data\bot.sqlite "DELETE FROM character_event_index; DELETE FROM events;"
-Remove-Item .\data\session-events\* -Force
-
-# Compile with new 9-type system
-npx tsx src/tools/compile-and-export-events.ts --session C2E6
-
-# Results
-✓ Loaded 188 messages
-✓ Extracted 47 events (more granular than before)
-✓ Inserted 47 new events, updated 0 existing
-✓ Inserted 282 PC exposure entries
-✓ Event rows preview exported with is_ooc field
-✓ Visualization exported (events_C2E6.txt)
-```
-
-### Database Schema Validation
-```sql
-PRAGMA table_info(events) → is_ooc column present at index 10
-No schema migration errors
-Backward compat: old is_recap references handled gracefully
-```
-
----
-
-## Next Steps
-1. Recompile C2E1..C2E19 with new 9-type system (may yield different event counts)
-2. Audit event classifications manually (spot-check conflict vs dialogue)
-3. Iterate on LLM prompt dominance rules if needed
-4. Once memories table created, test `--force` with cascade delete
-5. Consider adding event type frequency stats tool
-
----
-
-## Commit Hash
-Latest: `dcd754e` - "refactor: rename is_recap to is_ooc for semantic clarity + add --force recompile flag"
-
----
-
-## Code Archaeology: Event System
-
-### ExtractedEvent Interface
-Location: `src/tools/compile-and-export-events.ts:100-106`
-```typescript
-interface ExtractedEvent {
-  start_index: number;
-  end_index: number;
-  title: string;
-  event_type: 'action' | 'dialogue' | 'discovery' | 'emotional' | 'conflict' | 
-              'plan' | 'transition' | 'recap' | 'ooc_logistics';
-  is_ooc?: boolean;
-}
-```
-
-### LLM System Prompt
-Location: `src/tools/compile-and-export-events.ts:164-235`
-- 70+ lines with 3 sections: event types, dominance rules, output format
-- Examples show conflict classification (even when dialogue-like)
-- Tie-break logic explicit for ambiguous cases
-
-### loadExistingEvents()
-Location: `src/tools/compile-and-export-events.ts:373-408`
-- Queries: `SELECT ... FROM events WHERE session_id = ?`
-- Maps DB `is_ooc` (0|1) to TypeScript boolean
-- Returns null if no existing events found
-- Enabled by `--force` skip logic
-
-### populateCharacterEventIndex()
-Location: `src/tools/compile-and-export-events.ts:420-510`
-- Skips `is_ooc=true` events (meta talk doesn't count as PC exposure)
-- Classifies as "direct" (spoke) or "witnessed" (party present)
-- Transaction-based for consistency
-
----
-
 ## Backward Compatibility
-- Existing meecaps fully compatible (no changes)
-- Old `is_recap` column automatically migrated to `is_ooc` on first run
-- Event type changes are additive (no deletions from type enum)  
-- `is_ooc` flag semantically same as old `is_recap` (just renamed)
-- Database schema migration runs automatically (no manual steps)
+- Existing meecaps (live sessions, prior runs) still accessible via session UUID
+- Old-format files on disk can be manually deleted if desired
+- Registry loading still supports all entity types (no breaking changes)
+- No database migration needed
 
-```

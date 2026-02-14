@@ -23,6 +23,8 @@ import path from "node:path";
 import * as readline from "node:readline";
 import YAML from "yaml";
 import { getDb } from "../db.js";
+
+const DEFAULT_NARRATIVE_WEIGHT = "primary";
 import { chat } from "../llm/client.js";
 
 // Parse CLI arguments
@@ -47,7 +49,7 @@ function parseArgs(): { sessionLabel: string | null; force: boolean } {
 function getSession(sessionLabel: string) {
   const db = getDb();
   const session = db
-    .prepare("SELECT * FROM sessions WHERE label = ?")
+    .prepare("SELECT * FROM sessions WHERE label = ? ORDER BY created_at_ms DESC LIMIT 1")
     .get(sessionLabel) as any;
 
   if (!session) {
@@ -66,18 +68,21 @@ function loadSessionTranscript(sessionId: string): {
   const db = getDb();
 
   // Accept both 'text' (Discord messages) and 'offline_ingest' (ingested audio transcripts)
+  // Only include primary narrative entries by default
   // CRITICAL: Sort by timestamp_ms + id for deterministic ordering
   const rows = db
     .prepare(
       `SELECT author_name, content, content_norm, timestamp_ms 
        FROM ledger_entries 
-       WHERE session_id = ? AND source IN ('text', 'offline_ingest')
+       WHERE session_id = ?
+         AND source IN ('text', 'offline_ingest')
+         AND narrative_weight = ?
        ORDER BY timestamp_ms ASC, id ASC`
     )
-    .all(sessionId) as Array<{ author_name: string; content: string; content_norm: string | null; timestamp_ms: number }>;
+    .all(sessionId, DEFAULT_NARRATIVE_WEIGHT) as Array<{ author_name: string; content: string; content_norm: string | null; timestamp_ms: number }>;
 
   if (rows.length === 0) {
-    throw new Error(`No transcript found for session: ${sessionId} (checked for 'text' and 'offline_ingest' sources)`);
+    throw new Error(`No transcript found for session: ${sessionId} (checked for 'text' and 'offline_ingest' sources with narrative_weight = '${DEFAULT_NARRATIVE_WEIGHT}')`);
   }
 
   const entries = rows.map((r, idx) => ({
@@ -203,6 +208,10 @@ Dominance & Tie-Break Rules
 - If it is table/meta talk → "ooc_logistics".
 
 When uncertain, choose the category that represents the PRIMARY narrative function of the span.
+
+Boundary Heuristic:
+Start a new event when there is a clear shift in the dominant event_type or a switch between in-world vs OOC (is_ooc).
+Do NOT split for single short interjections; prefer grouping until the new type/state persists for multiple lines or represents a distinct beat.
 
 ------------------------------------------------------------
 2. HYGIENE FLAG
@@ -468,16 +477,18 @@ function populateCharacterEventIndex(sessionId: string, events: ExtractedEvent[]
       .prepare(
         `SELECT author_id, author_name
          FROM ledger_entries 
-         WHERE session_id = ? AND source IN ('text', 'offline_ingest')
+         WHERE session_id = ?
+           AND source IN ('text', 'offline_ingest')
+           AND narrative_weight = ?
          ORDER BY timestamp_ms ASC, id ASC`
       )
-      .all(sessionId) as Array<{ author_id: string; author_name: string }>;
+      .all(sessionId, DEFAULT_NARRATIVE_WEIGHT) as Array<{ author_id: string; author_name: string }>;
 
     // For each event, classify PC exposure (skip OOC events)
     let insertedCount = 0;
     for (const event of events) {
-      // Skip OOC events (table talk, meta discussion)
-      if (event.is_ooc) {
+      // Skip OOC events (table talk, meta discussion, recaps, transitions)
+      if (event.is_ooc || event.event_type === 'recap' || event.event_type === 'ooc_logistics' || event.event_type === 'transition') {
         continue;
       }
 
@@ -682,17 +693,7 @@ function buildEventVisualization(
   return output;
 }
 
-async function main() {
-  const { sessionLabel, force } = parseArgs();
-
-  if (!sessionLabel) {
-    console.error("❌ Missing required argument: --session <SESSION_LABEL>");
-    console.error("Usage: npx tsx src/tools/compile-and-export-events.ts --session <SESSION_LABEL> [--force]");
-    console.error("Options:");
-    console.error("  --force    Force recompilation even if events already exist");
-    process.exit(1);
-  }
-
+export async function compileAndExportSession(sessionLabel: string, force: boolean): Promise<void> {
   try {
     console.log(`\n📋 Compiling session: ${sessionLabel}\n`);
 
@@ -818,6 +819,24 @@ async function main() {
     console.log(`\n✅ Session compilation and export complete!\n`);
   } catch (err) {
     console.error("\n❌ Error:", err instanceof Error ? err.message : err);
+    throw err;
+  }
+}
+
+async function main() {
+  const { sessionLabel, force } = parseArgs();
+
+  if (!sessionLabel) {
+    console.error("❌ Missing required argument: --session <SESSION_LABEL>");
+    console.error("Usage: npx tsx src/tools/compile-and-export-events.ts --session <SESSION_LABEL> [--force]");
+    console.error("Options:");
+    console.error("  --force    Force recompilation even if events already exist");
+    process.exit(1);
+  }
+
+  try {
+    await compileAndExportSession(sessionLabel, force);
+  } catch {
     process.exit(1);
   }
 }

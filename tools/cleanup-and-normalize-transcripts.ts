@@ -18,6 +18,7 @@
 import Database from "better-sqlite3";
 import { existsSync } from "node:fs";
 import { normalizeText } from "../src/registry/normalizeText.js";
+import * as cliProgress from "cli-progress";
 
 interface CliArgs {
   dbPath: string;
@@ -166,8 +167,18 @@ function main(): void {
   let artifactsRemoved = 0;
   let normalized = 0;
 
+  const progressBar = new cliProgress.SingleBar({
+    format: 'Processing |{bar}| {percentage}% | {value}/{total} entries',
+    barCompleteChar: '\u2588',
+    barIncompleteChar: '\u2591',
+    hideCursor: true
+  });
+  
+  progressBar.start(allRows.length, 0);
+
   db.transaction(() => {
-    for (const row of allRows) {
+    for (let i = 0; i < allRows.length; i++) {
+      const row = allRows[i];
       const cleaned = cleanTranscript(row.content);
       const newNorm = normalizeText(cleaned);
       
@@ -175,8 +186,11 @@ function main(): void {
       
       if (row.content !== cleaned) artifactsRemoved++;
       normalized++;
+      progressBar.update(i + 1);
     }
   })();
+  
+  progressBar.stop();
 
   console.log(`✅ Processing complete:`);
   console.log(`  - Artifacts removed: ${artifactsRemoved} entries`);

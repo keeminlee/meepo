@@ -522,7 +522,7 @@ CITATION REQUIREMENT (CRITICAL):
 - If you write a sentence without a citation, you are doing it wrong.
 
 Example output:
-=== SESSION RECAP ===
+=== WHERE WE LEFT OFF ===
 The party had previously investigated the mysterious tower and discovered a hidden basement (L0-L3). They found a map pointing to an ancient ruin (L4-L6).
 
 === NARRATIVE ===

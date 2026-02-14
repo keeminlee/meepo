@@ -154,29 +154,6 @@ export const session = {
         )
         .addStringOption((opt) =>
           opt
-            .setName("range")
-            .setDescription("Time range for recap (default: since_start)")
-            .setRequired(false)
-            .addChoices(
-              { name: "Since session start", value: "since_start" },
-              { name: "Last 5 hours", value: "last_5h" },
-              { name: "Today (UTC)", value: "today" },
-              { name: "Latest ingested recording", value: "recording" }
-            )
-        )
-        .addStringOption((opt) =>
-          opt
-            .setName("style")
-            .setDescription("Recap style: dm, narrative (meecap-driven), or party")
-            .setRequired(false)
-            .addChoices(
-              { name: "DM recap", value: "dm" },
-              { name: "Narrative (meecap-driven)", value: "narrative" },
-              { name: "Party recap", value: "party" }
-            )
-        )
-        .addStringOption((opt) =>
-          opt
             .setName("source")
             .setDescription("Ledger entries to include: primary (voice-focused) or full (all)")
             .setRequired(false)
@@ -184,12 +161,6 @@ export const session = {
               { name: "Primary (voice-focused)", value: "primary" },
               { name: "Full (all entries)", value: "full" }
             )
-        )
-        .addBooleanOption((opt) =>
-          opt
-            .setName("force_meecap")
-            .setDescription("Regenerate meecap before rendering. Use with narrative/dm styles.")
-            .setRequired(false)
         )
     )
     .addSubcommand((sub) =>
@@ -217,6 +188,38 @@ export const session = {
             .setName("label")
             .setDescription("Episode label filter (e.g., C2E6). Optional; uses latest ingested if omitted.")
             .setRequired(false)
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("label")
+        .setDescription("Set the label for a session.")
+        .addStringOption((opt) =>
+          opt
+            .setName("label")
+            .setDescription("Session label to set (e.g., C2E6).")
+            .setRequired(true)
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName("session_id")
+            .setDescription("Session ID to label (optional).")
+            .setRequired(false)
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("view")
+        .setDescription("View session metadata.")
+        .addStringOption((opt) =>
+          opt
+            .setName("scope")
+            .setDescription("Which sessions to list.")
+            .setRequired(true)
+            .addChoices(
+              { name: "All", value: "all" },
+              { name: "Unlabeled", value: "unlabeled" }
+            )
         )
     ),
 
@@ -294,378 +297,152 @@ export const session = {
 
     if (sub === "recap") {
       const label = interaction.options.getString("label") ?? null;
-      const range = interaction.options.getString("range") ?? (label ? "recording" : "since_start");
-      const style = interaction.options.getString("style") ?? "dm";
       const source = interaction.options.getString("source") ?? "primary";
-      const forceMeecap = interaction.options.getBoolean("force_meecap") ?? false;
-      
-      // Determine primaryOnly based on source
       const primaryOnly = source === "primary";
-      
-      const result = getLedgerSlice({ guildId, range, primaryOnly, sessionLabel: label });
 
-      if ("error" in result) {
-        await interaction.reply({ content: result.error, ephemeral: true });
+      // Resolve most recent session
+      let session: any = null;
+      
+      if (label) {
+        // If label provided, use latest session with that label
+        session = getLatestSessionForLabel(label);
+        if (!session) {
+          await interaction.reply({
+            content: `No sessions found with label: ${label}`,
+            ephemeral: true,
+          });
+          return;
+        }
+      } else {
+        // Otherwise, prefer latest ingested, fallback to active
+        const ingestedSession = getLatestIngestedSession(guildId);
+        const activeSession = getActiveSession(guildId);
+        session = ingestedSession ?? activeSession;
+      }
+      
+      if (!session) {
+        await interaction.reply({
+          content: "No active or ingested session found. Use /meepo wake to start one, or ingest a recording.",
+          ephemeral: true,
+        });
         return;
       }
 
-      // Defer reply since LLM summarization may take time
+      // Check if meecap exists for this session
+      const db = getDb();
+      const meecapRow = db
+        .prepare("SELECT meecap_json, meecap_narrative FROM meecaps WHERE session_id = ?")
+        .get(session.session_id) as { meecap_json?: string; meecap_narrative?: string } | undefined;
+      
+      if (!meecapRow || (!meecapRow.meecap_json && !meecapRow.meecap_narrative)) {
+        await interaction.reply({
+          content: `❯ No meecap found for this session. Run \`/session meecap\` first to generate one.`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Defer reply since we're loading from database
       await interaction.deferReply({ ephemeral: true });
 
-      // Build transcript for summarization (raw)
-      const transcript = result
-        .map((e) => {
-          const t = new Date(e.timestamp_ms).toISOString();
-          return `[${t}] ${e.author_name}: ${e.content}`;
-        })
-        .join("\n");
-
-      // Build normalized transcript if available (Phase 1C)
-      const transcriptNorm = result
-        .map((e) => {
-          const t = new Date(e.timestamp_ms).toISOString();
-          const content = e.content_norm ?? e.content;
-          return `[${t}] ${e.author_name}: ${content}`;
-        })
-        .join("\n");
-
-      // Handle narrative style (meecap-driven)
-      if (style === "narrative") {
-        const activeSession = getActiveSession(guildId);
-        const sessionId = activeSession?.session_id ?? `adhoc_${Date.now()}`;
-
-        let meecap: any;
-        const meecapMode = process.env.MEECAP_MODE ?? "narrative";
-
-        // If force_meecap is true, generate a fresh meecap
-        if (forceMeecap) {
-          try {
-            const meecapResult = await generateMeecapStub({
-              sessionId,
-              sessionLabel: label,
-              entries: result,
-            });
-            
-            if (!meecapResult.text || (!meecapResult.meecap && !meecapResult.narrative)) {
-              await interaction.editReply({
-                content: "Failed to generate meecap: " + meecapResult.text,
-              });
-              return;
-            }
-
-            // Handle based on mode
-            if (meecapMode === "narrative") {
-              // Narrative mode: persist prose
-              if (!meecapResult.narrative) {
-                await interaction.editReply({
-                  content: "Failed to generate narrative: " + meecapResult.text,
-                });
-                return;
-              }
-
-              const db = getDb();
-              const now = Date.now();
-              db.prepare(`
-                INSERT INTO meecaps (session_id, meecap_json, meecap_narrative, model, created_at_ms, updated_at_ms)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(session_id) DO UPDATE SET
-                  meecap_json = excluded.meecap_json,
-                  meecap_narrative = excluded.meecap_narrative,
-                  model = excluded.model,
-                  updated_at_ms = excluded.updated_at_ms
-              `).run(
-                sessionId,
-                null,
-                meecapResult.narrative,
-                "claude-opus", // TODO: Extract actual model from chat response
-                now,
-                now
-              );
-
-              // For narrative mode, meecap is null (prose is the artifact)
-              meecap = null;
-            } else {
-              // V1 JSON mode: validate and persist JSON
-              if (!meecapResult.meecap) {
-                await interaction.editReply({
-                  content: "Failed to generate meecap: " + meecapResult.text,
-                });
-                return;
-              }
-
-              const validationErrors = validateMeecapV1(meecapResult.meecap, result);
-              if (validationErrors.length > 0) {
-                const errorSummary = validationErrors
-                  .map((e) => `- ${e.field}: ${e.message}`)
-                  .join("\n");
-                await interaction.editReply({
-                  content: `Meecap validation failed:\n\`\`\`\n${errorSummary}\n\`\`\``,
-                });
-                return;
-              }
-
-              const db = getDb();
-              const now = Date.now();
-              db.prepare(`
-                INSERT INTO meecaps (session_id, meecap_json, meecap_narrative, model, created_at_ms, updated_at_ms)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(session_id) DO UPDATE SET
-                  meecap_json = excluded.meecap_json,
-                  meecap_narrative = excluded.meecap_narrative,
-                  model = excluded.model,
-                  updated_at_ms = excluded.updated_at_ms
-              `).run(
-                sessionId,
-                JSON.stringify(meecapResult.meecap),
-                null,
-                "claude-opus", // TODO: Extract actual model from chat response
-                now,
-                now
-              );
-
-              meecap = meecapResult.meecap;
-            }
-
-            // Send success response
-            await interaction.editReply({
-              content: meecapResult.text,
-            });
-          } catch (err: any) {
-            console.error("Failed to regenerate meecap with --force_meecap:", err);
-            await interaction.editReply({
-              content: "Failed to regenerate meecap: " + (err.message ?? "Unknown error"),
-            });
-            return;
-          }
-        } else {
-          // Load existing meecap from database
-          const db = getDb();
-          const meecapRow = db
-            .prepare("SELECT meecap_json, meecap_narrative FROM meecaps WHERE session_id = ?")
-            .get(sessionId) as { meecap_json?: string; meecap_narrative?: string } | undefined;
-          
-          if (!meecapRow || (!meecapRow.meecap_json && !meecapRow.meecap_narrative)) {
-            await interaction.editReply({
-              content: "❯ No meecap found for this session. Run `/session meecap` first, or use `--force_meecap` to regenerate.",
-            });
-            return;
-          }
-
-          try {
-            if (meecapRow.meecap_json) {
-              meecap = JSON.parse(meecapRow.meecap_json);
-            } else if (meecapRow.meecap_narrative) {
-              // In narrative mode, meecap is null; prose is stored separately
-              meecap = null;
-            }
-          } catch (err: any) {
-            console.error("Failed to parse meecap JSON:", err);
-            await interaction.editReply({
-              content: "Failed to load meecap. It may be corrupted.",
-            });
-            return;
-          }
-        }
-
-        try {
-          // Handle narrative mode vs. V1 mode
-          if (meecapMode === "narrative") {
-            // In narrative mode, we already have the prose narrative stored
-            // Load and return it directly
-            const db = getDb();
-            const narrativeRow = db
-              .prepare("SELECT meecap_narrative FROM meecaps WHERE session_id = ?")
-              .get(sessionId) as { meecap_narrative?: string } | undefined;
-
-            if (!narrativeRow?.meecap_narrative) {
-              await interaction.editReply({
-                content: "Narrative meecap not found. Try regenerating with `--force_meecap`.",
-              });
-              return;
-            }
-
-            const narrative = narrativeRow.meecap_narrative;
-            const wordCount = narrative.split(/\s+/).length;
-            const charCount = narrative.length;
-
-            // Always output as file for consistency and editability
-            const filename = `meecap-narrative-${Date.now()}.md`;
-            const buffer = Buffer.from(narrative, 'utf-8');
-            const attachment = new AttachmentBuilder(buffer, {
-              name: filename,
-            });
-            await interaction.editReply({
-              content: `✅ **Meecap Narrative**\n\n📊 **Stats:**\n- Word count: ~${wordCount}\n- Character count: ${charCount}\n\n📄 Narrative attached below (editable in Discord)`,
-              files: [attachment],
-            });
-          } else {
-            // V1 mode: build narrative from meecap structure
-            if (!meecap || !meecap.scenes) {
-              await interaction.editReply({
-                content: "Meecap structure not available. Cannot generate recap.",
-              });
-              return;
-            }
-
-            // Build narrative recap using meecap structure + transcript detail
-            const pcNames = getPCNamesForPrompt();
-            const systemPrompt = `You are a D&D session recorder for the DM. You will be given:
-1. A Meecap (structured scenes with beats and evidence references)
-2. A session transcript (detailed conversation)
-
-PLAYER CHARACTERS (PCs):
-The following are the player characters in this campaign: ${pcNames}
-All other named characters in the transcript are NPCs (non-player characters).
-
-Produce a narrative recap organized by scene headings from the meecap, but with rich detail from the transcript.
-
-HARD RULES:
-- Use ONLY information from the transcript. Do NOT invent.
-- Organize narrative by meecap scenes (use scene titles as headings).
-- Within each scene, include the beats and supporting dialogue/details.
-- Exclude out-of-character/table talk from the recap. Focus only on in-character gameplay events.
-- If you are unsure whether something is OOC, omit it.
-- Keep between 800-1500 words. Prioritize density over brevity.
-- Be narrative and engaging while staying faithful to what happened.
-
-STYLE: Write as a polished session recap for the DM's notes.`;
-
-            const userMessage = `Meecap Structure:
-${JSON.stringify(meecap.scenes.map((s: any) => ({
-  number: s.number,
-  title: s.title,
-  beats: s.beats.map((b: any) => ({ title: b.moment }))
-})), null, 2)}
-
-Transcript:
-${transcriptNorm}`;
-
-            try {
-              const narrative = await chat({
-                systemPrompt,
-                userMessage,
-                maxTokens: 2500, // ~1500 words max (conservative)
-              });
-
-              const maxMessageLength = 1950;
-              if (narrative.length > maxMessageLength) {
-                const buffer = Buffer.from(narrative, 'utf-8');
-                const attachment = new AttachmentBuilder(buffer, {
-                  name: `session-recap-narrative-${Date.now()}.md`,
-                });
-                await interaction.editReply({
-                  content: `**Narrative Recap:**\n(Summary was too long for Discord, attached as file)`,
-                  files: [attachment],
-                });
-              } else {
-                await interaction.editReply({
-                  content: `**Narrative Recap:**\n${narrative}`,
-                });
-              }
-            } catch (err: any) {
-              console.error("LLM narrative error:", err);
-              await interaction.editReply({
-                content: "Failed to generate narrative recap. LLM unavailable.",
-              });
-            }
-          }
-        } catch (err: any) {
-          console.error("Failed during narrative recap:", err);
-          await interaction.editReply({
-            content: "Failed to generate recap. " + (err.message ?? "Unknown error"),
-          });
-        }
-        return;
-      }
-
-      // For dm and party styles, use LLM summarization
-      const pcNames = getPCNamesForPrompt();
-      const systemPrompt = `You are a D&D session recorder for the DM. You will be given a session transcript (raw dialogue and events). Produce a structured DM recap that is detailed, skimmable, and strictly grounded in the transcript.
-
-PLAYER CHARACTERS (PCs):
-The following are the player characters in this campaign: ${pcNames}
-All other named characters in the transcript are NPCs (non-player characters).
-
-TARGET: 800-1500 words. Prioritize density and detail.
-
-OUT-OF-CHARACTER EXCLUSION:
-Exclude out-of-character/table talk from the recap. Focus only on in-character gameplay events.
-If you are unsure whether something is OOC, omit it.
-
-HARD RULES (DO NOT VIOLATE):
-- Use ONLY information explicitly present in the transcript. Do NOT invent names, places, items, outcomes, motivations, or connections.
-- If something is unclear, conflicting, or implied but not confirmed, label it as "Unclear:" or "Not confirmed:" rather than guessing.
-- Do not add rules adjudication or "what should have happened"—only what the transcript indicates did happen.
-- Do not include filler, jokes, or meta commentary.
-- When possible, include a brief quote fragment (3–10 words) in quotation marks to anchor major beats (max 6 anchors total). Do not paste long quotes.
-
-OUTPUT FORMAT (use these headings exactly):
-## Overview
-(3–6 sentences summarizing the session at a high level. End with: "Notable participants: ...")
-
-## Chronological Beats
-- (Bullet list of the major moments in order. Prefer 8–20 bullets depending on transcript length.)
-- Each bullet should be a concrete event or decision.
-
-## NPCs & Factions
-- **NPC/Faction Name** — What they did / what was said / relationship changes (only if in transcript)
-
-## Player Decisions & Consequences
-- **Decision** — Immediate result / consequence (or "Unclear" if outcome not shown)
-
-## Conflicts & Resolutions
-- Summarize combats, chases, arguments, negotiations, or other conflicts.
-- Include outcomes and any notable costs (HP drops, resources spent, captures, escapes) ONLY if explicitly stated.
-
-## Clues, Loot, & Lore
-- List discoveries, items, passwords, locations, reveals, or lore drops (only if mentioned).
-
-## Open Threads / To Follow Up
-- Bullets of unresolved questions, leads, promises, threats, or timers that appear in the transcript.
-
-STYLE:
-- Be precise and information-dense.
-- Prefer specifics (names, places, actions) over generalities, but never guess.
-- Keep total length roughly 300–900 words unless the transcript is extremely short.`;
-
-      const userMessage = `Transcript:\n${transcriptNorm}`;
-
       try {
+        // In narrative mode, use stored narrative and summarize with DM prompt
+        if (!meecapRow.meecap_narrative) {
+          await interaction.editReply({
+            content: "Narrative meecap not found for this session. Regenerate with `/session meecap --force`.",
+          });
+          return;
+        }
+
+        // Summarize the meecap narrative using DM recap structure
+        const pcNames = getPCNamesForPrompt();
+        const systemPrompt = `You are MeepoRecap, a D&D session recap generator.
+
+INPUT
+You will be given a Meecap document that contains:
+- A narrative reconstruction of the session
+- Line-numbered citations in the form (Lx) or (Lx–Ly)
+- The literal transcript appended below
+
+GOAL
+Produce the most helpful recap for BOTH:
+- The DM (prep, continuity, hooks, consequences)
+- The party (what happened, what matters next)
+This recap is for human eyes only and may vary in structure from session to session.
+
+ABSOLUTE GROUNDING RULES (DO NOT VIOLATE)
+- Use ONLY information explicitly present in the provided Meecap (narrative + appended transcript).
+- Do NOT use any outside/world knowledge or prior session knowledge not present in the Meecap.
+- Do NOT invent names, places, motivations, outcomes, items, or implications.
+- If something is unclear, contradictory, or implied but not confirmed, label it as "Unclear:" or "Not confirmed:" rather than guessing.
+
+CITATION RULES (CRITICAL)
+- Every bullet or factual claim MUST end with a contiguous citation range in the format (Lx–Ly) or (Lx).
+- Citations must be contiguous: do NOT use comma-separated citations or multiple separate ranges.
+- Citations should ANCHOR the claim, not replace it:
+  - Write in broad strokes (synthesis), then cite the span that supports it.
+  - Do NOT merely paraphrase a couple lines and call it done.
+- If you cannot support a claim with a contiguous citation range, OMIT it.
+- Prefer fewer, stronger, well-cited bullets over many weak ones.
+
+WHAT TO EMPHASIZE (PRIORITY ORDER)
+1) World-state changes (new obligations, alliances, threats, promises, injuries, deaths, rule changes)
+2) Player decisions and their immediate consequences
+3) Revealed information / discoveries / lore drops (only what is explicitly stated)
+4) Conflicts and outcomes (combat, trials, negotiations, chases) — focus on outcomes and notable costs
+5) Unresolved threads / timers / hooks likely to matter next session
+6) Notable character moments ONLY if they change relationships, plans, or future behavior
+
+WHAT TO DE-EMPHASIZE
+- Turn-by-turn mechanics, repetitive actions, or low-impact micro-events
+- Small tactical details unless they materially affect the outcome or create a new thread
+
+STRUCTURE (INTENTIONALLY FLEXIBLE)
+- You may choose the most helpful organization for this specific session.
+- You MAY include short markdown headings if it improves skimmability.
+- You MAY choose chronological, thematic, or mixed organization depending on session content.
+- Do NOT force a fixed template if it makes the recap worse.
+
+HARD OUTPUT CONSTRAINTS
+- Output markdown only.
+- Prefer bullets; avoid long paragraphs.
+- Target: ~10–25 total bullets across the entire recap (fewer is fine if the session is short).
+- Keep it skimmable: no wall-of-text sections longer than ~6 lines.
+- Do NOT include the full transcript.
+- Do NOT include meta commentary about the prompt, your confidence, or what you are doing.
+
+QUALITY BAR
+This recap should feel like:
+- A high-quality session memory for players
+- A usable prep aid for the DM
+- Faithful enough that any bullet can be audited quickly via its (Lx–Ly) citation
+`;
         const summary = await chat({
           systemPrompt,
-          userMessage,
-          maxTokens: 3000, // ~1500 words max for dm/party
+          userMessage: meecapRow.meecap_narrative,
+          maxTokens: 3000,
         });
 
-        // Discord has a 2000 character limit per message
-        // If summary is too long, send as file attachment instead
         const maxMessageLength = 1950;
-        
-        const sourceLabel = source === "primary" ? "primary" : "full";
-        const styleLabel = style === "dm" ? "DM" : "Party";
-        const modeHeader = `**Session recap (${range}, style: ${styleLabel}, source: ${sourceLabel}):**\n`;
-        
         if (summary.length > maxMessageLength) {
-          // Send as file attachment
           const buffer = Buffer.from(summary, 'utf-8');
-          const attachment = new AttachmentBuilder(buffer, { 
-            name: `session-recap-${range}-${Date.now()}.md` 
+          const recapLabel = session.label ?? session.session_id;
+          const attachment = new AttachmentBuilder(buffer, {
+            name: `recap_${recapLabel}.md`,
           });
-          
           await interaction.editReply({
-            content: `${modeHeader}(Summary was too long for Discord, attached as file)`,
+            content: `**Session recap:**\n(Too long for Discord, attached as file)`,
             files: [attachment],
           });
         } else {
-          // Send as normal message
           await interaction.editReply({
-            content: `${modeHeader}${summary}`,
+            content: `**Session recap:**\n${summary}`,
           });
         }
       } catch (err: any) {
-        console.error("LLM recap error:", err);
+        console.error("Failed to generate recap:", err);
         await interaction.editReply({
-          content: "Failed to generate recap summary. LLM unavailable.",
+          content: "Failed to generate recap. " + (err.message ?? "Unknown error"),
         });
       }
       return;
@@ -869,6 +646,150 @@ STYLE:
           content: "Failed to generate meecap. Error: " + (err.message ?? "Unknown"),
         });
       }
+      return;
+    }
+
+    if (sub === "view") {
+      const scope = interaction.options.getString("scope", true);
+      const db = getDb();
+
+      const whereClause = scope === "unlabeled"
+        ? "WHERE label IS NULL OR label = ''"
+        : "";
+
+      const sessions = db
+        .prepare(
+          `SELECT session_id, guild_id, label, created_at_ms, started_at_ms, ended_at_ms, started_by_id, started_by_name, source
+           FROM sessions
+           ${whereClause}
+           ORDER BY created_at_ms DESC
+           LIMIT 50`
+        )
+        .all() as Array<{
+          session_id: string;
+          guild_id: string;
+          label: string | null;
+          created_at_ms: number;
+          started_at_ms: number;
+          ended_at_ms: number | null;
+          started_by_id: string | null;
+          started_by_name: string | null;
+          source: string;
+        }>;
+
+      if (sessions.length === 0) {
+        await interaction.reply({
+          content: scope === "unlabeled" ? "No unlabeled sessions found." : "No sessions found.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const lines = sessions.map((s) => {
+        const created = new Date(s.created_at_ms).toLocaleString();
+        const started = new Date(s.started_at_ms).toLocaleString();
+        const ended = s.ended_at_ms ? new Date(s.ended_at_ms).toLocaleString() : "(active)";
+        const label = s.label && s.label.trim() ? s.label : "(unlabeled)";
+        const startedBy = s.started_by_name ?? s.started_by_id ?? "(unknown)";
+        return [
+          `- ${label} | ${s.session_id}`,
+          `  source=${s.source} guild=${s.guild_id}`,
+          `  created=${created} started=${started} ended=${ended} started_by=${startedBy}`,
+        ].join("\n");
+      });
+
+      const header = scope === "unlabeled"
+        ? "Unlabeled sessions (most recent first):"
+        : "All sessions (most recent first):";
+
+      const body = `${header}\n${lines.join("\n")}`;
+
+      if (body.length > 1900) {
+        const buffer = Buffer.from(body, "utf-8");
+        const attachment = new AttachmentBuilder(buffer, { name: `sessions_${scope}.txt` });
+        await interaction.reply({
+          content: "Session list attached (too long for Discord message).",
+          files: [attachment],
+          ephemeral: true,
+        });
+      } else {
+        await interaction.reply({
+          content: `${body}`,
+          ephemeral: true,
+        });
+      }
+      return;
+    }
+
+    if (sub === "label") {
+      const label = interaction.options.getString("label", true);
+      const sessionId = interaction.options.getString("session_id");
+      const db = getDb();
+
+      if (sessionId) {
+        const existing = db
+          .prepare("SELECT session_id FROM sessions WHERE session_id = ?")
+          .get(sessionId) as { session_id: string } | undefined;
+
+        if (!existing) {
+          await interaction.reply({
+            content: `No session found for session_id: ${sessionId}`,
+            ephemeral: true,
+          });
+          return;
+        }
+
+        db.prepare("UPDATE sessions SET label = ? WHERE session_id = ?")
+          .run(label, sessionId);
+
+        await interaction.reply({
+          content: `Session labeled: ${label} (${sessionId})`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const activeSession = getActiveSession(guildId);
+      if (activeSession) {
+        db.prepare("UPDATE sessions SET label = ? WHERE session_id = ?")
+          .run(label, activeSession.session_id);
+
+        await interaction.reply({
+          content: `Session labeled: ${label} (${activeSession.session_id})`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const unlabeledSessions = db
+        .prepare(
+          `SELECT session_id, created_at_ms, started_at_ms, source
+           FROM sessions
+           WHERE label IS NULL OR label = ''
+           ORDER BY created_at_ms DESC
+           LIMIT 10`
+        )
+        .all() as Array<{
+          session_id: string;
+          created_at_ms: number;
+          started_at_ms: number;
+          source: string;
+        }>;
+
+      const unlabeledList = unlabeledSessions.length
+        ? "Unlabeled sessions (most recent first):\n" +
+          unlabeledSessions
+            .map((s) => `- ${s.session_id} (${s.source}, created ${new Date(s.created_at_ms).toLocaleString()})`)
+            .join("\n")
+        : "Unlabeled sessions: (none found)";
+
+      await interaction.reply({
+        content:
+          "No active session found.\n" +
+          unlabeledList +
+          "\n\nTip: copy a session_id from the list and use /session label session_id:<id> to label it.",
+        ephemeral: true,
+      });
       return;
     }
   },

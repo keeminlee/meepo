@@ -46,10 +46,11 @@ client.once("ready", async () => {
 
 client.on("messageCreate", async (message: any) => {
   try {
+    const authorDisplayName = message.member?.displayName ?? message.author.username ?? message.author.id;
     console.log(
       "MSG",
       message.channelId,
-      message.author.username,
+      authorDisplayName,
       JSON.stringify(message.content)
     );
     if (!message.guildId) return;

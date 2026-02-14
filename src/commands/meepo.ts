@@ -552,6 +552,34 @@ export const meepo = {
       await interaction.deferReply({ ephemeral: true });
 
       try {
+        const voiceReplyEnabled = process.env.MEEPO_VOICE_REPLY_ENABLED !== "false";
+
+        if (!voiceReplyEnabled) {
+          // Send as text message instead of voice
+          const channel = interaction.channel;
+          if (channel?.isTextBased()) {
+            const reply = await channel.send(text);
+            
+            // Log bot's reply to ledger
+            appendLedgerEntry({
+              guild_id: guildId,
+              channel_id: active.channel_id,
+              message_id: reply.id,
+              author_id: interaction.client.user.id,
+              author_name: interaction.client.user.username,
+              timestamp_ms: reply.createdTimestamp,
+              content: text,
+              tags: "npc,meepo,spoken",
+            });
+
+            await interaction.editReply({ content: `Sent as text (voice replies disabled): "${text.substring(0, 100)}${text.length > 100 ? "..." : ""}"` });
+          } else {
+            await interaction.editReply({ content: "Cannot send text message in this channel." });
+          }
+          return;
+        }
+
+        // Voice reply enabled - use TTS
         // Get TTS provider
         const ttsProvider = await getTtsProvider();
 

@@ -322,11 +322,20 @@ async function transcribeChunks(
   const sttProvider = await getSttProvider();
   const results: TranscriptResult[] = [];
 
+  // Import cli-progress
+  const cliProgress = await import("cli-progress");
+  const progressBar = new cliProgress.SingleBar({
+    format: 'Transcribing |{bar}| {percentage}% | {value}/{total} chunks | ETA: {eta}s',
+    barCompleteChar: '\u2588',
+    barIncompleteChar: '\u2591',
+    hideCursor: true
+  });
+  
+  progressBar.start(chunks.length, 0);
+
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
-    ingestLog.info(
-      `Transcribing chunk ${i + 1}/${chunks.length} (${chunk.startSec}s - ${chunk.endSec}s)...`
-    );
+    progressBar.update(i);
 
     try {
       // Read raw PCM file
@@ -375,8 +384,12 @@ async function transcribeChunks(
         error: err.message ?? String(err),
       });
     }
+    
+    progressBar.update(i + 1);
   }
 
+  progressBar.stop();
+  ingestLog.info(`Transcription complete: ${results.length} chunks processed`);
   return results;
 }
 
