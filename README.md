@@ -1,3 +1,13 @@
+# GPTcaps (Bootstrap Beats) Configuration
+
+To enable loading GPTcap (bootstrap) beats from disk instead of DB meecaps, set the following environment variables:
+
+- `MEEPO_GPTCAPS_ENABLED=true` (default: false)
+- `MEEPO_GPTCAPS_DIR=./data/GPTcaps` (default: ./data/GPTcaps)
+
+When enabled, the system will load beats from disk using the session label (e.g. C2E6) as the index: `beats_{label}.json`.
+
+See `src/ledger/gptcapProvider.ts` for loader/validation details.
 # Meepo Bot
 
 A narrative-aware Discord companion for D&D campaigns.

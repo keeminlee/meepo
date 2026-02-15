@@ -218,6 +218,7 @@ async function handleTranscription(
       respondToVoiceUtterance({
         guildId,
         channelId,
+        speakerId: userId,
         speakerName: displayName,
         utterance: contentNorm, // Use normalized for downstream processing
       }).catch((err) => {

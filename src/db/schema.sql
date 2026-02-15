@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS npc_instances (
   channel_id TEXT NOT NULL,
   persona_seed TEXT,
   form_id TEXT NOT NULL DEFAULT 'meepo',
+  reply_mode TEXT NOT NULL DEFAULT 'text',  -- 'voice' | 'text'
   created_at_ms INTEGER NOT NULL,
   is_active INTEGER NOT NULL DEFAULT 1
 );
@@ -228,3 +229,19 @@ ON meepomind_beats(memory_id);
 
 CREATE INDEX IF NOT EXISTS idx_meepomind_beats_gravity
 ON meepomind_beats(gravity DESC);
+
+-- Speaker Masks: Diegetic name overrides for Discord users
+-- Prevents OOC name leakage into NPC context (e.g., "Keemin (DM)" → "Narrator")
+-- DM-only configuration via /meepo set-speaker-mask
+CREATE TABLE IF NOT EXISTS speaker_masks (
+  guild_id TEXT NOT NULL,
+  discord_user_id TEXT NOT NULL,
+  speaker_mask TEXT NOT NULL,              -- Diegetic name (e.g., "Narrator", "Dungeon Master")
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  
+  PRIMARY KEY (guild_id, discord_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_speaker_masks_guild
+ON speaker_masks(guild_id);

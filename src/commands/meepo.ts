@@ -1,6 +1,5 @@
 ﻿import { SlashCommandBuilder } from "discord.js";
 import { getActiveMeepo, wakeMeepo, sleepMeepo, transformMeepo } from "../meepo/state.js";
-import { clearLatch, setLatch } from "../latch/latch.js";
 import { getAvailableForms, getPersona } from "../personas/index.js";
 import { setBotNicknameForPersona } from "../meepo/nickname.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
@@ -12,11 +11,165 @@ import { getSttProviderInfo } from "../voice/stt/provider.js";
 import { getTtsProvider } from "../voice/tts/provider.js";
 import { speakInGuild } from "../voice/speaker.js";
 import { applyPostTtsFx } from "../voice/audioFx.js";
+import { loadRegistry } from "../registry/loadRegistry.js";
+import { extractRegistryMatches } from "../registry/extractRegistryMatches.js";
+import { searchEventsByTitle, type EventRow } from "../ledger/eventSearch.js";
+import { getTranscriptLinesDetailed, getTranscriptLines } from "../ledger/transcripts.js";
+import { loadGptcap } from "../ledger/gptcapProvider.js";
+import { findRelevantBeats, type ScoredBeat } from "../recall/findRelevantBeats.js";
+import { buildMemoryContext } from "../recall/buildMemoryContext.js";
+import { getDb } from "../db.js";
+
+function getSessionLabelMap(sessionIds: string[]): Map<string, string | null> {
+  const db = getDb();
+  const stmt = db.prepare("SELECT label FROM sessions WHERE session_id = ? LIMIT 1");
+  const out = new Map<string, string | null>();
+
+  for (const sessionId of sessionIds) {
+    const row = stmt.get(sessionId) as { label: string | null } | undefined;
+    out.set(sessionId, row?.label ?? null);
+  }
+
+  return out;
+}
+
+function buildDebugRecallResponse(args: {
+  queryText: string;
+  matches: Array<{ entity_id: string; canonical: string; matched_text: string }>;
+  eventsByMatch: Array<{ match: { entity_id: string; canonical: string; matched_text: string }; events: EventRow[] }>;
+  sessionLabelById: Map<string, string | null>;
+  uniqueLineCountBySession: Map<string, number>;
+  requestedLineCountBySession: Map<string, number>;
+  missingLinesBySession: Map<string, number[]>;
+  beatsBySession: Map<string, ScoredBeat[]>;
+  memoryContextPreview: string;
+}): string {
+  const {
+    queryText,
+    matches,
+    eventsByMatch,
+    sessionLabelById,
+    uniqueLineCountBySession,
+    requestedLineCountBySession,
+    missingLinesBySession,
+    beatsBySession,
+    memoryContextPreview,
+  } = args;
+
+  const allEvents = new Map<string, EventRow>();
+  for (const group of eventsByMatch) {
+    for (const event of group.events) {
+      allEvents.set(event.event_id, event);
+    }
+  }
+
+  const sessionsReferenced = Array.from(
+    new Set(Array.from(allEvents.values()).map((e) => e.session_id))
+  );
+
+  const totalUniqueLines = Array.from(uniqueLineCountBySession.values()).reduce((acc, n) => acc + n, 0);
+
+  const lines: string[] = [];
+  lines.push("**Debug Recall (no LLM)**");
+  lines.push(`Query: ${queryText}`);
+  lines.push("");
+
+  lines.push("**Registry matches**");
+  if (matches.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const m of matches) {
+      lines.push(`- ${m.canonical} (${m.entity_id}) via \"${m.matched_text}\"`);
+    }
+  }
+  lines.push("");
+
+  lines.push("**Events found per match**");
+  if (eventsByMatch.length === 0 || allEvents.size === 0) {
+    lines.push("- none");
+  } else {
+    for (const group of eventsByMatch) {
+      lines.push(`- ${group.match.canonical}: ${group.events.length}`);
+    }
+  }
+  lines.push("");
+
+  lines.push("**Sessions referenced**");
+  if (sessionsReferenced.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const sessionId of sessionsReferenced) {
+      const label = sessionLabelById.get(sessionId);
+      const fetched = uniqueLineCountBySession.get(sessionId) ?? 0;
+      const requested = requestedLineCountBySession.get(sessionId) ?? 0;
+      const missing = missingLinesBySession.get(sessionId) ?? [];
+      lines.push(`- ${label ?? "(unlabeled)"} [${sessionId.slice(0, 8)}…]: requested ${requested}, fetched ${fetched}, missing ${missing.length}`);
+    }
+  }
+  lines.push("");
+
+  lines.push("**How many transcript lines will be fetched**");
+  lines.push(`- ${totalUniqueLines} unique lines (deduped by session)`);
+  lines.push("");
+
+  lines.push("**Relevant GPTcap beats (if enabled)**");
+  let totalBeats = 0;
+  for (const [sessionId, beats] of beatsBySession.entries()) {
+    totalBeats += beats.length;
+  }
+  if (totalBeats === 0) {
+    lines.push("- none (GPTcaps disabled or no overlaps)");
+  } else {
+    for (const [sessionId, beats] of beatsBySession.entries()) {
+      const label = sessionLabelById.get(sessionId);
+      if (beats.length > 0) {
+        lines.push(`- ${label ?? "(unlabeled)"}: ${beats.length} beats`);
+        for (const scored of beats.slice(0, 3)) {
+          const preview = scored.beat.text.slice(0, 60);
+          lines.push(`  [${scored.beatIndex}] score=${scored.score}: ${preview}${scored.beat.text.length > 60 ? "..." : ""}`);
+        }
+      }
+    }
+  }
+  lines.push("");
+
+  lines.push("**Memory Context Preview (formatted for LLM)**");
+  if (memoryContextPreview) {
+    const previewLines = memoryContextPreview.split("\n").slice(0, 15); // Limit preview for Discord
+    lines.push("```");
+    lines.push(...previewLines);
+    if (memoryContextPreview.split("\n").length > 15) {
+      lines.push("...(truncated for Discord)");
+    }
+    lines.push("```");
+  } else {
+    lines.push("- none (no beats or transcript lines)");
+  }
+
+  const content = lines.join("\n");
+  return content.length > 1900 ? `${content.slice(0, 1890)}\n…(truncated)` : content;
+}
 
 export const meepo = {
   data: new SlashCommandBuilder()
     .setName("meepo")
     .setDescription("Manage Meepo (wake, sleep, status, hush).")
+    .addSubcommandGroup((group) =>
+      group
+        .setName("debug")
+        .setDescription("Debug utilities.")
+        .addSubcommand((sub) =>
+          sub
+            .setName("recall")
+            .setDescription("Debug naive recall pipeline (no LLM).")
+            .addStringOption((opt) =>
+              opt
+                .setName("query")
+                .setDescription("User query to test retrieval against")
+                .setRequired(true)
+            )
+        )
+    )
     .addSubcommand((sub) =>
       sub
         .setName("wake")
@@ -37,11 +190,6 @@ export const meepo = {
       sub
         .setName("status")
         .setDescription("Show Meepo's current state.")
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName("hush")
-        .setDescription("Clear Meepo's latch (stop responding until addressed again).")
     )
     .addSubcommand((sub) =>
       sub
@@ -94,14 +242,199 @@ export const meepo = {
             .setDescription("Text for Meepo to speak")
             .setRequired(true)
         )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("set-speaker-mask")
+        .setDescription("[DM-only] Set diegetic name for a user (prevents OOC name leakage).")
+        .addUserOption((opt) =>
+          opt
+            .setName("user")
+            .setDescription("User to mask")
+            .setRequired(true)
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName("mask")
+            .setDescription("Diegetic name (e.g., 'Narrator', 'Dungeon Master')")
+            .setRequired(true)
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("clear-speaker-mask")
+        .setDescription("[DM-only] Remove speaker mask for a user.")
+        .addUserOption((opt) =>
+          opt
+            .setName("user")
+            .setDescription("User to unmask")
+            .setRequired(true)
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("reply")
+        .setDescription("Set how Meepo responds (voice or text).")
+        .addStringOption((opt) =>
+          opt
+            .setName("mode")
+            .setDescription("Reply mode")
+            .setRequired(true)
+            .addChoices(
+              { name: "text", value: "text" },
+              { name: "voice", value: "voice" }
+            )
+        )
     ),
 
   async execute(interaction: any) {
+    const subGroup = interaction.options.getSubcommandGroup(false);
     const sub = interaction.options.getSubcommand();
     const guildId = interaction.guildId as string | null;
 
     if (!guildId) {
       await interaction.reply({ content: "Meepo only works in a server (not DMs).", ephemeral: true });
+      return;
+    }
+
+    if (subGroup === "debug" && sub === "recall") {
+      const dmRoleId = process.env.DM_ROLE_ID;
+      if (dmRoleId) {
+        const member = interaction.member;
+        const hasDmRole = member?.roles?.cache?.has(dmRoleId) ?? false;
+        if (!hasDmRole) {
+          await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
+          return;
+        }
+      }
+
+      const queryText = interaction.options.getString("query", true).trim();
+      if (!queryText) {
+        await interaction.reply({ content: "Query cannot be empty.", ephemeral: true });
+        return;
+      }
+
+      const registry = loadRegistry();
+      const matches = extractRegistryMatches(queryText, registry);
+
+      const eventsByMatch = matches.map((match) => {
+        const terms = new Set([match.canonical, match.matched_text].filter(Boolean));
+        const dedup = new Map<string, EventRow>();
+
+        for (const term of terms) {
+          for (const event of searchEventsByTitle(term)) {
+            dedup.set(event.event_id, event);
+          }
+        }
+
+        return {
+          match,
+          events: Array.from(dedup.values()),
+        };
+      });
+
+      const allEvents = new Map<string, EventRow>();
+      for (const group of eventsByMatch) {
+        for (const event of group.events) {
+          allEvents.set(event.event_id, event);
+        }
+      }
+
+      const sessionIds = Array.from(new Set(Array.from(allEvents.values()).map((e) => e.session_id)));
+      const sessionLabelById = getSessionLabelMap(sessionIds);
+
+      const requestedLineSetBySession = new Map<string, Set<number>>();
+      for (const event of allEvents.values()) {
+        const start = event.start_line;
+        const end = event.end_line;
+        if (typeof start !== "number" || typeof end !== "number") {
+          continue;
+        }
+
+        const min = Math.min(start, end);
+        const max = Math.max(start, end);
+        const lineSet = requestedLineSetBySession.get(event.session_id) ?? new Set<number>();
+        for (let line = min; line <= max; line++) {
+          lineSet.add(line);
+        }
+        requestedLineSetBySession.set(event.session_id, lineSet);
+      }
+
+      const uniqueLineCountBySession = new Map<string, number>();
+      const requestedLineCountBySession = new Map<string, number>();
+      const missingLinesBySession = new Map<string, number[]>();
+      const beatsBySession = new Map<string, ScoredBeat[]>();
+      for (const [sessionId, requestedLineSet] of requestedLineSetBySession.entries()) {
+        const requestedLines = Array.from(requestedLineSet.values()).sort((a, b) => a - b);
+        requestedLineCountBySession.set(sessionId, requestedLines.length);
+        try {
+          const fetched = getTranscriptLinesDetailed(sessionId, requestedLines, {
+            onMissing: "skip",
+          });
+          uniqueLineCountBySession.set(sessionId, fetched.lines.length);
+          missingLinesBySession.set(sessionId, fetched.missing);
+        } catch {
+          uniqueLineCountBySession.set(sessionId, 0);
+          missingLinesBySession.set(sessionId, requestedLines);
+        }
+
+        // Load GPTcap for this session (if enabled) and find relevant beats
+        const label = sessionLabelById.get(sessionId);
+        if (label) {
+          const gptcap = loadGptcap(label);
+          if (gptcap) {
+            const sessionEvents = Array.from(allEvents.values()).filter((e) => e.session_id === sessionId);
+            if (sessionEvents.length > 0) {
+              const relevantBeats = findRelevantBeats(gptcap, sessionEvents, { topK: 6 });
+              beatsBySession.set(sessionId, relevantBeats);
+            }
+          }
+        }
+      }
+
+      // Build memory context preview from all beats
+      let memoryContextPreview = "";
+      const allBeats: ScoredBeat[] = [];
+      for (const beats of beatsBySession.values()) {
+        allBeats.push(...beats);
+      }
+      if (allBeats.length > 0) {
+        // Collect all unique line numbers needed from beats
+        const neededLines = new Set<number>();
+        for (const scored of allBeats) {
+          for (const lineNum of scored.beat.lines) {
+            neededLines.add(lineNum);
+          }
+        }
+
+        // Fetch transcript lines for all beats (use first session with beats)
+        const firstSessionWithBeats = Array.from(beatsBySession.keys())[0];
+        if (firstSessionWithBeats && neededLines.size > 0) {
+          try {
+            const transcriptLines = getTranscriptLines(firstSessionWithBeats, Array.from(neededLines));
+            memoryContextPreview = buildMemoryContext(allBeats, transcriptLines, {
+              maxLinesPerBeat: 2,
+              maxTotalChars: 1600,
+            });
+          } catch (err) {
+            console.warn("Failed to build memory context preview:", err);
+          }
+        }
+      }
+
+      const response = buildDebugRecallResponse({
+        queryText,
+        matches,
+        eventsByMatch,
+        sessionLabelById,
+        uniqueLineCountBySession,
+        requestedLineCountBySession,
+        missingLinesBySession,
+        beatsBySession,
+        memoryContextPreview,
+      });
+
+      await interaction.reply({ content: response, ephemeral: true });
       return;
     }
 
@@ -131,10 +464,6 @@ export const meepo = {
         await setBotNicknameForPersona(interaction.guild, "meepo");
       }
 
-      // Auto-latch so Meepo is ready to respond to next message
-      const latchSeconds = Number(process.env.LATCH_SECONDS ?? "90");
-      setLatch(guildId, channelId, latchSeconds);
-
       await interaction.reply({
         content:
           "Meepo awakens.\n" +
@@ -148,8 +477,6 @@ export const meepo = {
     if (sub === "sleep") {
       const active = getActiveMeepo(guildId);
       if (active) {
-        clearLatch(guildId, active.channel_id);
-        
         // Log system event (narrative secondary - state change)
         logSystemEvent({
           guildId,
@@ -176,17 +503,6 @@ export const meepo = {
         );
       }
 
-      return;
-    }
-
-    if (sub === "hush") {
-      const active = getActiveMeepo(guildId);
-      if (!active) {
-        await interaction.reply({ content: "Meepo is asleep.", ephemeral: true });
-        return;
-      }
-      clearLatch(guildId, active.channel_id);
-      await interaction.reply({ content: "Meepo hushes. (Latch cleared)", ephemeral: true });
       return;
     }
 
@@ -243,10 +559,6 @@ export const meepo = {
         if (interaction.guild) {
           await setBotNicknameForPersona(interaction.guild, character);
         }
-
-        // Auto-latch so Meepo is ready to respond to next message
-        const latchSeconds = Number(process.env.LATCH_SECONDS ?? "90");
-        setLatch(guildId, active.channel_id, latchSeconds);
 
         if (character === "meepo") {
           await interaction.reply({
@@ -552,9 +864,9 @@ export const meepo = {
       await interaction.deferReply({ ephemeral: true });
 
       try {
-        const voiceReplyEnabled = process.env.MEEPO_VOICE_REPLY_ENABLED !== "false";
+        const replyMode = active.reply_mode; // Check active Meepo's reply mode
 
-        if (!voiceReplyEnabled) {
+        if (replyMode === "text") {
           // Send as text message instead of voice
           const channel = interaction.channel;
           if (channel?.isTextBased()) {
@@ -572,7 +884,7 @@ export const meepo = {
               tags: "npc,meepo,spoken",
             });
 
-            await interaction.editReply({ content: `Sent as text (voice replies disabled): "${text.substring(0, 100)}${text.length > 100 ? "..." : ""}"` });
+            await interaction.editReply({ content: `Sent as text (reply mode is text): "${text.substring(0, 100)}${text.length > 100 ? "..." : ""}"` });
           } else {
             await interaction.editReply({ content: "Cannot send text message in this channel." });
           }
@@ -614,6 +926,105 @@ export const meepo = {
         console.error("[TTS] /meepo say error:", err);
         await interaction.editReply({ content: `TTS error: ${err.message}` });
       }
+      return;
+    }
+
+    if (sub === "set-speaker-mask") {
+      // DM-only command
+      const dmRoleId = process.env.DM_ROLE_ID;
+      if (dmRoleId) {
+        const member = interaction.member;
+        if (!member?.roles?.cache?.has(dmRoleId)) {
+          await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
+          return;
+        }
+      }
+
+      const user = interaction.options.getUser("user");
+      const mask = interaction.options.getString("mask");
+
+      if (!user || !mask) {
+        await interaction.reply({ content: "Missing user or mask parameter.", ephemeral: true });
+        return;
+      }
+
+      const db = getDb();
+      const now = Date.now();
+
+      // Upsert speaker mask
+      db.prepare(`
+        INSERT INTO speaker_masks (guild_id, discord_user_id, speaker_mask, created_at_ms, updated_at_ms)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, discord_user_id) DO UPDATE SET
+          speaker_mask = excluded.speaker_mask,
+          updated_at_ms = excluded.updated_at_ms
+      `).run(guildId, user.id, mask, now, now);
+
+      await interaction.reply({
+        content: `Speaker mask set: ${user.username} → "${mask}"`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (sub === "clear-speaker-mask") {
+      // DM-only command
+      const dmRoleId = process.env.DM_ROLE_ID;
+      if (dmRoleId) {
+        const member = interaction.member;
+        if (!member?.roles?.cache?.has(dmRoleId)) {
+          await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
+          return;
+        }
+      }
+
+      const user = interaction.options.getUser("user");
+
+      if (!user) {
+        await interaction.reply({ content: "Missing user parameter.", ephemeral: true });
+        return;
+      }
+
+      const db = getDb();
+      const result = db.prepare(`
+        DELETE FROM speaker_masks
+        WHERE guild_id = ? AND discord_user_id = ?
+      `).run(guildId, user.id);
+
+      if (result.changes > 0) {
+        await interaction.reply({
+          content: `Speaker mask cleared for ${user.username}`,
+          ephemeral: true,
+        });
+      } else {
+        await interaction.reply({
+          content: `No speaker mask found for ${user.username}`,
+          ephemeral: true,
+        });
+      }
+      return;
+    }
+
+    if (sub === "reply") {
+      const active = getActiveMeepo(guildId);
+      if (!active) {
+        await interaction.reply({ content: "Meep! Meepo is asleep. Use `/meepo wake` first.", ephemeral: true });
+        return;
+      }
+
+      const mode = interaction.options.getString("mode", true) as "voice" | "text";
+
+      const db = getDb();
+      db.prepare(`
+        UPDATE npc_instances
+        SET reply_mode = ?
+        WHERE guild_id = ? AND is_active = 1
+      `).run(mode, guildId);
+
+      await interaction.reply({
+        content: `Meepo reply mode set to: **${mode}**`,
+        ephemeral: true,
+      });
       return;
     }
 

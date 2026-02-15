@@ -18,14 +18,22 @@ import { getTtsProvider } from "./tts/provider.js";
 import { buildMeepoPrompt, buildUserMessage } from "../llm/prompts.js";
 import { chat } from "../llm/client.js";
 import { getLedgerInRange, getVoiceAwareContext } from "../ledger/ledger.js";
+import { getSanitizedSpeakerName } from "../ledger/speakerSanitizer.js";
 import { logSystemEvent } from "../ledger/system.js";
 import { applyPostTtsFx } from "./audioFx.js";
 import { getDiscordClient } from "../bot.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
 import type { TextChannel } from "discord.js";
+import { loadRegistry } from "../registry/loadRegistry.js";
+import { extractRegistryMatches } from "../registry/extractRegistryMatches.js";
+import { searchEventsByTitle, type EventRow } from "../ledger/eventSearch.js";
+import { loadGptcap } from "../ledger/gptcapProvider.js";
+import { findRelevantBeats, type ScoredBeat } from "../recall/findRelevantBeats.js";
+import { buildMemoryContext } from "../recall/buildMemoryContext.js";
+import { getTranscriptLines } from "../ledger/transcripts.js";
+import { getDb } from "../db.js";
 
 const DEBUG_VOICE = process.env.DEBUG_VOICE === "true";
-const VOICE_REPLY_ENABLED = process.env.MEEPO_VOICE_REPLY_ENABLED !== "false"; // Default: true
 
 // Per-guild voice reply cooldown (prevents rapid-fire replies)
 const guildLastVoiceReply = new Map<string, number>();
@@ -42,11 +50,13 @@ const guildLastVoiceReply = new Map<string, number>();
 export async function respondToVoiceUtterance({
   guildId,
   channelId,
+  speakerId,
   speakerName,
   utterance,
 }: {
   guildId: string;
   channelId: string;
+  speakerId: string;
   speakerName: string;
   utterance: string;
 }): Promise<boolean> {
@@ -95,16 +105,116 @@ export async function respondToVoiceUtterance({
       channelId,
     });
 
+    // Task 9: Run recall pipeline for party memory injection
+    let partyMemory = "";
+    const memoryEnabled = process.env.MEEPO_MEMORY_ENABLED !== "false";
+    
+    if (memoryEnabled) {
+      try {
+        const registry = loadRegistry();
+        const matches = extractRegistryMatches(utterance, registry);
+
+        if (matches.length > 0) {
+          // Search for events using registry matches
+          const allEvents = new Map<string, EventRow>();
+          for (const match of matches) {
+            const events = searchEventsByTitle(match.canonical);
+            for (const event of events) {
+              allEvents.set(event.event_id, event);
+            }
+          }
+
+          if (allEvents.size > 0) {
+            // Group events by session
+            const eventsBySession = new Map<string, EventRow[]>();
+            for (const event of allEvents.values()) {
+              const existing = eventsBySession.get(event.session_id) || [];
+              existing.push(event);
+              eventsBySession.set(event.session_id, existing);
+            }
+
+            // Load GPTcaps and find relevant beats per session
+            const allBeats: ScoredBeat[] = [];
+            const db = getDb();
+
+            for (const [sessionId, sessionEvents] of eventsBySession.entries()) {
+              // Get session label for GPTcap loading
+              const labelRow = db.prepare("SELECT label FROM sessions WHERE session_id = ? LIMIT 1")
+                .get(sessionId) as { label: string | null } | undefined;
+              const label = labelRow?.label;
+
+              if (label) {
+                const gptcap = loadGptcap(label);
+                if (gptcap) {
+                  const relevantBeats = findRelevantBeats(gptcap, sessionEvents, { topK: 6 });
+                  allBeats.push(...relevantBeats);
+                }
+              }
+            }
+
+            // Build memory context if we have beats
+            if (allBeats.length > 0) {
+              // Collect all needed transcript lines from beats
+              const linesBySession = new Map<string, Set<number>>();
+              for (const scored of allBeats) {
+                // Find which session this beat belongs to (via events)
+                for (const [sessionId, sessionEvents] of eventsBySession.entries()) {
+                  // Simple heuristic: if any event overlaps with beat lines, associate beat with this session
+                  const hasOverlap = sessionEvents.some(event => {
+                    if (typeof event.start_line !== "number" || typeof event.end_line !== "number") {
+                      return false;
+                    }
+                    const eventLines = new Set<number>();
+                    for (let i = event.start_line; i <= event.end_line; i++) {
+                      eventLines.add(i);
+                    }
+                    return scored.beat.lines.some(line => eventLines.has(line));
+                  });
+
+                  if (hasOverlap) {
+                    const lines = linesBySession.get(sessionId) || new Set<number>();
+                    for (const line of scored.beat.lines) {
+                      lines.add(line);
+                    }
+                    linesBySession.set(sessionId, lines);
+                    break; // Associate beat with first matching session
+                  }
+                }
+              }
+
+              // Fetch transcript lines (use first session with lines for now)
+              const firstSessionWithLines = Array.from(linesBySession.keys())[0];
+              if (firstSessionWithLines) {
+                const neededLines = Array.from(linesBySession.get(firstSessionWithLines) || []);
+                if (neededLines.length > 0) {
+                  const transcriptLines = getTranscriptLines(firstSessionWithLines, neededLines);
+                  partyMemory = buildMemoryContext(allBeats, transcriptLines, {
+                    maxLinesPerBeat: 2,
+                    maxTotalChars: 1600,
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (recallErr: any) {
+        console.warn("[Recall] Memory retrieval failed (voice):", recallErr.message ?? recallErr);
+        // Continue without memory context on error
+      }
+    }
+
     // Build system prompt with persona
     const systemPrompt = await buildMeepoPrompt({
       meepo: active,
       recentContext: recentContext || undefined,
       hasVoiceContext: hasVoice,
+      partyMemory,
     });
 
-    // Build user message
+    // Build user message with sanitized speaker name
+    const sanitizedSpeakerName = getSanitizedSpeakerName(guildId, speakerId, speakerName);
     const userMessage = buildUserMessage({
-      authorName: speakerName,
+      authorName: sanitizedSpeakerName,
       content: utterance,
     });
 
@@ -119,8 +229,8 @@ export async function respondToVoiceUtterance({
       console.log(`[VoiceReply] LLM response: "${responseText.substring(0, 50)}..."`);
     }
 
-    // Check if voice replies are enabled
-    if (!VOICE_REPLY_ENABLED) {
+    // Check Meepo's reply mode (voice or text)
+    if (active.reply_mode === "text") {
       // Send text reply instead of voice
       try {
         const client = getDiscordClient();
@@ -129,7 +239,7 @@ export async function respondToVoiceUtterance({
         if (channel?.isTextBased()) {
           const reply = await channel.send(responseText);
           
-          // Log bot's reply to ledger
+          // Log bot's reply to ledger (preserve voice narrative weight even in text mode)
           appendLedgerEntry({
             guild_id: guildId,
             channel_id: channelId,
@@ -139,9 +249,11 @@ export async function respondToVoiceUtterance({
             timestamp_ms: reply.createdTimestamp,
             content: responseText,
             tags: "npc,meepo,spoken",
+            source: "voice",
+            narrative_weight: "primary",
           });
           
-          console.log(`[VoiceReply] Sent text reply (voice disabled) for guild ${guildId}`);
+          console.log(`[VoiceReply] Sent text reply (mode=text) for guild ${guildId}`);
           return true;
         }
       } catch (err: any) {

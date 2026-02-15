@@ -1,7 +1,7 @@
 # Meepo Bot - Current State (February 14, 2026)
 
-**Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress  
-**Last Updated:** February 14, 2026
+**Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress + NAL Copilot enhancements  
+**Last Updated:** February 14, 2026 (Evening)
 
 ---
 
@@ -145,7 +145,10 @@ Recap      Emotion Beats         LLM Response
 - **Disk Export:** JSON files for git diffing and Discord review
 
 #### Commands
-- `/meepo wake|sleep|status|hush|transform|join|leave|stt` — Instance management
+- `/meepo wake|sleep|status|hush|transform|join|leave|stt|say` — Instance management
+- `/meepo reply mode:voice|text` — Set response mode (voice TTS or text messages)
+- `/meepo set-speaker-mask user:@User mask:"Name"` — [DM-only] Set diegetic speaker name
+- `/meepo clear-speaker-mask user:@User` — [DM-only] Remove speaker mask
 - `/session meecap [--force] [--source primary|full]` — Generate/regenerate Meecap
 - `/session recap [range] [style=dm|narrative|party] [source=primary|full] [--force_meecap]` — View recap
 - `/session transcript [range]` — Raw transcript view
@@ -173,6 +176,7 @@ Recap      Emotion Beats         LLM Response
 -- NPC Instance (one per guild)
 npc_instances
   · id (PK), guild_id, name, form_id ('meepo'|'xoblob')
+  · reply_mode ('voice'|'text', default 'text') ← runtime reply mode control
   · persona_seed (optional custom traits), created_at_ms, is_active
 
 -- Ledger (immutable source)
@@ -185,6 +189,13 @@ ledger_entries
   · speaker_id (for voice), audio_chunk_path, t_start_ms, t_end_ms, confidence
   · content_norm (normalized text for consistency)
   · created_at_ms (for deterministic ordering)
+
+-- Speaker Masks (diegetic name sanitization)
+speaker_masks
+  · guild_id, discord_user_id (composite PK)
+  · speaker_mask (TEXT, e.g. 'Narrator', 'Dungeon Master')
+  · created_at_ms, updated_at_ms
+  · Prevents OOC Discord usernames from leaking into NPC context
 
 -- Sessions (grouped ledger)
 sessions
@@ -233,14 +244,19 @@ latches
 ### ✅ Shipping in V0
 - Text + voice I/O (STT+LLM+TTS loop)
 - Persona system (Meepo, Xoblob)
-- Natural conversation (address-triggered, latch-windowed)
-- Session tracking (auto-start on wake, UUID-based grouping)
+- Natural conversation (address-triggered, persistent in bound channel)
+- Session tracking (auto-start on wake, UUID-based grouping, auto-sleep on inactivity)
 - Ledger-first architecture (omniscient + voice-primary)
 - Transcript + recap commands (DM-only, range filtering)
 - Character registry (YAML, with name discovery tools)
 - Meecap generation (scene/beat segmentation, ledger-anchored)
 - Batch ingestion tools (offline media → session DB)
-- **Unified Transcript Builder** (consolidated Meecap + Events logic) ✨ **NEW Feb 14**
+- **Unified Transcript Builder** (consolidated Meecap + Events logic) ✨
+- **Speaker Mask System** (OOC name sanitization, DM commands, database-backed) ✨ **NEW Feb 14 Eve**
+- **Runtime Reply Mode** (voice/text toggling without restart) ✨ **NEW Feb 14 Eve**
+- **Auto-Sleep** (configurable inactivity timeout for graceful session cleanup) ✨ **NEW Feb 14 Eve**
+- **Memory Recall Pipeline** (registry → events → GPTcap beats → memory capsules) ✨ **NEW Feb 14 Eve**
+- **Incremental Memory Seeding** (title-based differential updates) ✨ **NEW Feb 14 Eve**
 
 ### 🔄 Phase 2-3 (In Progress)
 - ✅ **Beats Normalization:** Meecap beats now in dedicated table with label column (Feb 14)
@@ -273,6 +289,9 @@ OPENAI_API_KEY=<api_key>
 
 # Database
 DATA_DB_PATH=./data/bot.sqlite
+
+# Session Management
+MEEPO_AUTO_SLEEP_MS=600000          # Auto-sleep after inactivity (ms). 0 = disabled
 
 # Voice
 VOICE_CHUNK_SIZE_MS=60000           # Audio chunk size
@@ -310,7 +329,9 @@ src/
 ├── meepo/
 │   ├── state.ts                    # Instance lifecycle (wake/sleep/transform)
 │   ├── triggers.ts                 # Address detection
-│   └── nickname.ts                 # Discord nickname management
+│   ├── nickname.ts                 # Discord nickname management
+│   ├── knowledge.ts                # Foundational memories (INITIAL_MEMORIES)
+│   └── autoSleep.ts                # Inactivity-based session cleanup
 │
 ├── personas/
 │   ├── index.ts                    # Registry + StyleSpec system
@@ -336,7 +357,10 @@ src/
 ├── ledger/
 │   ├── ledger.ts                   # Append-only queries
 │   ├── transcripts.ts              # Unified transcript builder (Meecap + Events)
-│   ├── meepo-mind.ts               # (future) Character retrieval
+│   ├── speakerSanitizer.ts         # OOC name sanitization (speaker masks)
+│   ├── eventSearch.ts              # Event querying by character/location
+│   ├── gptcapProvider.ts           # GPTcap loading from filesystem
+│   ├── meepo-mind.ts               # Character retrieval + memory seeding
 │   └── system.ts                   # System event helper
 │
 ├── latch/
@@ -346,7 +370,12 @@ src/
 │   ├── sessions.ts                 # Session CRUD + helpers
 │   └── meecap.ts                   # Meecap generation + validation
 │
-├── registry/
+├── ├── normalizeText.ts            # Regex normalization engine
+│   └── extractRegistryMatches.ts   # Entity extraction from text
+
+├── recall/
+│   ├── findRelevantBeats.ts        # Beat relevance scoring
+│   └── buildMemoryContext.ts       # Memory capsule formatter (with WITNESS POSTURE)
 │   ├── loadRegistry.ts             # YAML loader
 │   ├── types.ts                    # Type definitions
 │   └── normalizeText.ts            # Regex normalization engine
@@ -438,6 +467,94 @@ LOG_LEVEL=trace npm run dev:bot
 4. **Emotional Memory, Not Omniscience** — Meepo remembers *because* something mattered
 5. **Graceful Degradation** — Log errors, don't crash; fallbacks everywhere
 6. **Scoped Authority** — NPC Mind only sees what Meepo perceives
+
+---
+
+## Recent Changes (February 14, 2026 - Evening)
+
+### NAL Copilot: Diegetic Integrity & Runtime Configuration ✨
+Final polish for V0.1 release focusing on immersion preservation and dynamic configuration:
+
+**Speaker Mask System (OOC Name Firewall):**
+- **Problem:** Meepo was using Discord usernames (e.g., "Keemin (DM)") in responses, breaking diegetic immersion
+- **Solution:** Per-guild speaker mask database with priority sanitization
+  - New `speaker_masks` table with guild+user composite key
+  - DM-only commands: `/meepo set-speaker-mask`, `/meepo clear-speaker-mask`
+  - `src/ledger/speakerSanitizer.ts` — Centralized sanitization with fallback chain:
+    1. Check speaker_masks table first
+    2. Fall back to registry (future enhancement)
+    3. Default to "Party Member" if no mask found
+  - Integrated into all context building: `getVoiceAwareContext()`, `respondToVoiceUtterance()`, text message handlers
+  - Persona enhancement: Added OOC NAME FIREWALL to Meepo's styleGuard
+    - "Never refer to or address speaker labels like 'Party Member', 'Narrator', 'Dungeon Master', or Discord usernames"
+
+**Reply Mode Migration (Env Var → Runtime Command):**
+- **Deprecated:** `MEEPO_VOICE_REPLY_ENABLED` environment variable
+- **New:** `/meepo reply mode:voice|text` command for runtime control
+  - Added `reply_mode` column to `npc_instances` table (default: 'text')
+  - Updated `MeepoInstance` type and `wakeMeepo()` to track mode
+  - Modified `voiceReply.ts` and `/meepo say` to check database instead of env var
+  - Database migration auto-applies on bot restart
+  - Benefits: No restart needed to switch modes, per-instance configuration
+
+**Auto-Sleep Feature:**
+- **Problem:** Orphaned sessions when forgetting `/meepo sleep` before stopping bot
+- **Solution:** Background inactivity checker with configurable timeout
+  - New module: `src/meepo/autoSleep.ts`
+    - Runs check every 60 seconds
+    - Queries latest ledger timestamp per guild
+    - Calls `sleepMeepo()` when inactivity exceeds threshold
+  - Configuration: `MEEPO_AUTO_SLEEP_MS` in .env (default: 600000ms / 10 minutes)
+  - Set to `0` to disable
+  - Integrated into bot startup (`client.once("ready")`)
+  - Logs auto-sleep events to console
+
+**Persistent Channel Uptime:**
+- **Removed:** Latch mechanism entirely
+- **New behavior:**
+  - Meepo responds to ALL messages in bound channel (no latch expiry)
+  - Requires @mention in other channels
+  - Cleaner UX for dedicated #meepo channels
+  - Simplified codebase (removed latch imports/checks from bot.ts)
+
+**Memory System Enhancements:**
+- **Moved:** `INITIAL_MEMORIES` from `meepo-mind.ts` → `src/meepo/knowledge.ts`
+  - Better separation of concerns (knowledge definition vs DB operations)
+  - Shared `Memory` type for consistency
+- **Fixed:** Memory seeding changed from one-time to incremental
+  - Previously: Only seeded if table completely empty
+  - Now: Title-based differential seeding
+    - Query existing titles from DB
+    - Filter `INITIAL_MEMORIES` to only missing titles
+    - Insert only new memories
+  - Benefits: Can add new memories to `knowledge.ts` without wiping database
+
+**Recall Pipeline Enhancement:**
+- **Added:** WITNESS POSTURE guidance to memory capsule injection
+  - Appended to `buildMemoryContext()` output in `src/recall/buildMemoryContext.ts`
+  - Instructs Meepo on pre vs post-embodiment perspective
+  - Emphasizes uncertainty admission and shared party viewpoint
+  - Applied to both text and voice recall contexts
+
+**Context Inclusivity:**
+- **Fixed:** `getVoiceAwareContext()` now includes `secondary` narrative weight
+  - Previously excluded secondary text messages
+  - Caused conversation continuity breaks in text chat
+  - Now includes: 'primary', 'elevated', 'secondary'
+
+**New Modules:**
+- `src/ledger/speakerSanitizer.ts` — OOC name sanitization
+- `src/meepo/knowledge.ts` — Meepo's foundational memories
+- `src/meepo/autoSleep.ts` — Inactivity-based session cleanup
+
+**Schema Changes:**
+- `speaker_masks` table (guild_id, discord_user_id, speaker_mask, timestamps)
+- `npc_instances.reply_mode` column (TEXT NOT NULL DEFAULT 'text')
+- Both migrations auto-apply on bot restart
+
+**Configuration Changes:**
+- `MEEPO_AUTO_SLEEP_MS=600000` added to .env (default 10 minutes)
+- `MEEPO_VOICE_REPLY_ENABLED` commented out with deprecation note
 
 ---
 

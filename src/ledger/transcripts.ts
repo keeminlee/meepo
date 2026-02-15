@@ -14,6 +14,80 @@ export interface TranscriptEntry {
   timestamp_ms: number;
 }
 
+export type TranscriptLineRange = {
+  start: number;
+  end: number;
+};
+
+export type TranscriptLineSelectorObject = {
+  ranges?: TranscriptLineRange[];
+  lines?: number[];
+};
+
+export type TranscriptLineSelector = number[] | TranscriptLineRange | TranscriptLineSelectorObject;
+
+export interface TranscriptLineResult {
+  line: number;
+  text: string;
+}
+
+export interface TranscriptLineFetchResult {
+  lines: TranscriptLineResult[];
+  missing: number[];
+}
+
+export interface GetTranscriptLinesOptions {
+  primaryOnly?: boolean;
+  maxLines?: number;
+  onMissing?: "skip" | "placeholder";
+}
+
+function toRequestedLineNumbers(selector: TranscriptLineSelector): number[] {
+  const out = new Set<number>();
+
+  if (Array.isArray(selector)) {
+    for (const line of selector) {
+      if (Number.isInteger(line) && line >= 0) {
+        out.add(line);
+      }
+    }
+    return Array.from(out).sort((a, b) => a - b);
+  }
+
+  const addRange = (range: TranscriptLineRange) => {
+    const start = Number.isInteger(range.start) ? range.start : NaN;
+    const end = Number.isInteger(range.end) ? range.end : NaN;
+    if (Number.isNaN(start) || Number.isNaN(end)) {
+      return;
+    }
+
+    const min = Math.max(0, Math.min(start, end));
+    const max = Math.max(0, Math.max(start, end));
+    for (let line = min; line <= max; line++) {
+      out.add(line);
+    }
+  };
+
+  // Object selector with both lines and ranges
+  if ("ranges" in selector || "lines" in selector) {
+    for (const line of selector.lines ?? []) {
+      if (Number.isInteger(line) && line >= 0) {
+        out.add(line);
+      }
+    }
+
+    for (const range of selector.ranges ?? []) {
+      addRange(range);
+    }
+
+    return Array.from(out).sort((a, b) => a - b);
+  }
+
+  addRange(selector);
+
+  return Array.from(out).sort((a, b) => a - b);
+}
+
 /**
  * Load session transcript from ledger with consistent filtering.
  * 
@@ -37,6 +111,8 @@ export function buildTranscript(
        WHERE session_id = ?
          AND source IN ('text', 'voice', 'offline_ingest')
          ${narrativeWeightFilter}
+       -- Important: this ordering defines transcript line ordinals used by event indexing.
+       -- Keep this exactly aligned with event compilation line-index ordering.
        ORDER BY timestamp_ms ASC, id ASC`
     )
     .all(...params) as Array<{
@@ -59,4 +135,60 @@ export function buildTranscript(
     content: row.content_norm ?? row.content, // Always prefer normalized
     timestamp_ms: row.timestamp_ms,
   }));
+}
+
+/**
+ * Fetch selected transcript lines by explicit line list or line range.
+ *
+ * Output text is prompt-ready with [L#] prefix:
+ *   [{ line: 39, text: "[L39] Alice: ..." }]
+ */
+export function getTranscriptLines(
+  sessionId: string,
+  lineNumbersOrRange: TranscriptLineSelector,
+  opts?: GetTranscriptLinesOptions
+): TranscriptLineResult[] {
+  return getTranscriptLinesDetailed(sessionId, lineNumbersOrRange, opts).lines;
+}
+
+export function getTranscriptLinesDetailed(
+  sessionId: string,
+  lineNumbersOrRange: TranscriptLineSelector,
+  opts?: GetTranscriptLinesOptions
+): TranscriptLineFetchResult {
+  const primaryOnly = opts?.primaryOnly ?? true;
+  const maxLines = opts?.maxLines;
+  const onMissing = opts?.onMissing ?? "skip";
+  const transcript = buildTranscript(sessionId, primaryOnly);
+  let requestedLines = toRequestedLineNumbers(lineNumbersOrRange);
+
+  if (typeof maxLines === "number" && Number.isFinite(maxLines) && maxLines >= 0) {
+    requestedLines = requestedLines.slice(0, Math.floor(maxLines));
+  }
+
+  const results: TranscriptLineResult[] = [];
+  const missing: number[] = [];
+  for (const line of requestedLines) {
+    const entry = transcript[line];
+    if (!entry) {
+      missing.push(line);
+      if (onMissing === "placeholder") {
+        results.push({
+          line,
+          text: `[L${line}] (missing)`,
+        });
+      }
+      continue;
+    }
+
+    results.push({
+      line,
+      text: `[L${line}] ${entry.author_name}: ${entry.content}`,
+    });
+  }
+
+  return {
+    lines: results,
+    missing,
+  };
 }

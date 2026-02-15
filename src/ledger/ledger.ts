@@ -1,5 +1,6 @@
 ﻿import { randomUUID } from "node:crypto";
 import { getDb } from "../db.js";
+import { getSanitizedSpeakerName } from "./speakerSanitizer.js";
 
 /**
  * Ledger: Omniscient append-only event log (MVP Day 8 - Phase 0)
@@ -205,15 +206,15 @@ export function getVoiceAwareContext(opts: {
   const limit = opts.limit ?? 20;
   const startMs = now - windowMs;
 
-  // Pull primary/elevated narrative entries within time window
-  // Excludes system noise (wake/join/leave already marked secondary)
+  // Pull all narrative entries within time window (primary voice, elevated text, and secondary text)
+  // Excludes system noise only
   const query = `
-    SELECT author_name, content, source, timestamp_ms 
+    SELECT author_id, author_name, content, source, timestamp_ms 
     FROM ledger_entries 
     WHERE guild_id = ? 
       AND channel_id = ? 
       AND timestamp_ms >= ? 
-      AND narrative_weight IN ('primary', 'elevated')
+      AND narrative_weight IN ('primary', 'elevated', 'secondary')
       AND tags NOT LIKE '%system%'
     ORDER BY timestamp_ms ASC, id ASC
     LIMIT ?
@@ -224,7 +225,7 @@ export function getVoiceAwareContext(opts: {
     opts.channelId,
     startMs,
     limit
-  ) as { author_name: string; content: string; source: string; timestamp_ms: number }[];
+  ) as { author_id: string; author_name: string; content: string; source: string; timestamp_ms: number }[];
 
   if (rows.length === 0) {
     return { context: "", hasVoice: false };
@@ -233,11 +234,12 @@ export function getVoiceAwareContext(opts: {
   // Check if any voice entries exist
   const hasVoice = rows.some((r) => r.source === "voice");
 
-  // Format entries with speaker attribution and source indicator
+  // Format entries with sanitized speaker names and source indicator
   const formatted = rows
     .map((r) => {
+      const sanitizedName = getSanitizedSpeakerName(opts.guildId, r.author_id, r.author_name);
       const sourceTag = r.source === "voice" ? " (voice)" : "";
-      return `${r.author_name}${sourceTag}: ${r.content}`;
+      return `${sanitizedName}${sourceTag}: ${r.content}`;
     })
     .join("\n");
 

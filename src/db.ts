@@ -100,6 +100,15 @@ function applyMigrations(db: Database.Database) {
     db.exec("ALTER TABLE npc_instances ADD COLUMN form_id TEXT NOT NULL DEFAULT 'meepo'");
   }
 
+  // Migration: Add reply_mode to npc_instances (runtime reply mode control)
+  const npcColumnsLatest = db.pragma("table_info(npc_instances)") as any[];
+  const hasReplyMode = npcColumnsLatest.some((col: any) => col.name === "reply_mode");
+  
+  if (!hasReplyMode) {
+    console.log("Migrating: Adding reply_mode to npc_instances");
+    db.exec("ALTER TABLE npc_instances ADD COLUMN reply_mode TEXT NOT NULL DEFAULT 'text'");
+  }
+
   // Migration: Add voice/narrative fields to ledger_entries (Day 8 - Phase 0)
   const ledgerColumns = db.pragma("table_info(ledger_entries)") as any[];
   const hasSource = ledgerColumns.some((col: any) => col.name === "source");

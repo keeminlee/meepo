@@ -18,6 +18,7 @@
 import Database from "better-sqlite3";
 import { existsSync } from "node:fs";
 import { normalizeText } from "../src/registry/normalizeText.js";
+// @ts-ignore
 import * as cliProgress from "cli-progress";
 
 interface CliArgs {
