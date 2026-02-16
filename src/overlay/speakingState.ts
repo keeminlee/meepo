@@ -3,13 +3,16 @@
  * - Maintains global speaking state across all tokens
  * - Debounces "speaking=false" to prevent flicker on brief pauses
  * - Allows query of current state for WS client sync
+ * - Tracks presence (who's in voice channel) for adaptive display
  */
 
 const SPEAKING_OFF_DEBOUNCE_MS = 400;
 
 const speakingState = new Map<string, boolean>();
+const presenceState = new Map<string, boolean>();
 const debounceTimers = new Map<string, NodeJS.Timeout>();
 let onStateChange: ((id: string, speaking: boolean) => void) | null = null;
+let onPresenceChange: ((id: string, present: boolean) => void) | null = null;
 
 /**
  * Register callback for speaking state changes
@@ -19,6 +22,16 @@ export function onSpeakingStateChange(
   callback: (id: string, speaking: boolean) => void
 ) {
   onStateChange = callback;
+}
+
+/**
+ * Register callback for presence state changes
+ * Called with (id, present) when user joins/leaves voice
+ */
+export function onPresenceStateChange(
+  callback: (id: string, present: boolean) => void
+) {
+  onPresenceChange = callback;
 }
 
 /**
@@ -71,6 +84,30 @@ export function setSpeaking(id: string, speaking: boolean) {
  */
 export function getSpeakingState(): Map<string, boolean> {
   return new Map(speakingState);
+}
+
+/**
+ * Get current presence state
+ */
+export function getPresenceState(): Map<string, boolean> {
+  return new Map(presenceState);
+}
+
+/**
+ * Set presence state for a user (in/not in voice channel)
+ */
+export function setPresence(id: string, present: boolean) {
+  const currentState = presenceState.get(id) ?? false;
+  
+  if (currentState !== present) {
+    presenceState.set(id, present);
+    onPresenceChange?.(id, present);
+    
+    // If user leaves, also mark them as no longer speaking
+    if (!present) {
+      setSpeaking(id, false);
+    }
+  }
 }
 
 /**

@@ -24,10 +24,10 @@
     .token-bar {
       display: flex;
       justify-content: center;
-      gap: 16px;
-      padding: 16px 24px;
+      gap: 28px;
+      padding: 28px 40px;
       background: rgba(0, 0, 0, 0.3);
-      border-radius: 8px 8px 0 0;
+      border-radius: 12px 12px 0 0;
       margin-bottom: -8px;
     }
 
@@ -36,25 +36,30 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 8px;
+      gap: 12px;
+    }
+
+    /* Initially hide all tokens until presence is established */
+    .token {
+      display: none;
     }
 
     .token-image {
-      width: 80px;
-      height: 80px;
-      border-radius: 8px;
+      width: 140px;
+      height: 140px;
+      border-radius: 12px;
       object-fit: cover;
       background: rgba(128, 128, 128, 0.2);
       opacity: 0.45;
       transition: opacity 0.15s ease, outline 0.15s ease, filter 0.15s ease;
-      outline: 3px solid transparent;
-      outline-offset: 3px;
+      outline: 4px solid transparent;
+      outline-offset: 4px;
     }
 
     .token.speaking .token-image {
       opacity: 1;
-      outline: 3px solid rgba(255, 255, 255, 0.9);
-      outline-offset: 3px;
+      outline: 4px solid rgba(255, 255, 255, 0.9);
+      outline-offset: 4px;
       animation: bounce 0.5s ease-in-out infinite;
     }
 
@@ -63,16 +68,16 @@
         transform: translateY(0);
       }
       50% {
-        transform: translateY(-8px);
+        transform: translateY(-12px);
       }
     }
 
     .token-label {
-      font-size: 12px;
+      font-size: 18px;
       font-weight: 600;
       color: rgba(255, 255, 255, 0.8);
       text-align: center;
-      min-width: 80px;
+      min-width: 140px;
       text-overflow: ellipsis;
       overflow: hidden;
     }
@@ -85,7 +90,7 @@
       align-items: center;
       justify-content: center;
       color: rgba(255, 255, 255, 0.6);
-      font-size: 32px;
+      font-size: 48px;
       font-weight: bold;
     }
 
@@ -123,6 +128,7 @@
     let wsReconnectDelay = WS_RECONNECT_DELAY_MS;
     let tokenElements = {};
     let speakingState = new Map(); // id -> boolean
+    let presenceState = new Map(); // id -> boolean
 
     async function loadTokenConfig() {
       try {
@@ -142,9 +148,12 @@
       const bar = document.getElementById(TOKEN_BAR_ID);
       bar.innerHTML = '';
 
+      console.log('[Overlay] Rendering tokens:', tokenOrder);
+
       tokenOrder.forEach(id => {
         const tokenObj = tokens[id];
         if (!tokenObj) {
+          console.log('[Overlay] No token object for id:', id);
           return;
         }
 
@@ -170,6 +179,7 @@
         bar.appendChild(tokenDiv);
 
         tokenElements[id] = tokenDiv;
+        console.log('[Overlay] Created token:', id, tokenObj.label);
       });
     }
 
@@ -198,6 +208,26 @@
       }
     }
 
+    function setPresence(id, present) {
+      const token = tokenElements[id];
+      if (!token) {
+        console.log(`[Overlay] Token not found for id: ${id}`);
+        return;
+      }
+
+      presenceState.set(id, present);
+      console.log(`[Overlay] Presence: ${id} = ${present}`);
+
+      // Hide token if user is not present in voice channel
+      if (present) {
+        token.style.display = 'flex';
+      } else {
+        token.style.display = 'none';
+        // Also clear speaking state when they leave
+        setSpeaking(id, false);
+      }
+    }
+
     function updateStatus(text, state) {
       const statusEl = document.getElementById(STATUS_ID);
       statusEl.textContent = '● ' + text;
@@ -218,14 +248,28 @@
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
+          console.log('[Overlay] Received message:', message);
 
           if (message.type === 'state-sync') {
-            // Sync all speaking states from server
-            Object.entries(message.tokens || {}).forEach(([id, speaking]) => {
+            console.log('[Overlay] State sync - speaking:', message.speaking, 'presence:', message.presence);
+            // Sync speaking states
+            Object.entries(message.speaking || {}).forEach(([id, speaking]) => {
               setSpeaking(id, speaking);
+            });
+            // Sync presence states
+            Object.entries(message.presence || {}).forEach(([id, present]) => {
+              setPresence(id, present);
+            });
+            // Hide tokens that aren't present (default to hidden)
+            Object.keys(tokenElements).forEach(id => {
+              if (!message.presence || !message.presence[id]) {
+                setPresence(id, false);
+              }
             });
           } else if (message.type === 'speaking') {
             setSpeaking(message.id, message.speaking);
+          } else if (message.type === 'presence') {
+            setPresence(message.id, message.present);
           }
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);

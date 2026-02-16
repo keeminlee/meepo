@@ -7,6 +7,7 @@ import {
 import { getVoiceState, setVoiceState, clearVoiceState } from "./state.js";
 import { stopReceiver } from "./receiver.js";
 import { cleanupSpeaker } from "./speaker.js";
+import { overlayEmitPresence } from "../overlay/server.js";
 
 /**
  * Join a voice channel
@@ -58,6 +59,10 @@ export function leaveVoice(guildId: string): void {
   cleanupSpeaker(guildId);
   state.connection.destroy();
   clearVoiceState(guildId);
+  
+  // Clear Meepo's overlay presence
+  overlayEmitPresence("meepo", false);
+  console.log(`[Overlay] Cleared Meepo presence on leave`);
 }
 
 /**
@@ -77,6 +82,10 @@ function setupDisconnectHandlers(connection: VoiceConnection, guildId: string): 
       stopReceiver(guildId);
       cleanupSpeaker(guildId);
       clearVoiceState(guildId);
+      
+      // Clear Meepo's overlay presence
+      overlayEmitPresence("meepo", false);
+      
       console.log(`[Voice] Guild ${guildId}: State cleared (destroyed)`);
     }
 

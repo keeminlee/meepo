@@ -21,7 +21,7 @@ import { findRelevantBeats, type ScoredBeat } from "./recall/findRelevantBeats.j
 import { buildMemoryContext } from "./recall/buildMemoryContext.js";
 import { getTranscriptLines } from "./ledger/transcripts.js";
 import { getDb } from "./db.js";
-import { startOverlayServer } from "./overlay/server.js";
+import { startOverlayServer, overlayEmitPresence } from "./overlay/server.js";
 import { joinVoice } from "./voice/connection.js";
 import { startReceiver } from "./voice/receiver.js";
 import { setVoiceState } from "./voice/state.js";
@@ -94,10 +94,43 @@ client.once("ready", async () => {
 
       startReceiver(guildId);
 
+      // Set initial presence for users already in the channel
+      if (channel.isVoiceBased()) {
+        channel.members.forEach((member) => {
+          overlayEmitPresence(member.id, true);
+          console.log(`[Overlay] Initial presence: ${member.displayName} (${member.id})`);
+        });
+      }
+
+      // Set Meepo's presence (bot is in voice)
+      overlayEmitPresence("meepo", true);
+      console.log(`[Overlay] Set Meepo presence: true`);
+
       console.log(`[Overlay] Auto-joined voice channel and listening for speaking events`);
     } catch (err: any) {
       console.error(`[Overlay] Failed to auto-join voice channel:`, err.message ?? err);
     }
+  }
+});
+
+// Track voice channel presence for overlay (who's in voice)
+client.on("voiceStateUpdate", (oldState, newState) => {
+  const overlayChannelId = process.env.OVERLAY_VOICE_CHANNEL_ID;
+  if (!overlayChannelId) return;
+
+  const userId = newState.id;
+  const wasInOverlayChannel = oldState.channelId === overlayChannelId;
+  const isInOverlayChannel = newState.channelId === overlayChannelId;
+
+  // User joined the overlay voice channel (from any state)
+  if (isInOverlayChannel && !wasInOverlayChannel) {
+    overlayEmitPresence(userId, true);
+    console.log(`[Overlay] User ${userId} joined voice channel`);
+  }
+  // User left the overlay voice channel (to any state)
+  else if (!isInOverlayChannel && wasInOverlayChannel) {
+    overlayEmitPresence(userId, false);
+    console.log(`[Overlay] User ${userId} left voice channel`);
   }
 });
 

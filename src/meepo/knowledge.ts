@@ -58,7 +58,7 @@ export const INITIAL_MEMORIES: Omit<Memory, "id" | "created_at_ms" | "last_acces
   {
     title: "How to Make Blueberry Pie",
     content:
-      "To make blueberry pie: make dough, add blueberries, put it in the oven.",
+      "As Snowflake always says: to make blueberry pie, make dough, add blueberries, put it in the oven.",
     gravity: 0.6,
     certainty: 1.0,
   },

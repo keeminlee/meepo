@@ -7,16 +7,62 @@ import express, { Router, Request, Response } from 'express';
 import { createServer, Server as HttpServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as path from 'path';
-import { setSpeaking, getSpeakingState, onSpeakingStateChange } from './speakingState.js';
+import { setSpeaking, getSpeakingState, onSpeakingStateChange, setPresence, getPresenceState, onPresenceStateChange } from './speakingState.js';
+import { loadRegistry } from '../registry/loadRegistry.js';
 
 const app = express();
 let httpServer: HttpServer | null = null;
 let wss: WebSocketServer | null = null;
 
 const overlayPort = parseInt(process.env.OVERLAY_PORT || '7777', 10);
+const dmRoleId = process.env.DM_ROLE_ID || '';
 
 // In-memory broadcast queue (buffer messages if no active connections)
 const activeBroadcasters = new Set<WebSocket>();
+
+/**
+ * Build token configuration from registry
+ * Returns {order: [...], tokens: {...}} structure
+ */
+function buildTokensFromRegistry() {
+  const registry = loadRegistry();
+  const tokens: Record<string, { label: string; img: string }> = {};
+  const order: string[] = [];
+
+  // Add DM token first
+  if (dmRoleId) {
+    tokens[dmRoleId] = {
+      label: 'DM',
+      img: '/static/tokens/dm.png',
+    };
+    order.push(dmRoleId);
+    console.log(`[Overlay] Added DM token: ${dmRoleId}`);
+  }
+
+  // Add PC tokens from registry (sorted by canonical name)
+  const pcs = registry.characters.filter(c => c.type === 'pc').sort((a, b) => a.canonical_name.localeCompare(b.canonical_name));
+  for (const pc of pcs) {
+    if (pc.discord_user_id) {
+      const tokenName = pc.canonical_name.toLowerCase().replace(/\s+/g, '_');
+      tokens[pc.discord_user_id] = {
+        label: pc.canonical_name,
+        img: `/static/tokens/${tokenName}.png`,
+      };
+      order.push(pc.discord_user_id);
+      console.log(`[Overlay] Added PC token: ${pc.canonical_name} (${pc.discord_user_id})`);
+    }
+  }
+
+  // Add Meepo token last
+  tokens['meepo'] = {
+    label: 'Meepo',
+    img: '/static/tokens/meepo.png',
+  };
+  order.push('meepo');
+
+  console.log(`[Overlay] Built tokens for ${order.length} characters`);
+  return { order, tokens };
+}
 
 /**
  * Setup routes for the overlay server
@@ -28,10 +74,15 @@ function setupRoutes(router: Router) {
     res.sendFile(overlayPath);
   });
 
-  // Serve tokens.json
+  // Serve tokens.json (dynamically loaded from registry)
   router.get('/tokens.json', (req: Request, res: Response) => {
-    const tokensPath = path.join(process.cwd(), 'data', 'overlay', 'tokens.json');
-    res.sendFile(tokensPath);
+    try {
+      const tokens = buildTokensFromRegistry();
+      res.json(tokens);
+    } catch (error) {
+      console.error('[Overlay] Failed to build tokens:', error);
+      res.status(500).json({ error: 'Failed to load tokens' });
+    }
   });
 
   // Serve static assets (images, etc.)
@@ -69,11 +120,13 @@ function setupWebSocket() {
   wss.on('connection', (ws: WebSocket) => {
     activeBroadcasters.add(ws);
 
-    // Send current speaking state to new client
-    const currentState = getSpeakingState();
+    // Send current speaking and presence state to new client
+    const currentSpeakingState = getSpeakingState();
+    const currentPresenceState = getPresenceState();
     const stateSync = {
       type: 'state-sync',
-      tokens: Object.fromEntries(currentState),
+      speaking: Object.fromEntries(currentSpeakingState),
+      presence: Object.fromEntries(currentPresenceState),
     };
     ws.send(JSON.stringify(stateSync));
 
@@ -110,6 +163,16 @@ export async function startOverlayServer() {
       });
     });
 
+    // Listen for presence state changes and broadcast
+    onPresenceStateChange((id: string, present: boolean) => {
+      broadcastToClients({
+        type: 'presence',
+        id,
+        present,
+        t: Date.now(),
+      });
+    });
+
     httpServer.listen(overlayPort, () => {
       console.log(`[Overlay] http://localhost:${overlayPort}/overlay`);
       resolve();
@@ -123,6 +186,14 @@ export async function startOverlayServer() {
  */
 export function overlayEmitSpeaking(id: string, speaking: boolean) {
   setSpeaking(id, speaking);
+}
+
+/**
+ * Emit presence event for a token
+ * Should be called from voiceStateUpdate handler when users join/leave voice
+ */
+export function overlayEmitPresence(id: string, present: boolean) {
+  setPresence(id, present);
 }
 
 /**

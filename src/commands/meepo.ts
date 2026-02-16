@@ -3,6 +3,7 @@ import { getActiveMeepo, wakeMeepo, sleepMeepo, transformMeepo } from "../meepo/
 import { getAvailableForms, getPersona } from "../personas/index.js";
 import { setBotNicknameForPersona } from "../meepo/nickname.js";
 import { autoJoinGeneralVoice } from "../meepo/autoJoinVoice.js";
+import { overlayEmitPresence } from "../overlay/server.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
 import { logSystemEvent } from "../ledger/system.js";
 import { joinVoice, leaveVoice } from "../voice/connection.js";
@@ -663,6 +664,10 @@ export const meepo = {
 
         // Start receiver for STT
         startReceiver(guildId);
+
+        // Set Meepo's overlay presence
+        overlayEmitPresence("meepo", true);
+        console.log(`[Overlay] Set Meepo presence on manual join`);
 
         // Log system event (narrative secondary - state change)
         logSystemEvent({
