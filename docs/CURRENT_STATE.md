@@ -265,8 +265,18 @@ latches
 - **Memory Recall Pipeline** (registry → events → GPTcap beats → memory capsules) ✨ **NEW Feb 14 Eve**
 - **Incremental Memory Seeding** (title-based differential updates) ✨ **NEW Feb 14 Eve**
 - **MeepoView Overlay** (OBS streaming overlay with real-time speaking indicators) ✨ **NEW Feb 15**
+  - Shows/hides tokens based on Discord voiceStateUpdate (adaptive to who's in voice)
+  - Dynamically loads tokens from pcs.yml registry (single source of truth)
+  - Scaled 75% larger (140px tokens, 28px gaps) for better OBS visibility
+  - WebSocket-based speaking & presence state with auto-reconnect
+  - URL: `http://localhost:7777/overlay` (configure as OBS Browser Source)
 - **Auto-Join Voice on Wake** (Meepo joins General voice channel automatically when waking) ✨ **NEW Feb 15**
 - **STT Always-On** (STT enabled by default when joining voice, no manual toggle needed) ✨ **NEW Feb 15**
+- **Adaptive Presence Tracking** (Overlay visibility tied to voice channel membership) ✨ **NEW Feb 15**
+  - voiceStateUpdate handler tracks Discord member joins/leaves
+  - Meepo presence tracked separately on join/leave/disconnect
+  - Tokens hidden by default, shown only when users are voice-connected
+  - No lingering states when users disconnect or bot leaves
 
 ### 🔄 Phase 2-3 (In Progress)
 - ✅ **Beats Normalization:** Meecap beats now in dedicated table with label column (Feb 14)
