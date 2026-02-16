@@ -245,3 +245,26 @@ CREATE TABLE IF NOT EXISTS speaker_masks (
 
 CREATE INDEX IF NOT EXISTS idx_speaker_masks_guild
 ON speaker_masks(guild_id);
+
+-- Meep Transactions: Append-only ledger for meep balance tracking
+-- Guild-scoped; per-PC balance derived from SUM(delta)
+-- Issuer types: 'dm' (DM reward), 'player' (player spend), 'meepo' (future auto-reward)
+CREATE TABLE IF NOT EXISTS meep_transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  tx_id TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  target_discord_id TEXT NOT NULL,        -- Discord ID of PC receiving ±meep
+  delta INTEGER NOT NULL,                 -- Always ±1 (spend=-1, reward=+1)
+  issuer_type TEXT NOT NULL,              -- 'dm' | 'player' | 'meepo'
+  issuer_discord_id TEXT,                 -- NULL for 'meepo', user ID for 'dm'/'player'
+  issuer_name TEXT,                       -- User display name or 'Meepo'
+  reason TEXT,                            -- Optional transaction reason (unused for now)
+  meta_json TEXT                          -- Future: arbitrary metadata
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meep_guild_tx
+ON meep_transactions(guild_id, tx_id);
+
+CREATE INDEX IF NOT EXISTS idx_meep_balance
+ON meep_transactions(guild_id, target_discord_id);
