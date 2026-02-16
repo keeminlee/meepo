@@ -20,7 +20,9 @@ import { writeFile, unlink } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { log } from "../utils/logger.js";
 
+const audioFxLog = log.withScope("audio-fx");
 const DEBUG_FX = process.env.DEBUG_VOICE === "true";
 
 /**
@@ -38,7 +40,7 @@ export async function applyPostTtsFx(
 
   if (!enabled) {
     if (DEBUG_FX) {
-      console.log("[AudioFX] Disabled");
+      audioFxLog.debug("Disabled");
     }
     return input;
   }
@@ -51,8 +53,8 @@ export async function applyPostTtsFx(
     const reverbDecay = parseFloat(process.env.AUDIO_FX_REVERB_DECAY ?? "0.4");
 
     if (DEBUG_FX || pitch !== 1.0 || reverbEnabled) {
-      console.log(
-        `[AudioFX] Enabled (pitch=${pitch.toFixed(2)}, reverb=${reverbEnabled})`
+      audioFxLog.debug(
+        `Enabled (pitch=${pitch.toFixed(2)}, reverb=${reverbEnabled})`
       );
     }
 

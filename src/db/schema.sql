@@ -268,3 +268,42 @@ ON meep_transactions(guild_id, tx_id);
 
 CREATE INDEX IF NOT EXISTS idx_meep_balance
 ON meep_transactions(guild_id, target_discord_id);
+
+-- Milestone 1 extensions: add source metadata + session tracking
+-- These columns are backward-compatible (NULL for existing rows)
+ALTER TABLE meep_transactions ADD COLUMN source_type TEXT DEFAULT 'dm';  -- 'dm' | 'mission' | 'meepo' | 'system' | 'player_spend'
+ALTER TABLE meep_transactions ADD COLUMN source_ref TEXT;                 -- e.g., mission_claim:123, dm:user_id
+ALTER TABLE meep_transactions ADD COLUMN session_id TEXT;                 -- Session this meep was earned in
+ALTER TABLE meep_transactions ADD COLUMN anchor_session_id TEXT;          -- Anchor to session for narrative alignment
+ALTER TABLE meep_transactions ADD COLUMN anchor_line_index INTEGER;       -- Anchor to ledger line for narrative alignment
+
+-- Mission Claims: track mission completion and meep minting
+CREATE TABLE IF NOT EXISTS mission_claims (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  mission_id TEXT NOT NULL,
+  claimant_discord_id TEXT NOT NULL,      -- Who initiated the claim (usually DM)
+  beneficiary_discord_id TEXT NOT NULL,   -- Who receives the reward
+  created_at_ms INTEGER NOT NULL,
+  status TEXT NOT NULL,                   -- 'claimed' | 'minted' | 'blocked_cap' | 'rejected'
+  note TEXT,                              -- Optional DM note/reason
+  meta_json TEXT                          -- {tx_id, reason, ...}
+);
+
+-- Enforce: max 1 of this mission per beneficiary per session
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_once
+ON mission_claims(guild_id, session_id, mission_id, beneficiary_discord_id);
+
+CREATE INDEX IF NOT EXISTS idx_mission_session
+ON mission_claims(guild_id, session_id, created_at_ms);
+
+CREATE INDEX IF NOT EXISTS idx_mission_beneficiary
+ON mission_claims(beneficiary_discord_id, created_at_ms);
+
+-- Guild Runtime State: minimal session tracking
+CREATE TABLE IF NOT EXISTS guild_runtime_state (
+  guild_id TEXT PRIMARY KEY,
+  active_session_id TEXT,                 -- Current active session (NULL if none)
+  updated_at_ms INTEGER NOT NULL
+);

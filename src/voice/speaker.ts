@@ -18,8 +18,11 @@ import {
   NoSubscriberBehavior,
 } from "@discordjs/voice";
 import { Readable } from "node:stream";
+import { log } from "../utils/logger.js";
 import { getVoiceState } from "./state.js";
 import { overlayEmitSpeaking } from "../overlay/server.js";
+
+const voiceLog = log.withScope("voice");
 
 /**
  * Per-guild speaker state
@@ -42,7 +45,7 @@ const meepoSpeakingGuilds = new Set<string>();
 function getOrCreatePlayer(guildId: string): AudioPlayer | null {
   const state = getVoiceState(guildId);
   if (!state) {
-    console.warn(`[Speaker] No voice state for guild ${guildId}`);
+    voiceLog.warn(`No voice state`);
     return null;
   }
 
@@ -57,12 +60,12 @@ function getOrCreatePlayer(guildId: string): AudioPlayer | null {
     // Clean up on finish
     player.on(AudioPlayerStatus.Idle, () => {
       if (process.env.DEBUG_VOICE === "true") {
-        console.log(`[Speaker] Playback finished for guild ${guildId}`);
+        voiceLog.debug(`Playback finished`);
       }
     });
 
     player.on("error", (err) => {
-      console.error(`[Speaker] Audio player error for guild ${guildId}:`, err);
+      voiceLog.error(`Audio player error: ${err}`);
     });
 
     // Subscribe the player to the connection
@@ -76,7 +79,7 @@ function getOrCreatePlayer(guildId: string): AudioPlayer | null {
     guildSpeakers.set(guildId, speaker);
 
     if (process.env.DEBUG_VOICE === "true") {
-      console.log(`[Speaker] Created player for guild ${guildId}`);
+      voiceLog.debug(`Created audio player`);
     }
   }
 
@@ -103,8 +106,8 @@ export function speakInGuild(
 ): void {
   const state = getVoiceState(guildId);
   if (!state) {
-    console.warn(
-      `[Speaker] Not in voice for guild ${guildId}`
+    voiceLog.warn(
+      `Not in voice for guild ${guildId}`
     );
     return;
   }
@@ -139,8 +142,8 @@ export function speakInGuild(
         const metaStr = meta?.userDisplayName
           ? ` (${meta.userDisplayName})`
           : "";
-        console.log(
-          `[Speaker] Playing ${mp3Buffer.length} bytes${metaStr} in guild ${guildId}`
+        voiceLog.debug(
+          `Playing ${mp3Buffer.length} bytes${metaStr}`
         );
       }
 
@@ -184,9 +187,8 @@ export function speakInGuild(
       });
     })
     .catch((err) => {
-      console.error(
-        `[Speaker] Playback error for guild ${guildId}:`,
-        err
+      voiceLog.error(
+        `Playback error: ${err}`
       );
     });
 
@@ -207,7 +209,7 @@ export function cleanupSpeaker(guildId: string): void {
     }
     guildSpeakers.delete(guildId);
     if (process.env.DEBUG_VOICE === "true") {
-      console.log(`[Speaker] Cleaned up speaker for guild ${guildId}`);
+      voiceLog.debug(`Cleaned up speaker`);
     }
   }
 }

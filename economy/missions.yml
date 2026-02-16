@@ -1,0 +1,77 @@
+# Meepo Mission Economy V0
+# Configuration for mission types and meep rewards
+# 
+# Mission kinds:
+#   permanent: Available every session for all players
+#   temporary: One-time per session per player (resets next session)
+
+missions:
+  # Session participation / engagement
+  - id: session_summary
+    name: "Submit a session summary"
+    kind: permanent
+    max_per_player_per_session: 1
+    reward:
+      meeps: 1
+    description: "Write up or summarize what happened in this session."
+
+  # Social / RP engagement
+  - id: pc_significant_convo
+    name: "Character-significant conversation with another PC"
+    kind: temporary
+    max_per_player_per_session: 1
+    reward:
+      meeps: 1
+    applies_to: both_participants
+    description: "Have a meaningful in-character interaction with another player's character."
+
+  - id: npc_friendship_increase
+    name: "Friendship increase with an NPC"
+    kind: temporary
+    max_per_player_per_session: 1
+    reward:
+      meeps: 1
+    applies_to: initiator_only
+    description: "Make progress in your relationship with an NPC."
+
+  # Discovery and exploration
+  - id: session_secret_discovered
+    name: "Discover a significant secret or mystery"
+    kind: temporary
+    max_per_player_per_session: 1
+    reward:
+      meeps: 1
+    applies_to: discoverer_only
+    description: "Uncover hidden lore, secrets, or mysteries in the world."
+
+  # Combat/challenge completion
+  - id: difficult_encounter_won
+    name: "Complete a difficult encounter"
+    kind: temporary
+    max_per_player_per_session: 1
+    reward:
+      meeps: 1
+    applies_to: all_participants
+    description: "Successfully overcome a challenging combat or skill encounter."
+
+  # Narrative impact
+  - id: session_defining_choice
+    name: "Make a defining narrative choice"
+    kind: temporary
+    max_per_player_per_session: 1
+    reward:
+      meeps: 1
+    applies_to: decision_maker
+    description: "Make a choice that significantly shapes the story."
+
+# Future extensions (don't uncomment yet)
+# 
+# exceptional_meeps: 2  # Increased reward for exceptional roleplay/impact
+# 
+# - id: session_exceptional_roleplay
+#   name: "Exceptional roleplay or character development moment"
+#   kind: temporary
+#   max_per_player_per_session: 1
+#   reward:
+#     meeps: 2  # Higher reward for exceptional moments
+#   applies_to: standout_player

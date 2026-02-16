@@ -3,8 +3,13 @@
  *
  * Environment Variables:
  *   LOG_LEVEL=error|warn|info|debug|trace  (default: info)
- *   LOG_SCOPES=voice,stt,tts,ledger,llm,db,session (optional, default: all)
+ *   LOG_SCOPES=voice,stt,tts,ledger,meepo,overlay,meeps,voice-reply,boot,db,session
+ *      (optional, default: all scopes allowed)
  *   LOG_FORMAT=pretty|json  (default: pretty)
+ *
+ * Example Usage:
+ *   LOG_LEVEL=debug LOG_SCOPES=voice,voice-reply  node bot.js
+ *   LOG_LEVEL=warn  node bot.js  // Only warnings and errors
  *
  * Legacy Compatibility:
  *   DEBUG_VOICE=true  →  Sets LOG_LEVEL=debug and LOG_SCOPES includes 'voice'
@@ -22,6 +27,11 @@ export type LogScope =
   | "session"
   | "boot"
   | "meepo"
+  | "meepo-mind"
+  | "overlay"
+  | "meeps"
+  | "voice-reply"
+  | "audio-fx"
   | string;
 
 interface LogEntry {
@@ -109,12 +119,19 @@ class Logger {
       return JSON.stringify(entry);
     }
 
-    // Pretty format
-    const scopeStr = entry.scope ? ` [${entry.scope}]` : "";
-    const levelUpper = entry.level.toUpperCase().padEnd(5);
-    const dataStr = entry.data ? ` ${JSON.stringify(entry.data)}` : "";
+    // Pretty format with better visual hierarchy
+    const time = entry.timestamp.split("T")[1].split(".")[0]; // HH:MM:SS
+    const levelAbbr = {
+      trace: "TRC",
+      debug: "DBG",
+      info: "INF",
+      warn: "WRN",
+      error: "ERR",
+    }[entry.level];
+    const scopeStr = entry.scope ? ` │ ${entry.scope}` : "";
+    const dataStr = entry.data ? ` │ ${JSON.stringify(entry.data)}` : "";
 
-    return `${entry.timestamp} ${levelUpper}${scopeStr} ${entry.message}${dataStr}`;
+    return `${time} [${levelAbbr}]${scopeStr} ${entry.message}${dataStr}`;
   }
 
   private getTimestamp(): string {

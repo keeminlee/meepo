@@ -1,6 +1,9 @@
 ﻿import { randomUUID } from "node:crypto";
+import { log } from "../utils/logger.js";
 import { getDb } from "../db.js";
 import { startSession, endSession } from "../sessions/sessions.js";
+
+const meepoLog = log.withScope("meepo");
 
 export type MeepoInstance = {
   id: string;
@@ -53,7 +56,7 @@ export function wakeMeepo(opts: {
     1 // is_active
   );
 
-  console.log("Meepo woke up as form_id: meepo");
+  meepoLog.info(`Woke up as form_id: meepo`);
 
   // Day 4: auto-start session on wake
   startSession(opts.guildId);
@@ -91,7 +94,7 @@ export function transformMeepo(guildId: string, formId: string): { success: bool
     return { success: false, error: "No active Meepo to transform" };
   }
   
-  console.log("Transforming:", active.form_id, "→", formId);
+  meepoLog.info(`Transforming: ${active.form_id} → ${formId}`);
   
   const info = db
     .prepare("UPDATE npc_instances SET form_id = ? WHERE guild_id = ? AND is_active = 1")

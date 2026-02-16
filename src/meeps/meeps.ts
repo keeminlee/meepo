@@ -9,9 +9,12 @@
  */
 
 import { randomUUID } from 'crypto';
+import { log } from '../utils/logger.js';
 import { getDb } from '../db.js';
 
-export type IssuerType = 'dm' | 'player' | 'meepo';
+const meepsLog = log.withScope("meeps");
+
+export type IssuerType = 'dm' | 'player' | 'meepo' | 'system';
 
 export interface MeepTransaction {
   id: number;
@@ -25,6 +28,11 @@ export interface MeepTransaction {
   issuer_name: string;
   reason: string | null;
   meta_json: string | null;
+  source_type?: string;         // 'dm' | 'mission' | 'meepo' | 'system' | 'player_spend'
+  source_ref?: string | null;   // e.g., mission_claim:123
+  session_id?: string | null;   // Session this meep was earned in
+  anchor_session_id?: string | null;
+  anchor_line_index?: number | null;
 }
 
 /**
@@ -40,6 +48,11 @@ export function createMeepTx(opts: {
   issuer_name: string;
   reason?: string;
   meta?: Record<string, unknown>;
+  source_type?: string;
+  source_ref?: string;
+  session_id?: string;
+  anchor_session_id?: string;
+  anchor_line_index?: number;
 }): string {
   const db = getDb();
   const tx_id = randomUUID();
@@ -48,8 +61,9 @@ export function createMeepTx(opts: {
   db.prepare(`
     INSERT INTO meep_transactions (
       guild_id, tx_id, created_at_ms, target_discord_id, delta,
-      issuer_type, issuer_discord_id, issuer_name, reason, meta_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      issuer_type, issuer_discord_id, issuer_name, reason, meta_json,
+      source_type, source_ref, session_id, anchor_session_id, anchor_line_index
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     opts.guild_id,
     tx_id,
@@ -60,8 +74,15 @@ export function createMeepTx(opts: {
     opts.issuer_discord_id ?? null,
     opts.issuer_name,
     opts.reason ?? null,
-    opts.meta ? JSON.stringify(opts.meta) : null
+    opts.meta ? JSON.stringify(opts.meta) : null,
+    opts.source_type ?? 'dm',
+    opts.source_ref ?? null,
+    opts.session_id ?? null,
+    opts.anchor_session_id ?? null,
+    opts.anchor_line_index ?? null
   );
+
+  meepsLog.debug(`Created transaction: delta=${opts.delta}, issuer=${opts.issuer_type}, issuer_name=${opts.issuer_name}`);
 
   return tx_id;
 }

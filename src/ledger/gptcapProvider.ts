@@ -1,5 +1,8 @@
 import fs from "fs";
 import path from "path";
+import { log } from "../utils/logger.js";
+
+const ledgerLog = log.withScope("ledger");
 
 /**
  * GptcapProvider: Loads and validates GPTcap (bootstrap) beats from disk.
@@ -51,19 +54,19 @@ export function loadGptcap(sessionKey: string): Gptcap | null {
   // Always use label for indexing
   const filePath = path.join(GPTCAPS_DIR, "beats", `beats_${sessionKey}.json`);
   if (!fs.existsSync(filePath)) {
-    console.warn(`[GptcapProvider] File not found: ${filePath}`);
+    ledgerLog.warn(`File not found: ${filePath}`);
     return null;
   }
   try {
     const raw = fs.readFileSync(filePath, "utf8");
     const obj = JSON.parse(raw);
     if (!validateGptcap(obj)) {
-      console.warn(`[GptcapProvider] Invalid GPTcap schema in: ${filePath}`);
+      ledgerLog.warn(`Invalid GPTcap schema in: ${filePath}`);
       return null;
     }
     return obj;
   } catch (err) {
-    console.warn(`[GptcapProvider] Error loading ${filePath}:`, err);
+    ledgerLog.warn(`Error loading ${filePath}: ${err}`);
     return null;
   }
 }

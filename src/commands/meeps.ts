@@ -9,15 +9,20 @@
  * - history: View transaction history for self or other PC
  */
 
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder, TextChannel } from 'discord.js';
+import { log } from '../utils/logger.js';
 import { loadRegistry } from '../registry/loadRegistry.js';
+import { getActiveMeepo } from '../meepo/state.js';
+import { getDiscordClient } from '../bot.js';
 import {
-  createMeepTx,
   getMeepBalance,
   getMeepHistory,
   formatMeepReceipt,
   formatMeepHistory,
 } from '../meeps/meeps.js';
+import { spendMeep, creditMeep, MEEP_MAX_BALANCE } from '../meeps/engine.js';
+
+const meepsLog = log.withScope("meeps");
 
 /**
  * Resolve a Discord user to a registered PC
@@ -125,10 +130,16 @@ async function handleSpend(interaction: any, guildId: string): Promise<void> {
     // (design choice: meeps track per-Discord-ID, not just per-PC)
   }
 
-  const currentBalance = getMeepBalance(guildId, invoker.id);
+  meepsLog.debug(`/meeps spend invoked: user=${invoker.username}`);
 
-  // Guardrail: Insufficient balance
-  if (currentBalance < 1) {
+  // Use engine to spend
+  const success = spendMeep({
+    guildId,
+    invokerDiscordId: invoker.id,
+    invokerName: interaction.member?.displayName ?? invoker.username,
+  });
+
+  if (!success) {
     await interaction.reply({
       content: 'No meeps... come back once you find some more, meep!',
       ephemeral: true,
@@ -136,23 +147,29 @@ async function handleSpend(interaction: any, guildId: string): Promise<void> {
     return;
   }
 
-  // Create transaction
-  createMeepTx({
-    guild_id: guildId,
-    target_discord_id: invoker.id,
-    delta: -1,
-    issuer_type: 'player',
-    issuer_discord_id: invoker.id,
-    issuer_name: interaction.member?.displayName ?? invoker.username,
-  });
-
-  const newBalance = currentBalance - 1;
+  const newBalance = getMeepBalance(guildId, invoker.id);
+  const oldBalance = newBalance + 1;
+  meepsLog.info(`Spend: ${invoker.username} spent 1 meep, balance ${oldBalance} → ${newBalance}`);
   const response = formatMeepReceipt(newBalance, 'spend');
 
   await interaction.reply({
     content: response,
     ephemeral: true,
   });
+
+  // Log transaction to Meepo's bound channel
+  try {
+    const meepo = getActiveMeepo(guildId);
+    if (meepo) {
+      const client = getDiscordClient();
+      const channel = await client.channels.fetch(meepo.channel_id) as TextChannel;
+      if (channel?.isTextBased()) {
+        await channel.send(`📋 ${invoker.username} spent 1 meep (balance: ${oldBalance} → ${newBalance})`);
+      }
+    }
+  } catch (err: any) {
+    meepsLog.warn(`Failed to log spend to channel: ${err.message ?? err}`);
+  }
 }
 
 /**
@@ -184,32 +201,56 @@ async function handleReward(interaction: any, guildId: string): Promise<void> {
   const currentBalance = getMeepBalance(guildId, target.id);
 
   // Guardrail: Already at cap
-  if (currentBalance >= 3) {
+  if (currentBalance >= MEEP_MAX_BALANCE) {
     await interaction.reply({
-      content: `They're already maxed out (3 meeps), meep!`,
+      content: `They're already maxed out (${MEEP_MAX_BALANCE} meeps), meep!`,
       ephemeral: true,
     });
     return;
   }
 
-  // Create transaction
+  // Use engine to credit meep
   const dm = interaction.member;
-  createMeepTx({
-    guild_id: guildId,
-    target_discord_id: target.id,
-    delta: 1,
-    issuer_type: 'dm',
-    issuer_discord_id: interaction.user.id,
-    issuer_name: dm?.displayName ?? interaction.user.username,
+  const result = creditMeep({
+    guildId,
+    targetDiscordId: target.id,
+    issuerType: 'dm',
+    issuerDiscordId: interaction.user.id,
+    issuerName: dm?.displayName ?? interaction.user.username,
+    sourceType: 'dm',
+    sourceRef: `dm:${interaction.user.id}`,
   });
 
-  const newBalance = currentBalance + 1;
+  if (!result.success) {
+    await interaction.reply({
+      content: `Failed to reward meep (${result.reason}), meep!`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const newBalance = result.balance!;
+  meepsLog.info(`Reward: ${dm?.displayName ?? interaction.user.username} awarded 1 meep to ${targetPC.canonical_name}, balance ${currentBalance} → ${newBalance}`);
   const response = formatMeepReceipt(newBalance, 'reward', targetPC.canonical_name);
 
   await interaction.reply({
     content: response,
     ephemeral: true,
   });
+
+  // Log transaction to Meepo's bound channel
+  try {
+    const meepo = getActiveMeepo(guildId);
+    if (meepo) {
+      const client = getDiscordClient();
+      const channel = await client.channels.fetch(meepo.channel_id) as TextChannel;
+      if (channel?.isTextBased()) {
+        await channel.send(`🎁 ${dm?.displayName ?? interaction.user.username} awarded 1 meep to ${targetPC.canonical_name} (balance: ${currentBalance} → ${newBalance})`);
+      }
+    }
+  } catch (err: any) {
+    meepsLog.warn(`Failed to log reward to channel: ${err.message ?? err}`);
+  }
 }
 
 /**
@@ -223,6 +264,7 @@ async function handleBalance(interaction: any, guildId: string): Promise<void> {
   // Default to invoker if no target specified
   const checkUser = target ?? invoker;
   const checkPC = resolvePcFromUser(checkUser);
+  meepsLog.debug(`/meeps balance invoked: invoker=${invoker.username}, target=${checkUser.username}`);
 
   // Guard: Non-DM checking someone else's balance
   if (target && !isDm(interaction)) {

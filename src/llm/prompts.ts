@@ -2,6 +2,9 @@ import type { MeepoInstance } from "../meepo/state.js";
 import { getRecentLedgerText } from "../ledger/ledger.js";
 import { getPersona } from "../personas/index.js";
 import { getMeepoMemoriesSection } from "../ledger/meepo-mind.js";
+import { log } from "../utils/logger.js";
+
+const llmLog = log.withScope("llm");
 
 export async function buildMeepoPrompt(opts: {
   meepo: MeepoInstance;
@@ -10,7 +13,7 @@ export async function buildMeepoPrompt(opts: {
   partyMemory?: string; // Task 9: Party memory capsules from recall pipeline
 }): Promise<string> {
   const persona = getPersona(opts.meepo.form_id);
-  console.log("Using persona:", persona.displayName, `(${opts.meepo.form_id})`);
+  llmLog.debug(`Using persona: ${persona.displayName}`);
   
   const customPersona = opts.meepo.persona_seed
     ? `\nAdditional character context:\n${opts.meepo.persona_seed}`

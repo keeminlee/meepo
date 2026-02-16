@@ -270,7 +270,7 @@ async function handleTranscription(
     });
 
     voiceLog.info(
-      `📝 Ledger: ${displayName} (${userId}), text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
+      `📝 Ledger: ${displayName}, text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
     );
 
     // Task 4.6: Check if addressed to Meepo and generate voice reply if conditions met
@@ -288,35 +288,36 @@ async function handleTranscription(
       });
     }
   } catch (err) {
-    voiceLog.error(`Transcription failed for userId=${userId}:`, { err });
+    voiceLog.error(`Transcription failed:`, { err });
   }
 }
 
 export function startReceiver(guildId: string): void {
   const state = getVoiceState(guildId);
   if (!state) {
-    voiceLog.warn(`No voice state for guild ${guildId}`);
+    voiceLog.warn(`No voice state`);
     return;
   }
   if (!state.sttEnabled) {
-    voiceLog.warn(`STT not enabled for guild ${guildId}`);
+    voiceLog.warn(`STT not enabled`);
     return;
   }
 
   // Idempotent: don't register twice
   if (receiverHandlers.has(guildId)) {
-    voiceLog.debug(`Receiver already active for guild ${guildId}`);
+    voiceLog.debug(`Receiver already active`);
     return;
   }
 
   const connection = state.connection;
   const channelId = state.channelId;
+  const channelName = state.guild.channels.cache.get(channelId)?.name ?? "unknown";
 
   if (!activeSpeakers.has(guildId)) activeSpeakers.set(guildId, new Map());
   if (!pcmCaptures.has(guildId)) pcmCaptures.set(guildId, new Map());
   if (!userCooldowns.has(guildId)) userCooldowns.set(guildId, new Map());
 
-  voiceLog.info(`Starting receiver for guild ${guildId}, channel ${channelId}`);
+  voiceLog.info(`Starting receiver for channel #${channelName}`);
 
   const onStart = async (userId: string) => {
     const speakers = activeSpeakers.get(guildId);

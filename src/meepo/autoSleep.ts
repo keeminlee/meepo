@@ -5,8 +5,11 @@
  * If no activity detected for configured duration, sleeps Meepo and ends session.
  */
 
+import { log } from "../utils/logger.js";
 import { getDb } from "../db.js";
 import { getActiveMeepo, sleepMeepo } from "./state.js";
+
+const meepoLog = log.withScope("meepo");
 
 const AUTO_SLEEP_MS = Number(process.env.MEEPO_AUTO_SLEEP_MS ?? "600000"); // Default: 10 minutes
 const CHECK_INTERVAL_MS = 60000; // Check every 60 seconds
@@ -46,14 +49,12 @@ function checkInactivity() {
       const inactiveMs = now - lastEntry.timestamp_ms;
 
       if (inactiveMs >= AUTO_SLEEP_MS) {
-        console.log(
-          `[AutoSleep] Sleeping Meepo in guild ${guild_id} after ${Math.round(inactiveMs / 60000)} minutes of inactivity`
-        );
+        meepoLog.info(`Sleeping Meepo after ${Math.round(inactiveMs / 60000)} minutes of inactivity`);
         sleepMeepo(guild_id);
       }
     }
   } catch (err: any) {
-    console.error("[AutoSleep] Check failed:", err.message ?? err);
+    meepoLog.error(`Check failed: ${err.message ?? err}`);
   }
 }
 
@@ -63,18 +64,16 @@ function checkInactivity() {
  */
 export function startAutoSleepChecker() {
   if (checkInterval) {
-    console.warn("[AutoSleep] Checker already running");
+    meepoLog.warn("Checker already running");
     return;
   }
 
   if (AUTO_SLEEP_MS <= 0) {
-    console.log("[AutoSleep] Disabled (MEEPO_AUTO_SLEEP_MS <= 0)");
+    meepoLog.debug("Disabled (MEEPO_AUTO_SLEEP_MS <= 0)");
     return;
   }
 
-  console.log(
-    `[AutoSleep] Starting checker (timeout: ${AUTO_SLEEP_MS / 60000} minutes, check interval: ${CHECK_INTERVAL_MS / 1000}s)`
-  );
+  meepoLog.info(`Starting checker (timeout: ${AUTO_SLEEP_MS / 60000} minutes, check interval: ${CHECK_INTERVAL_MS / 1000}s)`);
 
   checkInterval = setInterval(checkInactivity, CHECK_INTERVAL_MS);
 }
@@ -86,6 +85,6 @@ export function stopAutoSleepChecker() {
   if (checkInterval) {
     clearInterval(checkInterval);
     checkInterval = null;
-    console.log("[AutoSleep] Checker stopped");
+    meepoLog.debug("Checker stopped");
   }
 }

@@ -1,5 +1,6 @@
 ﻿import "dotenv/config";
 import { Client, GatewayIntentBits } from "discord.js";
+import { log } from "./utils/logger.js";
 import { registerHandlers } from "./commands/index.js";
 import { getActiveMeepo, wakeMeepo, transformMeepo } from "./meepo/state.js";
 import { autoJoinGeneralVoice } from "./meepo/autoJoinVoice.js";
@@ -26,6 +27,9 @@ import { joinVoice } from "./voice/connection.js";
 import { startReceiver } from "./voice/receiver.js";
 import { setVoiceState } from "./voice/state.js";
 
+const bootLog = log.withScope("boot");
+const overlayLog = log.withScope("overlay");
+
 // PID lock: prevent multiple instances
 if (!acquireLock()) {
   process.exit(1);
@@ -51,29 +55,31 @@ export function getDiscordClient(): Client {
 registerHandlers(client);
 
 client.once("ready", async () => {
-  console.log("Meepo online as " + (client.user?.tag ?? "<unknown>"));
+  bootLog.info(`Meepo online as ${client.user?.tag ?? "<unknown>"}`);
   
   // Initialize MeepoMind (seed foundational memories on first run)
   try {
     await seedMeepoMemories();
   } catch (err: any) {
-    console.error("Failed to seed MeepoMind:", err.message ?? err);
+    bootLog.error(`Failed to seed MeepoMind: ${err.message ?? err}`);
   }
 
   // Start auto-sleep checker for inactive Meepo instances
   startAutoSleepChecker();
 
   // Auto-join overlay voice channel (for speaking detection, independent of Meepo sessions)
+  // Configurable via OVERLAY_AUTOJOIN=true (disabled by default)
   const guildId = process.env.GUILD_ID;
   const overlayVoiceChannelId = process.env.OVERLAY_VOICE_CHANNEL_ID;
+  const overlayAutoJoinEnabled = process.env.OVERLAY_AUTOJOIN === "true";
   
-  if (guildId && overlayVoiceChannelId) {
+  if (overlayAutoJoinEnabled && guildId && overlayVoiceChannelId) {
     try {
       const guild = await client.guilds.fetch(guildId);
       const channel = await guild.channels.fetch(overlayVoiceChannelId);
       
       if (!channel || !channel.isVoiceBased()) {
-        console.warn(`[Overlay] Channel ${overlayVoiceChannelId} is not a voice channel`);
+        overlayLog.warn(`Channel ${overlayVoiceChannelId} is not a voice channel`);
         return;
       }
 
@@ -98,17 +104,17 @@ client.once("ready", async () => {
       if (channel.isVoiceBased()) {
         channel.members.forEach((member) => {
           overlayEmitPresence(member.id, true);
-          console.log(`[Overlay] Initial presence: ${member.displayName} (${member.id})`);
+          overlayLog.debug(`Initial presence: ${member.displayName} (${member.id})`);
         });
       }
 
       // Set Meepo's presence (bot is in voice)
       overlayEmitPresence("meepo", true);
-      console.log(`[Overlay] Set Meepo presence: true`);
+      overlayLog.debug(`Set Meepo presence: true`);
 
-      console.log(`[Overlay] Auto-joined voice channel and listening for speaking events`);
+      overlayLog.info(`Auto-joined voice channel and listening for speaking events`);
     } catch (err: any) {
-      console.error(`[Overlay] Failed to auto-join voice channel:`, err.message ?? err);
+      overlayLog.error(`Failed to auto-join voice channel: ${err.message ?? err}`);
     }
   }
 });
@@ -125,24 +131,19 @@ client.on("voiceStateUpdate", (oldState, newState) => {
   // User joined the overlay voice channel (from any state)
   if (isInOverlayChannel && !wasInOverlayChannel) {
     overlayEmitPresence(userId, true);
-    console.log(`[Overlay] User ${userId} joined voice channel`);
+    overlayLog.debug(`User ${userId} joined voice channel`);
   }
   // User left the overlay voice channel (to any state)
   else if (!isInOverlayChannel && wasInOverlayChannel) {
     overlayEmitPresence(userId, false);
-    console.log(`[Overlay] User ${userId} left voice channel`);
+    overlayLog.debug(`User ${userId} left voice channel`);
   }
 });
 
 client.on("messageCreate", async (message: any) => {
   try {
     const authorDisplayName = message.member?.displayName ?? message.author.username ?? message.author.id;
-    console.log(
-      "MSG",
-      message.channelId,
-      authorDisplayName,
-      JSON.stringify(message.content)
-    );
+    log.debug(`Message: ${authorDisplayName} in ${message.channelId}`, "boot", { content: message.content });
     if (!message.guildId) return;
     
     // Response gate: Never respond to bot's own messages (prevents re-entrancy)
@@ -178,7 +179,7 @@ client.on("messageCreate", async (message: any) => {
     // });
     
     if (!active && contentLower.includes("meepo")) {
-      console.log("AUTO-WAKE triggered by:", message.author.username, "in channel:", message.channelId);
+      bootLog.info(`AUTO-WAKE triggered by ${message.author.username} in channel ${message.channelId}`);
       
       // Wake Meepo and bind to this channel
       active = wakeMeepo({
@@ -263,7 +264,7 @@ client.on("messageCreate", async (message: any) => {
     if (transformTarget) {
       // Already in target form - acknowledge without re-transforming
       if (transformTarget === active.form_id) {
-        console.log("Already in form:", transformTarget, "- acknowledging without transform");
+        bootLog.debug(`Already in form ${transformTarget} - acknowledging without transform`);
         
         let ackMessage: string;
         if (transformTarget === "xoblob") {
@@ -291,7 +292,7 @@ client.on("messageCreate", async (message: any) => {
       }
       
       // Different form - execute transform
-      console.log("Chat transform detected:", active.form_id, "→", transformTarget);
+      bootLog.info(`Chat transform detected: ${active.form_id} → ${transformTarget}`);
 
       const result = transformMeepo(message.guildId, transformTarget);
 

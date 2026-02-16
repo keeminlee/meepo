@@ -1,8 +1,11 @@
 import { Client, Guild } from "discord.js";
+import { log } from "../utils/logger.js";
 import { joinVoice } from "../voice/connection.js";
 import { getVoiceState, setVoiceState } from "../voice/state.js";
 import { startReceiver } from "../voice/receiver.js";
 import { logSystemEvent } from "../ledger/system.js";
+
+const meepoLog = log.withScope("meepo");
 
 /**
  * Auto-join the General voice channel when Meepo wakes.
@@ -22,19 +25,19 @@ export async function autoJoinGeneralVoice(opts: {
   const generalVoiceChannelId = process.env.MEEPO_HOME_VOICE_CHANNEL_ID;
   
   if (!generalVoiceChannelId) {
-    console.log("[AutoJoin] MEEPO_HOME_VOICE_CHANNEL_ID not set, skipping auto-join");
+    meepoLog.debug("MEEPO_HOME_VOICE_CHANNEL_ID not set, skipping auto-join");
     return;
   }
 
   // Check if already connected to General
   const currentState = getVoiceState(opts.guildId);
   if (currentState && currentState.channelId === generalVoiceChannelId) {
-    console.log("[AutoJoin] Already in General voice channel");
+    meepoLog.debug("Already in General voice channel");
     
     // Ensure STT is enabled and receiver is running
     if (!currentState.sttEnabled) {
       currentState.sttEnabled = true;
-      console.log("[AutoJoin] Enabled STT for existing connection");
+      meepoLog.debug("Enabled STT for existing connection");
     }
     
     startReceiver(opts.guildId); // Idempotent - won't duplicate if already running
@@ -48,7 +51,7 @@ export async function autoJoinGeneralVoice(opts: {
     const voiceChannel = await guild.channels.fetch(generalVoiceChannelId);
     
     if (!voiceChannel || !voiceChannel.isVoiceBased()) {
-      console.warn(`[AutoJoin] Channel ${generalVoiceChannelId} is not a voice channel`);
+      meepoLog.warn(`Channel ${generalVoiceChannelId} is not a voice channel`);
       return;
     }
 
@@ -81,8 +84,8 @@ export async function autoJoinGeneralVoice(opts: {
       narrativeWeight: "secondary",
     });
 
-    console.log(`[AutoJoin] Joined General voice channel and started STT`);
+    meepoLog.info(`Joined General voice channel and started STT`);
   } catch (err: any) {
-    console.error(`[AutoJoin] Failed to join General voice channel:`, err.message ?? err);
+    meepoLog.error(`Failed to join General voice channel: ${err.message ?? err}`);
   }
 }

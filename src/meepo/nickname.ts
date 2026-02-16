@@ -1,4 +1,7 @@
 import { Guild } from "discord.js";
+import { log } from "../utils/logger.js";
+
+const meepoLog = log.withScope("meepo");
 
 /**
  * Set bot nickname based on active persona
@@ -24,12 +27,12 @@ export async function setBotNicknameForPersona(guild: Guild, personaId: string):
 
     if (guild.members.me) {
       await guild.members.me.setNickname(nickname);
-      console.log(`Nickname set to: ${nickname} (persona: ${personaId})`);
+      meepoLog.debug(`Nickname set to: ${nickname} (persona: ${personaId})`);
     } else {
-      console.warn("Could not fetch bot guild member for nickname change");
+      meepoLog.warn("Could not fetch bot guild member for nickname change");
     }
   } catch (err: any) {
     // Log but don't crash - missing permissions or role hierarchy issues
-    console.warn("Failed to set nickname:", err.message);
+    meepoLog.warn(`Failed to set nickname: ${err.message}`);
   }
 }

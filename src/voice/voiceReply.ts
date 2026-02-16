@@ -12,6 +12,7 @@
  */
 
 import { getActiveMeepo } from "../meepo/state.js";
+import { log } from "../utils/logger.js";
 import { getVoiceState } from "./state.js";
 import { isMeepoSpeaking, speakInGuild } from "./speaker.js";
 import { getTtsProvider } from "./tts/provider.js";
@@ -33,6 +34,7 @@ import { buildMemoryContext } from "../recall/buildMemoryContext.js";
 import { getTranscriptLines } from "../ledger/transcripts.js";
 import { getDb } from "../db.js";
 
+const voiceReplyLog = log.withScope("voice-reply");
 const DEBUG_VOICE = process.env.DEBUG_VOICE === "true";
 
 // Per-guild voice reply cooldown (prevents rapid-fire replies)
@@ -63,20 +65,20 @@ export async function respondToVoiceUtterance({
   // Precondition 1: Meepo must be awake
   const active = getActiveMeepo(guildId);
   if (!active) {
-    if (DEBUG_VOICE) console.log(`[VoiceReply] Meepo asleep, skipping voice reply`);
+    if (DEBUG_VOICE) voiceReplyLog.debug(`Meepo asleep, skipping voice reply`);
     return false;
   }
 
   // Precondition 2: Meepo must be in voice channel
   const voiceState = getVoiceState(guildId);
   if (!voiceState) {
-    if (DEBUG_VOICE) console.log(`[VoiceReply] Not in voice, skipping voice reply`);
+    if (DEBUG_VOICE) voiceReplyLog.debug(`Not in voice, skipping voice reply`);
     return false;
   }
 
   // Precondition 3: Meepo must not be speaking (feedback loop protection)
   if (isMeepoSpeaking(guildId)) {
-    if (DEBUG_VOICE) console.log(`[VoiceReply] Meepo speaking, skipping voice reply`);
+    if (DEBUG_VOICE) voiceReplyLog.debug(`Meepo speaking, skipping voice reply`);
     return false;
   }
 
@@ -88,8 +90,8 @@ export async function respondToVoiceUtterance({
 
   if (timeSinceLastReply < cooldownMs) {
     if (DEBUG_VOICE) {
-      console.log(
-        `[VoiceReply] Cooldown active (${timeSinceLastReply}ms / ${cooldownMs}ms), skipping`
+      voiceReplyLog.debug(
+        `Cooldown active (${timeSinceLastReply}ms / ${cooldownMs}ms), skipping`
       );
     }
     return false;
@@ -198,7 +200,7 @@ export async function respondToVoiceUtterance({
           }
         }
       } catch (recallErr: any) {
-        console.warn("[Recall] Memory retrieval failed (voice):", recallErr.message ?? recallErr);
+        voiceReplyLog.warn(`Memory retrieval failed (voice): ${recallErr.message ?? recallErr}`);
         // Continue without memory context on error
       }
     }
@@ -226,7 +228,7 @@ export async function respondToVoiceUtterance({
     });
 
     if (DEBUG_VOICE) {
-      console.log(`[VoiceReply] LLM response: "${responseText.substring(0, 50)}..."`);
+      voiceReplyLog.debug(`LLM response: "${responseText.substring(0, 50)}..."`);
     }
 
     // Check Meepo's reply mode (voice or text)
@@ -253,11 +255,11 @@ export async function respondToVoiceUtterance({
             narrative_weight: "primary",
           });
           
-          console.log(`[VoiceReply] Sent text reply (mode=text) for guild ${guildId}`);
+          voiceReplyLog.info(`Sent text reply (mode=text): "${responseText}"`);
           return true;
         }
       } catch (err: any) {
-        console.error(`[VoiceReply] Error sending text reply:`, err.message ?? err);
+        voiceReplyLog.error(`Error sending text reply: ${err.message ?? err}`);
         return false;
       }
     }
@@ -267,7 +269,7 @@ export async function respondToVoiceUtterance({
     let mp3Buffer = await ttsProvider.synthesize(responseText);
 
     if (mp3Buffer.length === 0) {
-      console.warn(`[VoiceReply] TTS returned empty buffer`);
+      voiceReplyLog.warn(`TTS returned empty buffer`);
       return false;
     }
 
@@ -289,10 +291,10 @@ export async function respondToVoiceUtterance({
       authorName: "Meepo",
     });
 
-    console.log(`[VoiceReply] Generated and queued reply for guild ${guildId}`);
+    voiceReplyLog.info(`🔊 Meepo: "${responseText}"`);
     return true;
   } catch (err: any) {
-    console.error(`[VoiceReply] Error generating reply:`, err.message ?? err);
+    voiceReplyLog.error(`Error generating reply: ${err.message ?? err}`);
     return false;
   }
 }

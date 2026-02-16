@@ -7,8 +7,11 @@ import express, { Router, Request, Response } from 'express';
 import { createServer, Server as HttpServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as path from 'path';
+import { log } from '../utils/logger.js';
 import { setSpeaking, getSpeakingState, onSpeakingStateChange, setPresence, getPresenceState, onPresenceStateChange } from './speakingState.js';
 import { loadRegistry } from '../registry/loadRegistry.js';
+
+const overlayLog = log.withScope("overlay");
 
 const app = express();
 let httpServer: HttpServer | null = null;
@@ -36,7 +39,7 @@ function buildTokensFromRegistry() {
       img: '/static/tokens/dm.png',
     };
     order.push(dmRoleId);
-    console.log(`[Overlay] Added DM token: ${dmRoleId}`);
+    overlayLog.debug(`Added DM token`);
   }
 
   // Add PC tokens from registry (sorted by canonical name)
@@ -49,7 +52,7 @@ function buildTokensFromRegistry() {
         img: `/static/tokens/${tokenName}.png`,
       };
       order.push(pc.discord_user_id);
-      console.log(`[Overlay] Added PC token: ${pc.canonical_name} (${pc.discord_user_id})`);
+      overlayLog.debug(`Added PC token: ${pc.canonical_name}`);
     }
   }
 
@@ -60,7 +63,7 @@ function buildTokensFromRegistry() {
   };
   order.push('meepo');
 
-  console.log(`[Overlay] Built tokens for ${order.length} characters`);
+  overlayLog.info(`Built tokens for ${order.length} characters`);
   return { order, tokens };
 }
 
@@ -80,7 +83,7 @@ function setupRoutes(router: Router) {
       const tokens = buildTokensFromRegistry();
       res.json(tokens);
     } catch (error) {
-      console.error('[Overlay] Failed to build tokens:', error);
+      overlayLog.error(`Failed to build tokens: ${error}`);
       res.status(500).json({ error: 'Failed to load tokens' });
     }
   });
@@ -131,12 +134,12 @@ function setupWebSocket() {
     ws.send(JSON.stringify(stateSync));
 
     ws.on('close', () => {
-      console.log('[Overlay] WebSocket client disconnected');
+      overlayLog.debug('WebSocket client disconnected');
       activeBroadcasters.delete(ws);
     });
 
     ws.on('error', (error) => {
-      console.error('[Overlay] WebSocket error:', error);
+      overlayLog.error(`WebSocket error: ${error}`);
     });
   });
 }
@@ -174,7 +177,7 @@ export async function startOverlayServer() {
     });
 
     httpServer.listen(overlayPort, () => {
-      console.log(`[Overlay] http://localhost:${overlayPort}/overlay`);
+      overlayLog.info(`http://localhost:${overlayPort}/overlay`);
       resolve();
     });
   });

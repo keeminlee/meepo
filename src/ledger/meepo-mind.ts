@@ -12,7 +12,10 @@
  */
 
 import { getDb } from "../db.js";
+import { log } from "../utils/logger.js";
 import { randomUUID } from "crypto";
+
+const meepoMindLog = log.withScope("meepo-mind");
 import { INITIAL_MEMORIES } from "../meepo/knowledge.js";
 import type { Memory } from "../meepo/knowledge.js";
 
@@ -43,11 +46,11 @@ export async function seedInitialMeepoMemories(): Promise<void> {
     const missingMemories = INITIAL_MEMORIES.filter(mem => !existingTitles.has(mem.title));
 
     if (missingMemories.length === 0) {
-      console.log("MeepoMind: Already seeded (all memories present)");
+      meepoMindLog.info("Already seeded (all memories present)");
       return;
     }
 
-    console.log(`MeepoMind: Seeding ${missingMemories.length} new memories...`);
+    meepoMindLog.info(`Seeding ${missingMemories.length} new memories...`);
 
     const now = Date.now();
     const insertStmt = db.prepare(`
@@ -62,9 +65,9 @@ export async function seedInitialMeepoMemories(): Promise<void> {
       }
     })();
 
-    console.log(`MeepoMind: Seeded ${missingMemories.length} foundational memories`);
+    meepoMindLog.info(`Seeded ${missingMemories.length} foundational memories`);
   } catch (err: any) {
-    console.error("MeepoMind: Seeding failed:", err.message ?? err);
+    meepoMindLog.error(`Seeding failed: ${err.message ?? err}`);
     throw err;
   }
 }
@@ -102,7 +105,7 @@ export async function getAllMeepoMemories(): Promise<Memory[]> {
 
     return memories;
   } catch (err: any) {
-    console.error("MeepoMind: Retrieval failed:", err.message ?? err);
+    meepoMindLog.error(`Retrieval failed: ${err.message ?? err}`);
     throw err;
   }
 }
@@ -134,7 +137,7 @@ export async function getMeepoMemoriesSection(): Promise<string> {
 
     return `\nMEEPO KNOWLEDGE BASE (Canonical memories Meepo may reference):\n${lines}\n`;
   } catch (err: any) {
-    console.error("MeepoMind: Formatting failed:", err.message ?? err);
+    meepoMindLog.error(`Formatting failed: ${err.message ?? err}`);
     // Return empty string instead of throwing; graceful degradation
     return "";
   }
@@ -170,7 +173,7 @@ export function knowsAbout(topicPrefix: string): boolean {
 
     return result.cnt > 0;
   } catch (err: any) {
-    console.error("MeepoMind: Knowledge check failed:", err.message ?? err);
+    meepoMindLog.error(`Knowledge check failed: ${err.message ?? err}`);
     return false;
   }
 }
