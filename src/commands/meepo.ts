@@ -1,4 +1,4 @@
-﻿import { SlashCommandBuilder } from "discord.js";
+﻿import { SlashCommandBuilder, TextChannel } from "discord.js";
 import { getActiveMeepo, wakeMeepo, sleepMeepo, transformMeepo } from "../meepo/state.js";
 import { getAvailableForms, getPersona } from "../personas/index.js";
 import { setBotNicknameForPersona } from "../meepo/nickname.js";
@@ -21,6 +21,11 @@ import { loadGptcap } from "../ledger/gptcapProvider.js";
 import { findRelevantBeats, type ScoredBeat } from "../recall/findRelevantBeats.js";
 import { buildMemoryContext } from "../recall/buildMemoryContext.js";
 import { getDb } from "../db.js";
+import { log } from "../utils/logger.js";
+import { getTodayAtNinePmEtUnixSeconds } from "../utils/timestamps.js";
+import { getNextSessionLabel } from "../sessions/sessionLabels.js";
+
+const meepoLog = log.withScope("meepo");
 
 function getSessionLabelMap(sessionIds: string[]): Map<string, string | null> {
   const db = getDb();
@@ -286,6 +291,26 @@ export const meepo = {
               { name: "text", value: "text" },
               { name: "voice", value: "voice" }
             )
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("announce")
+        .setDescription("[DM-only] Post a session reminder to the announcement channel")
+        .addIntegerOption((opt) =>
+          opt.setName("timestamp").setDescription("Unix seconds for reminder (optional)").setRequired(false)
+        )
+        .addStringOption((opt) =>
+          opt.setName("label").setDescription("Session label override (e.g., 'C2E15')").setRequired(false)
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName("message")
+            .setDescription("Custom message prefix (default: 'Reminder that our D&D session')")
+            .setRequired(false)
+        )
+        .addBooleanOption((opt) =>
+          opt.setName("dry_run").setDescription("Preview without posting (default: false)").setRequired(false)
         )
     ),
 
@@ -984,6 +1009,81 @@ export const meepo = {
         content: `Meepo reply mode set to: **${mode}**`,
         ephemeral: true,
       });
+      return;
+    }
+
+    if (sub === "announce") {
+      // DM check
+      const dmRoleId = process.env.DM_ROLE_ID;
+      if (!dmRoleId || !interaction.member?.roles?.cache?.has(dmRoleId)) {
+        await interaction.reply({
+          content: "[DM-only] This command requires the DM role.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Get env-configured announcement channel
+      const channelId = process.env.ANNOUNCEMENT_CHANNEL_ID;
+      if (!channelId) {
+        await interaction.reply({
+          content: "Announcement channel not configured. Ask the admin to set `ANNOUNCEMENT_CHANNEL_ID`.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Get parameters
+      const override_ts = interaction.options.getInteger("timestamp");
+      const override_label = interaction.options.getString("label");
+      const override_message = interaction.options.getString("message");
+      const dry_run = interaction.options.getBoolean("dry_run") ?? false;
+
+      // Compute timestamp
+      const ts = override_ts ?? getTodayAtNinePmEtUnixSeconds();
+
+      // Compute label (auto-increment next episode number)
+      const label = override_label ?? getNextSessionLabel();
+
+      // Compute message
+      const messagePrefix = override_message ?? "Reminder that our D&D session";
+      const finalMessage = `**@everyone ${messagePrefix} begins <t:${ts}:R> (${label}).**`;
+
+      if (dry_run) {
+        meepoLog.info(`[DRY RUN] Announcement preview: ${finalMessage}`);
+        await interaction.reply({
+          content: `**[DRY RUN] Preview:**\n${finalMessage}`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Resolve channel
+      try {
+        const channel = await interaction.guild?.channels.fetch(channelId);
+        if (!channel || !(channel instanceof TextChannel)) {
+          await interaction.reply({
+            content: "Announcement channel is not a text channel or not found.",
+            ephemeral: true,
+          });
+          return;
+        }
+
+        // Post to channel
+        await channel.send(finalMessage);
+        meepoLog.info(`Announcement posted: ${label} at <t:${ts}:R>`);
+
+        await interaction.reply({
+          content: `✅ Announced: **${label}** begins <t:${ts}:R>.`,
+          ephemeral: true,
+        });
+      } catch (err: any) {
+        meepoLog.warn(`Failed to post announcement: ${err.message ?? err}`);
+        await interaction.reply({
+          content: `Error posting announcement: ${err.message ?? "Unknown error"}`,
+          ephemeral: true,
+        });
+      }
       return;
     }
 

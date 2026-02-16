@@ -270,12 +270,8 @@ CREATE INDEX IF NOT EXISTS idx_meep_balance
 ON meep_transactions(guild_id, target_discord_id);
 
 -- Milestone 1 extensions: add source metadata + session tracking
--- These columns are backward-compatible (NULL for existing rows)
-ALTER TABLE meep_transactions ADD COLUMN source_type TEXT DEFAULT 'dm';  -- 'dm' | 'mission' | 'meepo' | 'system' | 'player_spend'
-ALTER TABLE meep_transactions ADD COLUMN source_ref TEXT;                 -- e.g., mission_claim:123, dm:user_id
-ALTER TABLE meep_transactions ADD COLUMN session_id TEXT;                 -- Session this meep was earned in
-ALTER TABLE meep_transactions ADD COLUMN anchor_session_id TEXT;          -- Anchor to session for narrative alignment
-ALTER TABLE meep_transactions ADD COLUMN anchor_line_index INTEGER;       -- Anchor to ledger line for narrative alignment
+-- NOTE: These columns are added via migrations in db.ts (with IF NOT EXISTS checks)
+-- They are backward-compatible (NULL for existing rows)
 
 -- Mission Claims: track mission completion and meep minting
 CREATE TABLE IF NOT EXISTS mission_claims (

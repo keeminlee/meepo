@@ -17,6 +17,8 @@ npx tsc --noEmit      # Type-check code
 
 ```
 /meepo wake                              # Start session + auto-join General voice (STT enabled)
+/session new --label C2E20               # Start new session with label (DM-only)
+/meepo announce --dry_run true           # Preview session announcement (DM-only)
 meepo: hello                             # Auto-latch responds
 /session transcript range=since_start    # View all text+voice from session
 /session meecap                          # Generate Meecap (4-8 scenes, 1-4 beats)
@@ -117,9 +119,13 @@ Recap      Emotion Beats         LLM Response
 - Persona-driven system prompts with registry validation
 
 #### Session Management
-- **Start:** `/meepo wake` generates UUID session, auto-grouped text+voice
-- **Stop:** `/meepo sleep` or timeout-based
-- **Labeling:** Optional user labels (e.g., "C2E06") for reference
+- **Meepo State Persistence:** Active state (`is_active=1`) persists across bot restarts; Meepo auto-restores and rejoins voice
+- **Session Lifecycle:**
+  - **Auto-start:** `/meepo wake` generates UUID session, auto-grouped text+voice
+  - **Manual start:** `/session new [--label C2E20]` starts a new session (ends active session first)
+  - **Auto-end:** `/meepo sleep` or inactivity timeout (`MEEPO_AUTO_SLEEP_MS`)
+- **Session Announcements:** `/meepo announce [--dry_run] [--timestamp] [--label] [--message]` posts Discord reminders with auto-incremented labels
+- **Labeling:** Optional user labels (e.g., "C2E06") for reference via `/session label`
 - **Offline Ingestion:** Tool to ingest campaign recordings into same DB
 
 #### Ledger & Logging
@@ -154,8 +160,12 @@ Recap      Emotion Beats         LLM Response
 #### Commands
 - `/meepo wake|sleep|status|hush|transform|join|leave|stt|say` — Instance management
 - `/meepo reply mode:voice|text` — Set response mode (voice TTS or text messages)
+- `/meepo announce [--dry_run] [--timestamp] [--label] [--message]` — [DM-only] Post session reminder to announcement channel
 - `/meepo set-speaker-mask user:@User mask:"Name"` — [DM-only] Set diegetic speaker name
 - `/meepo clear-speaker-mask user:@User` — [DM-only] Remove speaker mask
+- `/session new [--label C2E20]` — [DM-only] Start a new session (ends active session first)
+- `/session label [label] [--session_id]` — [DM-only] Set label for session
+- `/session view scope:all|unlabeled` — [DM-only] List sessions
 - `/session meecap [--force] [--source primary|full]` — Generate/regenerate Meecap
 - `/session recap [range] [style=dm|narrative|party] [source=primary|full] [--force_meecap]` — View recap
 - `/session transcript [range]` — Raw transcript view
@@ -311,12 +321,13 @@ OPENAI_API_KEY=<api_key>
 DATA_DB_PATH=./data/bot.sqlite
 
 # Session Management
-MEEPO_AUTO_SLEEP_MS=600000          # Auto-sleep after inactivity (ms). 0 = disabled
+MEEPO_AUTO_SLEEP_MS=1800000         # Auto-sleep after inactivity (ms). 0 = disabled
+ANNOUNCEMENT_CHANNEL_ID=<id>        # Discord channel for /meepo announce reminders
 
 # Overlay (OBS)
 OVERLAY_PORT=7777                   # HTTP + WebSocket server port
 OVERLAY_VOICE_CHANNEL_ID=<id>      # Auto-join on bot startup (speaking detection)
-MEEPO_HOME_VOICE_CHANNEL_ID=<id>   # Auto-join when Meepo wakes
+MEEPO_HOME_VOICE_CHANNEL_ID=<id>   # Auto-join when Meepo wakes/restores
 
 # Voice
 VOICE_CHUNK_SIZE_MS=60000           # Audio chunk size

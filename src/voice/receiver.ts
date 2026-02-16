@@ -275,7 +275,14 @@ async function handleTranscription(
 
     // Task 4.6: Check if addressed to Meepo and generate voice reply if conditions met
     const meepo = getActiveMeepo(guildId);
-    if (meepo && isAddressedToMeepo(contentNorm, meepo.form_id)) {
+    const addressedToMeepo = meepo && isAddressedToMeepo(contentNorm, meepo.form_id);
+    
+    const voiceDecision = addressedToMeepo ? "✓ replying" : "✗ ignored";
+    voiceLog.debug(
+      `🎯 VOICE GATE: addressed=${addressedToMeepo} (${displayName}) → ${voiceDecision}: "${result.text}"`
+    );
+
+    if (addressedToMeepo) {
       // Async, non-blocking—reply handler checks all preconditions internally
       respondToVoiceUtterance({
         guildId,

@@ -115,12 +115,15 @@ export async function respondToVoiceUtterance({
       try {
         const registry = loadRegistry();
         const matches = extractRegistryMatches(utterance, registry);
+        
+        voiceReplyLog.debug(`Voice - Registry matches: ${matches.length} [${matches.map(m => m.canonical).join(", ")}]`);
 
         if (matches.length > 0) {
           // Search for events using registry matches
           const allEvents = new Map<string, EventRow>();
           for (const match of matches) {
             const events = searchEventsByTitle(match.canonical);
+            voiceReplyLog.debug(`Voice - Events for "${match.canonical}": ${events.length}`);
             for (const event of events) {
               allEvents.set(event.event_id, event);
             }

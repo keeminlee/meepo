@@ -608,6 +608,21 @@ function applyMigrations(db: Database.Database) {
     `);
   }
 
+  // Migration: Add source metadata columns to meep_transactions (V0 Missions)
+  const meepColumns = db.pragma("table_info(meep_transactions)") as any[];
+  const hasSourceType = meepColumns.some((col: any) => col.name === "source_type");
+  
+  if (!hasSourceType) {
+    console.log("Migrating: Adding source metadata to meep_transactions (V0 Missions)");
+    db.exec(`
+      ALTER TABLE meep_transactions ADD COLUMN source_type TEXT DEFAULT 'dm';
+      ALTER TABLE meep_transactions ADD COLUMN source_ref TEXT;
+      ALTER TABLE meep_transactions ADD COLUMN session_id TEXT;
+      ALTER TABLE meep_transactions ADD COLUMN anchor_session_id TEXT;
+      ALTER TABLE meep_transactions ADD COLUMN anchor_line_index INTEGER;
+    `);
+  }
+
   // (Future migrations can go here)
 }
 

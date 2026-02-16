@@ -29,6 +29,8 @@ import { setVoiceState } from "./voice/state.js";
 
 const bootLog = log.withScope("boot");
 const overlayLog = log.withScope("overlay");
+const textReplyLog = log.withScope("text-reply");
+const recallLog = log.withScope("recall");
 
 // PID lock: prevent multiple instances
 if (!acquireLock()) {
@@ -64,12 +66,39 @@ client.once("ready", async () => {
     bootLog.error(`Failed to seed MeepoMind: ${err.message ?? err}`);
   }
 
+  // Validate announcement channel configuration
+  const announcementChannelId = process.env.ANNOUNCEMENT_CHANNEL_ID;
+  if (announcementChannelId) {
+    bootLog.info(`Announcement channel configured: ${announcementChannelId}`);
+  } else {
+    bootLog.warn(`ANNOUNCEMENT_CHANNEL_ID not set. /meepo announce will reply with error.`);
+  }
+
+  // Restore Meepo active state (if Meepo was active before shutdown)
+  const guildId = process.env.GUILD_ID;
+  if (guildId) {
+    const activeMeepo = getActiveMeepo(guildId);
+    if (activeMeepo) {
+      bootLog.info(`Meepo restored: form=${activeMeepo.form_id}, channel=${activeMeepo.channel_id}, session continues`);
+      
+      // Auto-join General voice on redeploy (resume listening)
+      try {
+        await autoJoinGeneralVoice({
+          client,
+          guildId,
+          channelId: activeMeepo.channel_id,
+        });
+      } catch (err: any) {
+        bootLog.warn(`Failed to auto-join voice on restore: ${err.message ?? err}`);
+      }
+    }
+  }
+
   // Start auto-sleep checker for inactive Meepo instances
   startAutoSleepChecker();
 
   // Auto-join overlay voice channel (for speaking detection, independent of Meepo sessions)
   // Configurable via OVERLAY_AUTOJOIN=true (disabled by default)
-  const guildId = process.env.GUILD_ID;
   const overlayVoiceChannelId = process.env.OVERLAY_VOICE_CHANNEL_ID;
   const overlayAutoJoinEnabled = process.env.OVERLAY_AUTOJOIN === "true";
   
@@ -352,13 +381,11 @@ client.on("messageCreate", async (message: any) => {
     const addressed = mentionedMeepo || isAddressed(content, prefix);
     const inBoundChannel = active.channel_id === message.channelId;
 
-    console.log("GATE CHECK:", {
-      mentioned: mentionedMeepo,
-      addressed: addressed,
-      inBound: inBoundChannel,
-      channelId: message.channelId,
-      boundChannel: active.channel_id,
-    });
+    const addressContext = mentionedMeepo ? "mention" : "prefix";
+    const decision = addressed || inBoundChannel ? "✓ reply" : "✗ ignore";
+    bootLog.debug(
+      `🎯 TEXT GATE: addressed=${addressed} inBound=${inBoundChannel} (${addressContext}) → ${decision}`
+    );
 
     // Respond if: addressed anywhere, OR in Meepo's bound channel
     if (!addressed && !inBoundChannel) return;
@@ -398,20 +425,20 @@ client.on("messageCreate", async (message: any) => {
           const registry = loadRegistry();
           const matches = extractRegistryMatches(content, registry);
           
-          console.log("[Recall Debug] Registry matches:", matches.length, matches.map(m => m.canonical));
+          recallLog.debug(`Registry matches: ${matches.length} [${matches.map(m => m.canonical).join(", ")}]`);
 
           if (matches.length > 0) {
             // Search for events using registry matches
             const allEvents = new Map<string, EventRow>();
             for (const match of matches) {
               const events = searchEventsByTitle(match.canonical);
-              console.log(`[Recall Debug] Events for "${match.canonical}":`, events.length);
+              recallLog.debug(`Events for "${match.canonical}": ${events.length}`);
               for (const event of events) {
                 allEvents.set(event.event_id, event);
               }
             }
             
-            console.log("[Recall Debug] Total unique events:", allEvents.size);
+            recallLog.debug(`Total unique events: ${allEvents.size}`);
 
             if (allEvents.size > 0) {
               // Group events by session
@@ -432,20 +459,20 @@ client.on("messageCreate", async (message: any) => {
                   .get(sessionId) as { label: string | null } | undefined;
                 const label = labelRow?.label;
                 
-                console.log(`[Recall Debug] Session ${sessionId.slice(0, 8)}... has label: ${label}`);
+                recallLog.debug(`Session ${sessionId.slice(0, 8)}... has label: ${label ?? "(none)"}`);
 
                 if (label) {
                   const gptcap = loadGptcap(label);
-                  console.log(`[Recall Debug] GPTcap for "${label}":`, gptcap ? `${gptcap.beats.length} beats` : 'not found');
+                  recallLog.debug(`GPTcap for "${label}": ${gptcap ? `${gptcap.beats.length} beats` : "not found"}`);
                   if (gptcap) {
                     const relevantBeats = findRelevantBeats(gptcap, sessionEvents, { topK: 6 });
-                    console.log(`[Recall Debug] Found ${relevantBeats.length} relevant beats for ${label}`);
+                    recallLog.debug(`Found ${relevantBeats.length} relevant beats for ${label}`);
                     allBeats.push(...relevantBeats);
                   }
                 }
               }
               
-              console.log("[Recall Debug] Total beats across all sessions:", allBeats.length);
+              recallLog.debug(`Total beats across all sessions: ${allBeats.length}`);
 
               // Build memory context if we have beats
               if (allBeats.length > 0) {
@@ -487,20 +514,20 @@ client.on("messageCreate", async (message: any) => {
                       maxLinesPerBeat: 2,
                       maxTotalChars: 1600,
                     });
-                    console.log("[Recall Debug] Built memory context:", partyMemory.length, "chars");
+                    recallLog.debug(`Built memory context: ${partyMemory.length} chars`);
                   }
                 }
               }
             }
           }
         } catch (recallErr: any) {
-          console.warn("[Recall] Memory retrieval failed:", recallErr.message ?? recallErr);
+          recallLog.warn(`Memory retrieval failed: ${recallErr.message ?? recallErr}`);
           // Continue without memory context on error
         }
       }
       
       if (partyMemory) {
-        console.log("[Recall] Injecting party memory into prompt");
+        recallLog.debug(`Injecting party memory into prompt`);
       }
 
       const systemPrompt = await buildMeepoPrompt({
@@ -526,10 +553,7 @@ client.on("messageCreate", async (message: any) => {
         userMessage,
       });
 
-      // console.log("MEEPO RESPONSE:", {
-      //   form_id: active.form_id,
-      //   response_preview: response.substring(0, 50),
-      // });
+      textReplyLog.info(`💬 Meepo: "${response}"`);
 
       const reply = await message.reply(response);
       
@@ -548,7 +572,9 @@ client.on("messageCreate", async (message: any) => {
       console.error("LLM error:", llmErr);
       
       // Fallback to meep on LLM failure
-      const reply = await message.reply("meep (LLM unavailable)");
+      const fallbackReply = "meep (LLM unavailable)";
+      textReplyLog.info(`💬 Meepo: "${fallbackReply}"`);
+      const reply = await message.reply(fallbackReply);
       appendLedgerEntry({
         guild_id: message.guildId,
         channel_id: message.channelId,
@@ -556,7 +582,7 @@ client.on("messageCreate", async (message: any) => {
         author_id: client.user!.id,
         author_name: client.user!.username,
         timestamp_ms: reply.createdTimestamp,
-        content: "meep (LLM unavailable)",
+        content: fallbackReply,
         tags: "npc,meepo,spoken",
       });
     }

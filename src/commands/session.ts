@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, AttachmentBuilder } from "discord.js";
-import { getActiveSession, getLatestIngestedSession, getLatestSessionForLabel } from "../sessions/sessions.js";
+import { startSession, getActiveSession, getLatestIngestedSession, getLatestSessionForLabel } from "../sessions/sessions.js";
 import { getLedgerInRange, getLedgerForSession } from "../ledger/ledger.js";
 import type { LedgerEntry } from "../ledger/ledger.js";
 import { chat } from "../llm/client.js";
@@ -232,6 +232,17 @@ export const session = {
               { name: "All", value: "all" },
               { name: "Unlabeled", value: "unlabeled" }
             )
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("new")
+        .setDescription("Start a new session (ends active session if one exists).")
+        .addStringOption((opt) =>
+          opt
+            .setName("label")
+            .setDescription("Session label (e.g., C2E20). Optional; auto-increment if omitted.")
+            .setRequired(false)
         )
     ),
 
@@ -907,6 +918,30 @@ This recap should feel like:
           ephemeral: true,
         });
       }
+      return;
+    }
+
+    if (sub === "new") {
+      const label = interaction.options.getString("label") ?? null;
+      const userId = interaction.user?.id ?? null;
+      const userName = interaction.user?.username ?? "unknown";
+      const db = getDb();
+
+      // End any active session first
+      const activeSession = getActiveSession(guildId);
+      if (activeSession) {
+        const now = Date.now();
+        db.prepare("UPDATE sessions SET ended_at_ms = ? WHERE session_id = ?")
+          .run(now, activeSession.session_id);
+      }
+
+      // Start new session
+      const session = startSession(guildId, userId, userName, { label, source: "live" });
+
+      await interaction.reply({
+        content: `✅ New session started: **${session.label || "(no label)"}** (id: ${session.session_id})`,
+        ephemeral: true,
+      });
       return;
     }
 
