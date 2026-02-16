@@ -1,7 +1,7 @@
-# Meepo Bot - Current State (February 14, 2026)
+# Meepo Bot - Current State (February 15, 2026)
 
 **Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress + NAL Copilot enhancements  
-**Last Updated:** February 14, 2026 (Evening)
+**Last Updated:** February 15, 2026
 
 ---
 
@@ -16,15 +16,20 @@ npx tsc --noEmit      # Type-check code
 ### Test in Discord
 
 ```
-/meepo wake                              # Start session (auto-generates UUID)
+/meepo wake                              # Start session + auto-join General voice (STT enabled)
 meepo: hello                             # Auto-latch responds
 /session transcript range=since_start    # View all text+voice from session
 /session meecap                          # Generate Meecap (4-8 scenes, 1-4 beats)
 /session recap                           # DM summary (default: style=dm, source=primary)
 /session recap style=narrative           # Meecap-structured prose with detail
-/meepo join                              # Enter voice channel
-/meepo stt on                            # Enable transcription
+/meepo join                              # Join your voice channel (STT auto-enabled)
 <speak: "meepo, help me">               # STT → LLM → TTS closed loop
+```
+
+### OBS Overlay
+
+```
+http://localhost:7777/overlay            # Browser Source for speaking indicators
 ```
 
 ---
@@ -92,6 +97,8 @@ Recap      Emotion Beats         LLM Response
 - **Voice Loop:** Closed STT → LLM → TTS with feedback loop protection
 - **Anti-noise Gating:** Configurable threshold to filter background noise
 - **Voice State Tracking:** Guild-scoped connection management
+- **Auto-join Voice:** Meepo automatically joins General voice when waking (via `/meepo wake` or auto-wake)
+- **STT Always-On:** STT automatically enabled when Meepo joins any voice channel
 
 #### Text I/O
 - Message reception with auto-latch (90s conversation window)
@@ -257,6 +264,9 @@ latches
 - **Auto-Sleep** (configurable inactivity timeout for graceful session cleanup) ✨ **NEW Feb 14 Eve**
 - **Memory Recall Pipeline** (registry → events → GPTcap beats → memory capsules) ✨ **NEW Feb 14 Eve**
 - **Incremental Memory Seeding** (title-based differential updates) ✨ **NEW Feb 14 Eve**
+- **MeepoView Overlay** (OBS streaming overlay with real-time speaking indicators) ✨ **NEW Feb 15**
+- **Auto-Join Voice on Wake** (Meepo joins General voice channel automatically when waking) ✨ **NEW Feb 15**
+- **STT Always-On** (STT enabled by default when joining voice, no manual toggle needed) ✨ **NEW Feb 15**
 
 ### 🔄 Phase 2-3 (In Progress)
 - ✅ **Beats Normalization:** Meecap beats now in dedicated table with label column (Feb 14)
@@ -292,6 +302,11 @@ DATA_DB_PATH=./data/bot.sqlite
 
 # Session Management
 MEEPO_AUTO_SLEEP_MS=600000          # Auto-sleep after inactivity (ms). 0 = disabled
+
+# Overlay (OBS)
+OVERLAY_PORT=7777                   # HTTP + WebSocket server port
+OVERLAY_VOICE_CHANNEL_ID=<id>      # Auto-join on bot startup (speaking detection)
+MEEPO_HOME_VOICE_CHANNEL_ID=<id>   # Auto-join when Meepo wakes
 
 # Voice
 VOICE_CHUNK_SIZE_MS=60000           # Audio chunk size
@@ -331,12 +346,17 @@ src/
 │   ├── triggers.ts                 # Address detection
 │   ├── nickname.ts                 # Discord nickname management
 │   ├── knowledge.ts                # Foundational memories (INITIAL_MEMORIES)
-│   └── autoSleep.ts                # Inactivity-based session cleanup
+│   ├── autoSleep.ts                # Inactivity-based session cleanup
+│   └── autoJoinVoice.ts            # Auto-join General voice on wake
 │
 ├── personas/
 │   ├── index.ts                    # Registry + StyleSpec system
 │   ├── meepo.ts                    # Default form
 │   └── xoblob.ts                   # Transform form
+│
+├── overlay/
+│   ├── server.ts                   # HTTP + WebSocket server for OBS overlay
+│   └── speakingState.ts            # Debounced speaking state management
 │
 ├── voice/
 │   ├── state.ts                    # Connection state tracking

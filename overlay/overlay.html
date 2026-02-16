@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MeepoView Overlay</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: transparent;
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .token-bar {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      padding: 16px 24px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px 8px 0 0;
+      margin-bottom: -8px;
+    }
+
+    .token {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .token-image {
+      width: 80px;
+      height: 80px;
+      border-radius: 8px;
+      object-fit: cover;
+      background: rgba(128, 128, 128, 0.2);
+      opacity: 0.45;
+      transition: opacity 0.15s ease, outline 0.15s ease, filter 0.15s ease;
+      outline: 3px solid transparent;
+      outline-offset: 3px;
+    }
+
+    .token.speaking .token-image {
+      opacity: 1;
+      outline: 3px solid rgba(255, 255, 255, 0.9);
+      outline-offset: 3px;
+      animation: bounce 0.5s ease-in-out infinite;
+    }
+
+    @keyframes bounce {
+      0%, 100% {
+        transform: translateY(0);
+      }
+      50% {
+        transform: translateY(-8px);
+      }
+    }
+
+    .token-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.8);
+      text-align: center;
+      min-width: 80px;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+
+    /* Fallback for missing images */
+    .token-image.placeholder {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      opacity: 0.45;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 32px;
+      font-weight: bold;
+    }
+
+    .status {
+      position: fixed;
+      bottom: 8px;
+      right: 8px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.5);
+      font-family: 'Courier New', monospace;
+    }
+
+    .status.connected {
+      color: rgba(0, 255, 0, 0.7);
+    }
+
+    .status.reconnecting {
+      color: rgba(255, 165, 0, 0.7);
+    }
+  </style>
+</head>
+<body>
+  <div class="token-bar" id="tokenBar"></div>
+  <div class="status" id="status">● Connecting...</div>
+
+  <script>
+    const TOKEN_BAR_ID = 'tokenBar';
+    const STATUS_ID = 'status';
+    const WS_RECONNECT_DELAY_MS = 2000;
+    const WS_RECONNECT_MAX_DELAY_MS = 5000;
+
+    let tokens = {};
+    let tokenOrder = [];
+    let ws = null;
+    let wsReconnectDelay = WS_RECONNECT_DELAY_MS;
+    let tokenElements = {};
+    let speakingState = new Map(); // id -> boolean
+
+    async function loadTokenConfig() {
+      try {
+        const response = await fetch('/tokens.json');
+        const config = await response.json();
+        tokens = config.tokens;
+        tokenOrder = config.order;
+        return true;
+      } catch (error) {
+        console.error('Failed to load tokens.json:', error);
+        updateStatus('Error loading config', 'disconnected');
+        return false;
+      }
+    }
+
+    function renderTokenBar() {
+      const bar = document.getElementById(TOKEN_BAR_ID);
+      bar.innerHTML = '';
+
+      tokenOrder.forEach(id => {
+        const tokenObj = tokens[id];
+        if (!tokenObj) {
+          return;
+        }
+
+        const tokenDiv = document.createElement('div');
+        tokenDiv.className = 'token';
+        tokenDiv.id = `token-${id}`;
+
+        const img = document.createElement('img');
+        img.className = 'token-image';
+        img.alt = tokenObj.label;
+        img.src = tokenObj.img;
+        img.onerror = () => {
+          img.classList.add('placeholder');
+          img.style.background = `linear-gradient(135deg, ${hashColorForId(id)} 0%, ${hashColorForId(id + '2')} 100%)`;
+        };
+
+        const label = document.createElement('div');
+        label.className = 'token-label';
+        label.textContent = tokenObj.label;
+
+        tokenDiv.appendChild(img);
+        tokenDiv.appendChild(label);
+        bar.appendChild(tokenDiv);
+
+        tokenElements[id] = tokenDiv;
+      });
+    }
+
+    function hashColorForId(id) {
+      let hash = 0;
+      for (let i = 0; i < id.length; i++) {
+        hash = ((hash << 5) - hash) + id.charCodeAt(i);
+        hash = hash & hash;
+      }
+      const h = (hash % 360) + 300;
+      const s = 70;
+      const l = 50;
+      return `hsl(${h % 360}, ${s}%, ${l}%)`;
+    }
+
+    function setSpeaking(id, speaking) {
+      const token = tokenElements[id];
+      if (!token) return;
+
+      speakingState.set(id, speaking);
+
+      if (speaking) {
+        token.classList.add('speaking');
+      } else {
+        token.classList.remove('speaking');
+      }
+    }
+
+    function updateStatus(text, state) {
+      const statusEl = document.getElementById(STATUS_ID);
+      statusEl.textContent = '● ' + text;
+      statusEl.className = 'status ' + state;
+    }
+
+    function openWebSocket() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        updateStatus('Connected', 'connected');
+        wsReconnectDelay = WS_RECONNECT_DELAY_MS;
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+
+          if (message.type === 'state-sync') {
+            // Sync all speaking states from server
+            Object.entries(message.tokens || {}).forEach(([id, speaking]) => {
+              setSpeaking(id, speaking);
+            });
+          } else if (message.type === 'speaking') {
+            setSpeaking(message.id, message.speaking);
+          }
+        } catch (error) {
+          console.error('Failed to parse WebSocket message:', error);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+
+      ws.onclose = () => {
+        updateStatus('Reconnecting...', 'reconnecting');
+        setTimeout(openWebSocket, wsReconnectDelay);
+        wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, WS_RECONNECT_MAX_DELAY_MS);
+      };
+    }
+
+    async function init() {
+      updateStatus('Loading config...', 'disconnected');
+      const configLoaded = await loadTokenConfig();
+      if (!configLoaded) return;
+
+      renderTokenBar();
+      openWebSocket();
+    }
+
+    init();
+  </script>
+</body>
+</html>

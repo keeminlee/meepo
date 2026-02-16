@@ -127,7 +127,16 @@ export class OpenAiSttProvider implements SttProvider {
         const response = await client.audio.transcriptions.create(transcribeRequest);
 
         // Extract and clean text
-        const text = response.text?.trim() ?? "";
+        let text = response.text?.trim() ?? "";
+
+        // Filter out the prompt if it was returned verbatim by Whisper
+        // (known issue: Whisper sometimes hallucinates the prompt on ambiguous audio)
+        if (this.prompt && text === this.prompt) {
+          console.warn(
+            `[STT] Whisper returned the prompt verbatim; filtering out (likely hallucination on ambiguous audio)`
+          );
+          text = "";
+        }
 
         return {
           text,

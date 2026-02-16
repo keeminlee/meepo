@@ -2,6 +2,7 @@
 import { getActiveMeepo, wakeMeepo, sleepMeepo, transformMeepo } from "../meepo/state.js";
 import { getAvailableForms, getPersona } from "../personas/index.js";
 import { setBotNicknameForPersona } from "../meepo/nickname.js";
+import { autoJoinGeneralVoice } from "../meepo/autoJoinVoice.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
 import { logSystemEvent } from "../ledger/system.js";
 import { joinVoice, leaveVoice } from "../voice/connection.js";
@@ -464,6 +465,13 @@ export const meepo = {
         await setBotNicknameForPersona(interaction.guild, "meepo");
       }
 
+      // Auto-join General voice channel on wake
+      await autoJoinGeneralVoice({
+        client: interaction.client,
+        guildId,
+        channelId,
+      });
+
       await interaction.reply({
         content:
           "Meepo awakens.\n" +
@@ -649,9 +657,12 @@ export const meepo = {
           channelId: userVoiceChannel.id,
           connection,
           guild,  // Store guild reference for member lookups
-          sttEnabled: false, // Default to disabled
+          sttEnabled: true, // Always enabled when Meepo joins voice
           connectedAt: Date.now(),
         });
+
+        // Start receiver for STT
+        startReceiver(guildId);
 
         // Log system event (narrative secondary - state change)
         logSystemEvent({
@@ -739,7 +750,7 @@ export const meepo = {
           content:
             "**Meepo's Voice Status** 🎧\n" +
             `- Listening in: <#${currentState.channelId}>\n` +
-            `- Understanding words: ${currentState.sttEnabled ? "yes! ✨" : "not yet"}\n` +
+            `- Understanding words: yes! ✨ (always on)\n` +
             `- Since: ${new Date(currentState.connectedAt).toLocaleString()}\n` +
             `\n_Meep! (Meepo forgets this if bot restarts)_`,
           ephemeral: true,
@@ -748,73 +759,16 @@ export const meepo = {
       }
 
       if (action === "on") {
-        if (currentState.sttEnabled) {
-          await interaction.reply({
-            content: "Meep! Meepo is already trying to understand words!",
-            ephemeral: true,
-          });
-          return;
-        }
-
-        currentState.sttEnabled = true;
-
-        // Get provider info for user messaging
-        const providerInfo = getSttProviderInfo();
-
-        // Start audio receiver
-        startReceiver(guildId);
-
-        // Log system event (narrative secondary - technical state)
-        const active = getActiveMeepo(guildId);
-        if (active) {
-          logSystemEvent({
-            guildId,
-            channelId: active.channel_id,
-            eventType: "stt_toggle",
-            content: `STT enabled - provider: ${providerInfo.name} (${providerInfo.description}).`,
-            authorId: interaction.user.id,
-            authorName: interaction.user.username,
-            narrativeWeight: "secondary",
-          });
-        }
-
         await interaction.reply({
-          content: `Meepo will try to understand words now! ✨\n_Provider: **${providerInfo.name}** (${providerInfo.description})_`,
+          content: "✨ STT is always enabled when Meepo is in voice! No need to toggle.",
           ephemeral: true,
         });
         return;
       }
 
       if (action === "off") {
-        if (!currentState.sttEnabled) {
-          await interaction.reply({
-            content: "Meep! Meepo wasn't trying to understand words anyway!",
-            ephemeral: true,
-          });
-          return;
-        }
-
-        currentState.sttEnabled = false;
-
-        // Stop audio receiver
-        stopReceiver(guildId);
-
-        // Log system event (narrative secondary - technical state)
-        const active = getActiveMeepo(guildId);
-        if (active) {
-          logSystemEvent({
-            guildId,
-            channelId: active.channel_id,
-            eventType: "stt_toggle",
-            content: "STT disabled.",
-            authorId: interaction.user.id,
-            authorName: interaction.user.username,
-            narrativeWeight: "secondary",
-          });
-        }
-
         await interaction.reply({
-          content: "Okay! Meepo will just listen quietly now. Meep!",
+          content: "⚠️ STT is always enabled when Meepo is in voice. Use `/meepo leave` to stop listening.",
           ephemeral: true,
         });
         return;

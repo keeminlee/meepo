@@ -16,6 +16,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pcmToWav } from "./stt/wav.js";
 import { log } from "../utils/logger.js";
+import { overlayEmitSpeaking } from "../overlay/server.js";
 
 /**
  * Phase 2 Task 1-2: Speaking detection + PCM capture pipeline
@@ -42,6 +43,9 @@ const MIN_AUDIO_MS = 250;        // require at least 250ms worth of PCM bytes
 const USER_COOLDOWN_MS = 300;    // prevent rapid retriggers
 const LONG_AUDIO_MS = 1200;      // long utterances bypass the "activity" gate + cooldown
 
+// Audio silence threshold for overlay speaking detection
+const AUDIO_SILENCE_THRESHOLD_MS = 150; // emit speaking=false after 150ms with no packets
+
 // Click filter: require enough "active" frames (energy) in the chunk
 const FRAME_MS = 20;
 const FRAME_BYTES = Math.round(BYTES_PER_SEC * (FRAME_MS / 1000)); // 3840 bytes for 20ms
@@ -58,6 +62,10 @@ let sttProvider: Awaited<ReturnType<typeof getSttProvider>> | null = null;
 // Maintains Promise<void> chain per guild to serialize transcriptions
 // Guarantees: no overlapping STT calls, FIFO order, no skipped utterances
 const guildSttChain = new Map<string, Promise<void>>();
+
+// Track overlay speaking state per user
+// Maps guildId -> userId -> { idleTimer: NodeJS.Timeout | null, hasEmittedTrue: boolean }
+const overlayUserState = new Map<string, Map<string, { idleTimer: NodeJS.Timeout | null; hasEmittedTrue: boolean }>>();
 
 // Track per guild listener so stopReceiver can detach cleanly
 type ReceiverHandlers = {
@@ -133,6 +141,60 @@ async function saveAudioChunk(
     voiceLog.error(`Failed to save audio: ${err}`);
     return null;
   }
+}
+
+/**
+ * Helper to manage overlay speaking state for a user
+ * On first packet: emit speaking=true and start idle timer
+ * On subsequent packets: reset idle timer
+ * On idle timeout: emit speaking=false
+ */
+function updateOverlaySpeakingActivity(guildId: string, userId: string) {
+  if (!overlayUserState.has(guildId)) {
+    overlayUserState.set(guildId, new Map());
+  }
+
+  const guildState = overlayUserState.get(guildId)!;
+  let userState = guildState.get(userId);
+
+  if (!userState) {
+    // First packet: emit speaking=true
+    userState = { idleTimer: null, hasEmittedTrue: false };
+    guildState.set(userId, userState);
+    overlayEmitSpeaking(userId, true);
+    userState.hasEmittedTrue = true;
+  }
+
+  // Clear existing idle timer if any
+  if (userState.idleTimer) {
+    clearTimeout(userState.idleTimer);
+  }
+
+  // Set new idle timer: after AUDIO_SILENCE_THRESHOLD_MS with no packets, emit speaking=false
+  userState.idleTimer = setTimeout(() => {
+    overlayEmitSpeaking(userId, false);
+    guildState.delete(userId);
+  }, AUDIO_SILENCE_THRESHOLD_MS);
+}
+
+/**
+ * Cleanup overlay speaking state when capture ends
+ */
+function clearOverlaySpeakingState(guildId: string, userId: string) {
+  const guildState = overlayUserState.get(guildId);
+  if (!guildState) return;
+
+  const userState = guildState.get(userId);
+  if (userState) {
+    if (userState.idleTimer) {
+      clearTimeout(userState.idleTimer);
+    }
+    // Emit false immediately (finalize is called, so audio is definitely done)
+    if (userState.hasEmittedTrue) {
+      overlayEmitSpeaking(userId, false);
+    }
+  }
+  guildState.delete(userId);
 }
 
 /**
@@ -314,6 +376,9 @@ export function startReceiver(guildId: string): void {
       const cap = captures.get(userId);
       if (!cap) return;
 
+      // Update overlay speaking activity (emits true on first packet, resets idle timer)
+      updateOverlaySpeakingActivity(guildId, userId);
+
       cap.pcmChunks.push(pcmChunk);
       cap.totalBytes += pcmChunk.length;
 
@@ -418,6 +483,9 @@ export function startReceiver(guildId: string): void {
           voiceLog.debug(`finalize reason=${reason} userId=${userId}`, { err });
         }
       } finally {
+        // Cleanup overlay speaking state
+        clearOverlaySpeakingState(guildId, userId);
+
         // ALWAYS cleanup to prevent duplicates/leaks
         speakers.delete(userId);
         captures.delete(userId);
@@ -472,6 +540,19 @@ export function stopReceiver(guildId: string): void {
 
   userCooldowns.get(guildId)?.clear();
   userCooldowns.delete(guildId);
+
+  // Clean up overlay speaking state for all users in this guild
+  const guildState = overlayUserState.get(guildId);
+  if (guildState) {
+    guildState.forEach((userState, userId) => {
+      if (userState.idleTimer) {
+        clearTimeout(userState.idleTimer);
+      }
+      // Ensure overlay clients are notified this user is no longer speaking
+      overlayEmitSpeaking(userId, false);
+    });
+    overlayUserState.delete(guildId);
+  }
 }
 
 export function isReceiverActive(guildId: string): boolean {

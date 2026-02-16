@@ -19,6 +19,7 @@ import {
 } from "@discordjs/voice";
 import { Readable } from "node:stream";
 import { getVoiceState } from "./state.js";
+import { overlayEmitSpeaking } from "../overlay/server.js";
 
 /**
  * Per-guild speaker state
@@ -26,6 +27,7 @@ import { getVoiceState } from "./state.js";
 type GuildSpeaker = {
   player: AudioPlayer;
   playbackQueue: Promise<void>; // Promise chain for sequential playback
+  meepoSpeakRefCount: number; // Refcount for overlay speaking (handles multi-chunk TTS)
 };
 
 // Per-guild speaker instances
@@ -69,6 +71,7 @@ function getOrCreatePlayer(guildId: string): AudioPlayer | null {
     speaker = {
       player,
       playbackQueue: Promise.resolve(),
+      meepoSpeakRefCount: 0,
     };
     guildSpeakers.set(guildId, speaker);
 
@@ -115,8 +118,14 @@ export function speakInGuild(
   // Queue playback via promise chaining
   const newQueue = speaker.playbackQueue
     .then(async () => {
-      // Mark Meepo as speaking (for feedback loop protection)
+      // Mark Meepo as speaking (for feedback loop protection + overlay)
       meepoSpeakingGuilds.add(guildId);
+      
+      // Increment refcount and emit overlay speaking if first playback
+      speaker.meepoSpeakRefCount++;
+      if (speaker.meepoSpeakRefCount === 1) {
+        overlayEmitSpeaking("meepo", true);
+      }
 
       // Create readable stream from buffer
       const stream = Readable.from([mp3Buffer]);
@@ -143,6 +152,13 @@ export function speakInGuild(
         const finishHandler = () => {
           player.off(AudioPlayerStatus.Idle, finishHandler);
           player.off("error", errorHandler);
+          
+          // Decrement refcount and emit false if last playback ends
+          speaker.meepoSpeakRefCount--;
+          if (speaker.meepoSpeakRefCount === 0) {
+            overlayEmitSpeaking("meepo", false);
+          }
+          
           // Mark Meepo as done speaking
           meepoSpeakingGuilds.delete(guildId);
           resolve();
@@ -151,6 +167,13 @@ export function speakInGuild(
         const errorHandler = () => {
           player.off(AudioPlayerStatus.Idle, finishHandler);
           player.off("error", errorHandler);
+          
+          // Decrement refcount and emit false even on error
+          speaker.meepoSpeakRefCount--;
+          if (speaker.meepoSpeakRefCount === 0) {
+            overlayEmitSpeaking("meepo", false);
+          }
+          
           // Mark Meepo as done speaking (even on error)
           meepoSpeakingGuilds.delete(guildId);
           resolve(); // Resolve anyway to keep queue moving
@@ -177,6 +200,11 @@ export function cleanupSpeaker(guildId: string): void {
   const speaker = guildSpeakers.get(guildId);
   if (speaker) {
     speaker.player.stop(true);
+    // Reset refcount and emit false if we were speaking
+    if (speaker.meepoSpeakRefCount > 0) {
+      overlayEmitSpeaking("meepo", false);
+      speaker.meepoSpeakRefCount = 0;
+    }
     guildSpeakers.delete(guildId);
     if (process.env.DEBUG_VOICE === "true") {
       console.log(`[Speaker] Cleaned up speaker for guild ${guildId}`);

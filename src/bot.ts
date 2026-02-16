@@ -2,6 +2,7 @@
 import { Client, GatewayIntentBits } from "discord.js";
 import { registerHandlers } from "./commands/index.js";
 import { getActiveMeepo, wakeMeepo, transformMeepo } from "./meepo/state.js";
+import { autoJoinGeneralVoice } from "./meepo/autoJoinVoice.js";
 import { startAutoSleepChecker } from "./meepo/autoSleep.js";
 import { getActiveSession } from "./sessions/sessions.js";
 import { appendLedgerEntry, getVoiceAwareContext } from "./ledger/ledger.js";
@@ -20,11 +21,18 @@ import { findRelevantBeats, type ScoredBeat } from "./recall/findRelevantBeats.j
 import { buildMemoryContext } from "./recall/buildMemoryContext.js";
 import { getTranscriptLines } from "./ledger/transcripts.js";
 import { getDb } from "./db.js";
+import { startOverlayServer } from "./overlay/server.js";
+import { joinVoice } from "./voice/connection.js";
+import { startReceiver } from "./voice/receiver.js";
+import { setVoiceState } from "./voice/state.js";
 
 // PID lock: prevent multiple instances
 if (!acquireLock()) {
   process.exit(1);
 }
+
+// Start overlay server early (independent of Discord)
+await startOverlayServer();
 
 const client = new Client({
   intents: [
@@ -54,6 +62,43 @@ client.once("ready", async () => {
 
   // Start auto-sleep checker for inactive Meepo instances
   startAutoSleepChecker();
+
+  // Auto-join overlay voice channel (for speaking detection, independent of Meepo sessions)
+  const guildId = process.env.GUILD_ID;
+  const overlayVoiceChannelId = process.env.OVERLAY_VOICE_CHANNEL_ID;
+  
+  if (guildId && overlayVoiceChannelId) {
+    try {
+      const guild = await client.guilds.fetch(guildId);
+      const channel = await guild.channels.fetch(overlayVoiceChannelId);
+      
+      if (!channel || !channel.isVoiceBased()) {
+        console.warn(`[Overlay] Channel ${overlayVoiceChannelId} is not a voice channel`);
+        return;
+      }
+
+      const connection = await joinVoice({
+        guildId,
+        channelId: overlayVoiceChannelId,
+        adapterCreator: guild.voiceAdapterCreator,
+      });
+
+      // Set voice state with STT enabled for overlay channel
+      setVoiceState(guildId, {
+        channelId: overlayVoiceChannelId,
+        connection,
+        guild,
+        sttEnabled: true, // ← Enable STT for overlay speaking detection
+        connectedAt: Date.now(),
+      });
+
+      startReceiver(guildId);
+
+      console.log(`[Overlay] Auto-joined voice channel and listening for speaking events`);
+    } catch (err: any) {
+      console.error(`[Overlay] Failed to auto-join voice channel:`, err.message ?? err);
+    }
+  }
 });
 
 client.on("messageCreate", async (message: any) => {
@@ -114,6 +159,13 @@ client.on("messageCreate", async (message: any) => {
       if (guild) {
         await setBotNicknameForPersona(guild, "meepo");
       }
+      
+      // Auto-join General voice channel on wake
+      await autoJoinGeneralVoice({
+        client,
+        guildId: message.guildId,
+        channelId: message.channelId,
+      });
       
       // console.log("WAKE RESULT:", active);
 
@@ -311,16 +363,21 @@ client.on("messageCreate", async (message: any) => {
         try {
           const registry = loadRegistry();
           const matches = extractRegistryMatches(content, registry);
+          
+          console.log("[Recall Debug] Registry matches:", matches.length, matches.map(m => m.canonical));
 
           if (matches.length > 0) {
             // Search for events using registry matches
             const allEvents = new Map<string, EventRow>();
             for (const match of matches) {
               const events = searchEventsByTitle(match.canonical);
+              console.log(`[Recall Debug] Events for "${match.canonical}":`, events.length);
               for (const event of events) {
                 allEvents.set(event.event_id, event);
               }
             }
+            
+            console.log("[Recall Debug] Total unique events:", allEvents.size);
 
             if (allEvents.size > 0) {
               // Group events by session
@@ -340,15 +397,21 @@ client.on("messageCreate", async (message: any) => {
                 const labelRow = db.prepare("SELECT label FROM sessions WHERE session_id = ? LIMIT 1")
                   .get(sessionId) as { label: string | null } | undefined;
                 const label = labelRow?.label;
+                
+                console.log(`[Recall Debug] Session ${sessionId.slice(0, 8)}... has label: ${label}`);
 
                 if (label) {
                   const gptcap = loadGptcap(label);
+                  console.log(`[Recall Debug] GPTcap for "${label}":`, gptcap ? `${gptcap.beats.length} beats` : 'not found');
                   if (gptcap) {
                     const relevantBeats = findRelevantBeats(gptcap, sessionEvents, { topK: 6 });
+                    console.log(`[Recall Debug] Found ${relevantBeats.length} relevant beats for ${label}`);
                     allBeats.push(...relevantBeats);
                   }
                 }
               }
+              
+              console.log("[Recall Debug] Total beats across all sessions:", allBeats.length);
 
               // Build memory context if we have beats
               if (allBeats.length > 0) {
@@ -390,6 +453,7 @@ client.on("messageCreate", async (message: any) => {
                       maxLinesPerBeat: 2,
                       maxTotalChars: 1600,
                     });
+                    console.log("[Recall Debug] Built memory context:", partyMemory.length, "chars");
                   }
                 }
               }
@@ -399,6 +463,10 @@ client.on("messageCreate", async (message: any) => {
           console.warn("[Recall] Memory retrieval failed:", recallErr.message ?? recallErr);
           // Continue without memory context on error
         }
+      }
+      
+      if (partyMemory) {
+        console.log("[Recall] Injecting party memory into prompt");
       }
 
       const systemPrompt = await buildMeepoPrompt({
