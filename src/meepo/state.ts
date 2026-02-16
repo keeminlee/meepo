@@ -1,6 +1,9 @@
 ﻿import { randomUUID } from "node:crypto";
+import { log } from "../utils/logger.js";
 import { getDb } from "../db.js";
 import { startSession, endSession } from "../sessions/sessions.js";
+
+const meepoLog = log.withScope("meepo");
 
 export type MeepoInstance = {
   id: string;
@@ -9,6 +12,7 @@ export type MeepoInstance = {
   channel_id: string;
   persona_seed: string | null;
   form_id: string;
+  reply_mode: string; // 'voice' | 'text'
   created_at_ms: number;
   is_active: number;
 };
@@ -39,7 +43,7 @@ export function wakeMeepo(opts: {
 
   // Always start with meepo form on wake (transformations happen after wake)
   db.prepare(
-    "INSERT INTO npc_instances (id, name, guild_id, channel_id, persona_seed, form_id, created_at_ms, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO npc_instances (id, name, guild_id, channel_id, persona_seed, form_id, reply_mode, created_at_ms, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
     id,
     "Meepo",
@@ -47,11 +51,12 @@ export function wakeMeepo(opts: {
     opts.channelId,
     opts.personaSeed ?? null,
     "meepo", // Always start as default meepo
+    "text", // Default reply mode
     now,
     1 // is_active
   );
 
-  console.log("Meepo woke up as form_id: meepo");
+  meepoLog.info(`Woke up as form_id: meepo`);
 
   // Day 4: auto-start session on wake
   startSession(opts.guildId);
@@ -62,6 +67,7 @@ export function wakeMeepo(opts: {
     guild_id: opts.guildId,
     channel_id: opts.channelId,
     persona_seed: opts.personaSeed ?? null,
+    reply_mode: "text",
     form_id: "meepo",
     created_at_ms: now,
     is_active: 1,
@@ -88,7 +94,7 @@ export function transformMeepo(guildId: string, formId: string): { success: bool
     return { success: false, error: "No active Meepo to transform" };
   }
   
-  console.log("Transforming:", active.form_id, "→", formId);
+  meepoLog.info(`Transforming: ${active.form_id} → ${formId}`);
   
   const info = db
     .prepare("UPDATE npc_instances SET form_id = ? WHERE guild_id = ? AND is_active = 1")

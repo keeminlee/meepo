@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import yaml from "yaml";
-import { Character, Location, Faction, Entity, LoadedRegistry, RawRegistryYaml } from "./types.js";
+import { Character, Location, Faction, Misc, Entity, LoadedRegistry, RawRegistryYaml } from "./types.js";
 
 /**
  * Single normalization function used everywhere.
@@ -36,10 +36,11 @@ export function loadRegistry(opts?: {
     throw new Error(`Registry directory not found: ${registryDir}`);
   }
 
-  // Collect all characters, locations, factions
+  // Collect all characters, locations, factions, misc
   const allCharacters: Character[] = [];
   const allLocations: Location[] = [];
   const allFactions: Faction[] = [];
+  const allMisc: Misc[] = [];
 
   // Load pcs.yml
   const pcsPath = path.join(registryDir, "pcs.yml");
@@ -82,6 +83,16 @@ export function loadRegistry(opts?: {
     const facRaw = yaml.parse(facContent) as { version?: number; factions?: Faction[] };
     if (facRaw.factions && Array.isArray(facRaw.factions)) {
       allFactions.push(...facRaw.factions);
+    }
+  }
+
+  // Load misc.yml
+  const miscPath = path.join(registryDir, "misc.yml");
+  if (fs.existsSync(miscPath)) {
+    const miscContent = fs.readFileSync(miscPath, "utf-8");
+    const miscRaw = yaml.parse(miscContent) as { version?: number; misc?: any[] };
+    if (miscRaw.misc && Array.isArray(miscRaw.misc)) {
+      allMisc.push(...miscRaw.misc);
     }
   }
 
@@ -202,6 +213,38 @@ export function loadRegistry(opts?: {
     allEntities.push(fac);
   }
 
+  // Index misc
+  for (const misc of allMisc) {
+    if (!misc.id) throw new Error(`Misc missing id`);
+    if (!misc.canonical_name) throw new Error(`Misc ${misc.id} missing canonical_name`);
+    // Default aliases to empty array if missing
+    if (!Array.isArray(misc.aliases)) {
+      misc.aliases = [];
+    }
+
+    if (byId.has(misc.id)) throw new Error(`Duplicate id: ${misc.id}`);
+
+    const canNorm = normKey(misc.canonical_name);
+    if (!canNorm) throw new Error(`Misc ${misc.id} canonical_name normalizes to empty`);
+
+    if (byName.has(canNorm) && byName.get(canNorm)!.id !== misc.id) {
+      throw new Error(`Name collision on "${canNorm}"`);
+    }
+    byName.set(canNorm, misc);
+
+    for (const alias of misc.aliases) {
+      const alNorm = normKey(alias);
+      if (!alNorm) throw new Error(`Misc ${misc.id} alias normalizes to empty`);
+      if (byName.has(alNorm) && byName.get(alNorm)!.id !== misc.id) {
+        throw new Error(`Name collision on "${alNorm}"`);
+      }
+      byName.set(alNorm, misc);
+    }
+
+    byId.set(misc.id, misc);
+    allEntities.push(misc);
+  }
+
   // Load ignore tokens
   const ignore = new Set<string>();
   if (fs.existsSync(ignorePath)) {
@@ -222,6 +265,7 @@ export function loadRegistry(opts?: {
     characters: allCharacters,
     locations: allLocations,
     factions: allFactions,
+    misc: allMisc,
     byId,
     byDiscordUserId,
     byName,

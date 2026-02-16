@@ -1,5 +1,5 @@
 export type CharacterType = "pc" | "npc";
-export type EntityKind = "pc" | "npc" | "location" | "faction";
+export type EntityKind = "pc" | "npc" | "location" | "faction" | "misc";
 
 export type Character = {
   id: string;
@@ -27,13 +27,21 @@ export type Faction = {
   notes?: string;
 };
 
-export type Entity = Character | Location | Faction;
+export type Misc = {
+  id: string;
+  canonical_name: string;
+  aliases: string[];
+  notes?: string;
+};
+
+export type Entity = Character | Location | Faction | Misc;
 
 export type RawRegistryYaml = {
   version: number;
   characters?: RawCharacter[];
   locations?: Location[];
   factions?: Faction[];
+  misc?: Misc[];
 };
 
 export type LoadedRegistry = {
@@ -41,6 +49,7 @@ export type LoadedRegistry = {
   characters: Character[];
   locations: Location[];
   factions: Faction[];
+  misc: Misc[];
   byId: Map<string, Entity>;
   byDiscordUserId: Map<string | undefined, Character>;
   byName: Map<string, Entity>; // normalized key -> entity

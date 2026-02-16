@@ -1,5 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { log } from "./utils/logger.js";
+
+const bootLog = log.withScope("boot");
 
 /**
  * PID lock file to prevent multiple bot instances running simultaneously
@@ -29,11 +32,11 @@ export function acquireLock(): boolean {
     const existingPid = parseInt(fs.readFileSync(LOCK_FILE, "utf8").trim(), 10);
     
     if (!isNaN(existingPid) && isPidRunning(existingPid)) {
-      console.error(`Bot already running (PID ${existingPid}). Exiting.`);
+      bootLog.error(`Bot already running (PID ${existingPid}). Exiting.`);
       return false;
     }
     
-    console.log(`Stale lock file detected (PID ${existingPid}). Overwriting.`);
+    bootLog.info(`Stale lock file detected (PID ${existingPid}). Overwriting.`);
   }
 
   // Ensure data directory exists
@@ -44,7 +47,7 @@ export function acquireLock(): boolean {
 
   // Write current PID to lock file
   fs.writeFileSync(LOCK_FILE, currentPid.toString(), "utf8");
-  console.log(`PID lock acquired (${currentPid})`);
+  bootLog.info(`PID lock acquired (${currentPid})`);
   
   return true;
 }
@@ -52,7 +55,7 @@ export function acquireLock(): boolean {
 export function releaseLock(): void {
   if (fs.existsSync(LOCK_FILE)) {
     fs.unlinkSync(LOCK_FILE);
-    console.log("PID lock released");
+    bootLog.info("PID lock released");
   }
 }
 
@@ -63,14 +66,14 @@ process.on("exit", () => {
 
 // Cleanup on ctrl+c
 process.on("SIGINT", () => {
-  console.log("\nReceived SIGINT, shutting down...");
+  bootLog.info("Received SIGINT, shutting down...");
   releaseLock();
   process.exit(0);
 });
 
 // Cleanup on termination
 process.on("SIGTERM", () => {
-  console.log("\nReceived SIGTERM, shutting down...");
+  bootLog.info("Received SIGTERM, shutting down...");
   releaseLock();
   process.exit(0);
 });

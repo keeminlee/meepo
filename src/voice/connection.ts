@@ -4,9 +4,14 @@ import {
   VoiceConnectionStatus,
   entersState,
 } from "@discordjs/voice";
+import { log } from "../utils/logger.js";
 import { getVoiceState, setVoiceState, clearVoiceState } from "./state.js";
 import { stopReceiver } from "./receiver.js";
 import { cleanupSpeaker } from "./speaker.js";
+import { overlayEmitPresence } from "../overlay/server.js";
+
+const voiceLog = log.withScope("voice");
+const overlayLog = log.withScope("overlay");
 
 /**
  * Join a voice channel
@@ -58,6 +63,10 @@ export function leaveVoice(guildId: string): void {
   cleanupSpeaker(guildId);
   state.connection.destroy();
   clearVoiceState(guildId);
+  
+  // Clear Meepo's overlay presence
+  overlayEmitPresence("meepo", false);
+  overlayLog.debug(`Cleared Meepo presence on leave`);
 }
 
 /**
@@ -70,32 +79,36 @@ export function leaveVoice(guildId: string): void {
  */
 function setupDisconnectHandlers(connection: VoiceConnection, guildId: string): void {
   connection.on("stateChange", (oldState, newState) => {
-    console.log(`[Voice] Guild ${guildId}: ${oldState.status} → ${newState.status}`);
+    voiceLog.debug(`Voice state: ${oldState.status} → ${newState.status}`);
 
     // Clean up state when connection is destroyed
     if (newState.status === VoiceConnectionStatus.Destroyed) {
       stopReceiver(guildId);
       cleanupSpeaker(guildId);
       clearVoiceState(guildId);
-      console.log(`[Voice] Guild ${guildId}: State cleared (destroyed)`);
+      
+      // Clear Meepo's overlay presence
+      overlayEmitPresence("meepo", false);
+      
+      voiceLog.debug(`Voice state cleared (destroyed)`);
     }
 
     // Attempt reconnection on disconnect (short window)
     if (newState.status === VoiceConnectionStatus.Disconnected) {
-      console.log(`[Voice] Guild ${guildId}: Disconnected, attempting to reconnect...`);
+      voiceLog.debug(`Voice disconnected, attempting to reconnect...`);
       
       entersState(connection, VoiceConnectionStatus.Ready, 5_000)
         .then(() => {
-          console.log(`[Voice] Guild ${guildId}: Reconnected successfully`);
+          voiceLog.debug(`Voice reconnected successfully`);
         })
         .catch(() => {
-          console.log(`[Voice] Guild ${guildId}: Reconnection failed, destroying connection`);
+          voiceLog.debug(`Voice reconnection failed, destroying connection`);
           connection.destroy();
         });
     }
   });
 
   connection.on("error", (error) => {
-    console.error(`[Voice] Guild ${guildId}: Connection error:`, error);
+    voiceLog.error(`Voice connection error: ${error}`);
   });
 }

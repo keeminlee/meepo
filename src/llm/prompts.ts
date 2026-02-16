@@ -2,14 +2,18 @@ import type { MeepoInstance } from "../meepo/state.js";
 import { getRecentLedgerText } from "../ledger/ledger.js";
 import { getPersona } from "../personas/index.js";
 import { getMeepoMemoriesSection } from "../ledger/meepo-mind.js";
+import { log } from "../utils/logger.js";
+
+const llmLog = log.withScope("llm");
 
 export async function buildMeepoPrompt(opts: {
   meepo: MeepoInstance;
   recentContext?: string;
   hasVoiceContext?: boolean; // Task 4.7: Indicates voice entries in context
+  partyMemory?: string; // Task 9: Party memory capsules from recall pipeline
 }): Promise<string> {
   const persona = getPersona(opts.meepo.form_id);
-  console.log("Using persona:", persona.displayName, `(${opts.meepo.form_id})`);
+  llmLog.debug(`Using persona: ${persona.displayName}`);
   
   const customPersona = opts.meepo.persona_seed
     ? `\nAdditional character context:\n${opts.meepo.persona_seed}`
@@ -18,6 +22,10 @@ export async function buildMeepoPrompt(opts: {
   // Task 4.7: Add voice context hint when voice entries are present
   const voiceHint = opts.hasVoiceContext
     ? "\nRecent dialogue was spoken aloud in the room. Respond naturally, briefly, and as if replying in conversation.\n"
+    : "";
+
+  const partyMemory = opts.partyMemory
+    ? `\n\n${opts.partyMemory}\n`
     : "";
 
   const context = opts.recentContext
@@ -37,13 +45,14 @@ export async function buildMeepoPrompt(opts: {
     console.warn(`Warning: Persona ${opts.meepo.form_id} missing styleGuard`);
   }
 
-  // Order matters: Guardrails → Identity → Memory → Meepo Knowledge Base → Speech Style → Personality → Style Guard → Voice Hint → Custom → Context
+  // Order matters: Guardrails → Identity → Memory → Meepo Knowledge Base → Party Memory → Speech Style → Personality → Style Guard → Voice Hint → Custom → Context
   return (
     persona.systemGuardrails +
     "\n" +
     persona.identity +
     memory +
     meepoMemories +
+    partyMemory +
     "\n" +
     persona.speechStyle +
     "\n" +

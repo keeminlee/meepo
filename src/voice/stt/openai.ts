@@ -8,9 +8,12 @@
  */
 
 import { getOpenAIClient } from "../../llm/client.js";
+import { log } from "../../utils/logger.js";
 import { SttProvider } from "./provider.js";
 import { pcmToWav } from "./wav.js";
 import { toFile } from "openai/uploads";
+
+const sttLog = log.withScope("stt");
 
 /**
  * Check if an error is retryable (429/5xx/network).
@@ -44,8 +47,8 @@ export class OpenAiSttProvider implements SttProvider {
     this.prompt = process.env.STT_PROMPT;
 
     if (process.env.DEBUG_VOICE === "true") {
-      console.log(
-        `[STT] OpenAI provider initialized: model=${this.model}, language=${this.language}${this.prompt ? ", prompt enabled" : ""}`
+      sttLog.debug(
+        `OpenAI provider initialized: model=${this.model}, language=${this.language}${this.prompt ? ", prompt enabled" : ""}`
       );
     }
   }
@@ -127,7 +130,16 @@ export class OpenAiSttProvider implements SttProvider {
         const response = await client.audio.transcriptions.create(transcribeRequest);
 
         // Extract and clean text
-        const text = response.text?.trim() ?? "";
+        let text = response.text?.trim() ?? "";
+
+        // Filter out the prompt if it was returned verbatim by Whisper
+        // (known issue: Whisper sometimes hallucinates the prompt on ambiguous audio)
+        if (this.prompt && text === this.prompt) {
+          sttLog.warn(
+            `Whisper returned the prompt verbatim; filtering out (likely hallucination on ambiguous audio)`
+          );
+          text = "";
+        }
 
         return {
           text,
@@ -141,16 +153,16 @@ export class OpenAiSttProvider implements SttProvider {
 
         if (!isRetryableError(err) || attempt === 1) {
           // Non-retryable error or second attempt failed; log and re-throw
-          console.error(
-            `[STT] OpenAI transcription failed (attempt ${attempt + 1}, ${status}): ${message}`
+          sttLog.error(
+            `OpenAI transcription failed (attempt ${attempt + 1}, ${status}): ${message}`
           );
           throw err;
         }
 
         // Transient error on first attempt; retry after backoff
         const backoffMs = 250 + Math.random() * 250; // 250-500ms jitter
-        console.warn(
-          `[STT] Transient error (${status}), retrying in ${backoffMs.toFixed(0)}ms: ${message}`
+        sttLog.warn(
+          `Transient error (${status}), retrying in ${backoffMs.toFixed(0)}ms: ${message}`
         );
         await sleep(backoffMs);
       }

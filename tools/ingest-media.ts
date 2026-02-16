@@ -11,7 +11,6 @@
  *   --maxMinutes <n>      Only ingest first N minutes (default: all)
  *   --guildId <id>        Default offline_test
  *   --channelId <id>      Default = sessionLabel
- *   --overwrite           Allow overwriting outDb if it exists
  *   --outDir <path>       Default ./out (writes segments.jsonl)
  *   --help
  * 
@@ -38,6 +37,19 @@ const execAsync = promisify(exec);
 const ingestLog = log.withScope("ingest");
 
 // ============================================================================
+// Transcript Cleaning
+// ============================================================================
+
+/**
+ * Remove Whisper audio codec artifacts from transcripts.
+ * These <|vq_hbr_audio_XXXX|> tokens appear when Whisper encounters
+ * non-speech audio (music, silence, noise) and outputs raw codec tokens.
+ */
+function cleanTranscript(text: string): string {
+  return text.replace(/<\|vq_hbr_audio_\d+\|>/g, '').trim();
+}
+
+// ============================================================================
 // CLI Argument Parsing
 // ============================================================================
 
@@ -49,7 +61,6 @@ interface CliArgs {
   maxMinutes?: number;
   guildId: string;
   channelId: string;
-  overwrite: boolean;
   outDir: string;
   help: boolean;
 }
@@ -69,7 +80,6 @@ Options:
   --maxMinutes <n>      Only ingest first N minutes (default: all)
   --guildId <id>        Guild ID for ledger entries (default: offline_test)
   --channelId <id>      Channel ID for ledger entries (default: sessionLabel)
-  --overwrite           Allow overwriting outDb if it exists
   --outDir <path>       Output directory for segments.jsonl (default: ./out)
   --help                Show this help
 
@@ -79,8 +89,7 @@ Example:
     --outDb ".\\data\\test_ingest.sqlite" \\
     --sessionLabel C2E03 \\
     --chunkSec 60 \\
-    --maxMinutes 20 \\
-    --overwrite
+    --maxMinutes 20
 `);
 }
 
@@ -88,7 +97,6 @@ function parseArgs(): CliArgs {
   const args: Partial<CliArgs> = {
     chunkSec: 60,
     guildId: "offline_test",
-    overwrite: false,
     outDir: "./out",
     help: false,
   };
@@ -98,11 +106,6 @@ function parseArgs(): CliArgs {
 
     if (arg === "--help") {
       args.help = true;
-      continue;
-    }
-
-    if (arg === "--overwrite") {
-      args.overwrite = true;
       continue;
     }
 
@@ -189,13 +192,6 @@ function validateArgs(args: CliArgs): void {
   if (!existsSync(args.mediaPath)) {
     throw new Error(`Media file not found: ${args.mediaPath}`);
   }
-
-  // Check outDb doesn't exist unless --overwrite
-  if (existsSync(args.outDb) && !args.overwrite) {
-    throw new Error(
-      `Output database already exists: ${args.outDb}\nUse --overwrite to allow overwriting.`
-    );
-  }
 }
 
 // ============================================================================
@@ -225,8 +221,14 @@ async function extractAudio(
 ): Promise<void> {
   ingestLog.info(`Extracting audio from ${mediaPath}...`);
 
-  // FFmpeg: extract 16kHz mono WAV
-  const cmd = `ffmpeg -i "${mediaPath}" -ar 16000 -ac 1 -y "${outWavPath}"`;
+  // FFmpeg: extract 16kHz mono WAV with audio normalization
+  // - silenceremove: strip leading/trailing silence (reduces artifacts)
+  // - loudnorm: normalize loudness (improves STT accuracy on quiet sections)
+  const cmd = [
+    `ffmpeg -i "${mediaPath}"`,
+    `-af "silenceremove=1:0:-50dB,loudnorm"`,
+    `-ar 16000 -ac 1 -y "${outWavPath}"`
+  ].join(' ');
 
   try {
     await execAsync(cmd);
@@ -320,11 +322,20 @@ async function transcribeChunks(
   const sttProvider = await getSttProvider();
   const results: TranscriptResult[] = [];
 
+  // @ts-ignore - cli-progress lacks type definitions
+  const cliProgress = await import("cli-progress");
+  const progressBar = new cliProgress.SingleBar({
+    format: 'Transcribing |{bar}| {percentage}% | {value}/{total} chunks | ETA: {eta}s',
+    barCompleteChar: '\u2588',
+    barIncompleteChar: '\u2591',
+    hideCursor: true
+  });
+  
+  progressBar.start(chunks.length, 0);
+
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
-    ingestLog.info(
-      `Transcribing chunk ${i + 1}/${chunks.length} (${chunk.startSec}s - ${chunk.endSec}s)...`
-    );
+    progressBar.update(i);
 
     try {
       // Read raw PCM file
@@ -350,14 +361,17 @@ async function transcribeChunks(
         continue;
       }
 
-      const preview = sttResult.text.substring(0, 80);
+      // Clean transcript to remove Whisper audio codec artifacts
+      const cleanedTranscript = cleanTranscript(sttResult.text);
+      
+      const preview = cleanedTranscript.substring(0, 80);
       ingestLog.info(
-        `Chunk ${i + 1}: "${preview}${sttResult.text.length > 80 ? "..." : ""}"${sttResult.confidence ? ` (confidence: ${sttResult.confidence.toFixed(2)})` : ""}`
+        `Chunk ${i + 1}: "${preview}${cleanedTranscript.length > 80 ? "..." : ""}"${sttResult.confidence ? ` (confidence: ${sttResult.confidence.toFixed(2)})` : ""}`
       );
 
       results.push({
         chunk,
-        transcript: sttResult.text,
+        transcript: cleanedTranscript,
         confidence: sttResult.confidence,
       });
     } catch (err: any) {
@@ -370,85 +384,93 @@ async function transcribeChunks(
         error: err.message ?? String(err),
       });
     }
+    
+    progressBar.update(i + 1);
   }
 
+  progressBar.stop();
+  ingestLog.info(`Transcription complete: ${results.length} chunks processed`);
   return results;
 }
 
 // ============================================================================
 // Database Writing
 // ============================================================================
+// Database Initialization
+// ============================================================================
 
 function initializeDb(dbPath: string): Database.Database {
-  // Remove existing DB if overwrite
-  if (existsSync(dbPath)) {
-    unlinkSync(dbPath);
-    ingestLog.info(`Removed existing database: ${dbPath}`);
-  }
-
+  // If DB doesn't exist, create it fresh; if it does, use it as-is
+  const isNewDb = !existsSync(dbPath);
+  
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
 
-  // Create schema (same as bot schema)
-  const schema = `
-    CREATE TABLE IF NOT EXISTS npc_instances (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      guild_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      channel_id TEXT NOT NULL,
-      persona_seed TEXT,
-      form_id TEXT NOT NULL DEFAULT 'meepo',
-      created_at_ms INTEGER NOT NULL,
-      is_active INTEGER NOT NULL DEFAULT 0
-    );
+  // Only create schema if new database
+  if (isNewDb) {
+    // Create schema (same as bot schema)
+    const schema = `
+      CREATE TABLE IF NOT EXISTS npc_instances (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        persona_seed TEXT,
+        form_id TEXT NOT NULL DEFAULT 'meepo',
+        created_at_ms INTEGER NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 0
+      );
 
-    CREATE TABLE IF NOT EXISTS ledger_entries (
-      id TEXT PRIMARY KEY,
-      guild_id TEXT NOT NULL,
-      channel_id TEXT NOT NULL,
-      message_id TEXT NOT NULL,
-      author_id TEXT NOT NULL,
-      author_name TEXT NOT NULL,
-      timestamp_ms INTEGER NOT NULL,
-      content TEXT NOT NULL,
-      content_norm TEXT,
-      session_id TEXT,
-      tags TEXT NOT NULL DEFAULT 'human',
-      source TEXT NOT NULL DEFAULT 'text',
-      narrative_weight TEXT NOT NULL DEFAULT 'secondary',
-      speaker_id TEXT,
-      audio_chunk_path TEXT,
-      t_start_ms INTEGER,
-      t_end_ms INTEGER,
-      confidence REAL
-    );
+      CREATE TABLE IF NOT EXISTS ledger_entries (
+        id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        author_id TEXT NOT NULL,
+        author_name TEXT NOT NULL,
+        timestamp_ms INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        content_norm TEXT,
+        session_id TEXT,
+        tags TEXT NOT NULL DEFAULT 'human',
+        source TEXT NOT NULL DEFAULT 'text',
+        narrative_weight TEXT NOT NULL DEFAULT 'secondary',
+        speaker_id TEXT,
+        audio_chunk_path TEXT,
+        t_start_ms INTEGER,
+        t_end_ms INTEGER,
+        confidence REAL
+      );
 
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_text_message_unique 
-      ON ledger_entries(message_id) 
-      WHERE source = 'text';
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_text_message_unique 
+        ON ledger_entries(message_id) 
+        WHERE source = 'text';
 
-    CREATE TABLE IF NOT EXISTS sessions (
-      session_id TEXT PRIMARY KEY,
-      guild_id TEXT NOT NULL,
-      label TEXT,
-      created_at_ms INTEGER,
-      started_at_ms INTEGER NOT NULL,
-      ended_at_ms INTEGER,
-      started_by_id TEXT NOT NULL,
-      started_by_name TEXT NOT NULL,
-      source TEXT DEFAULT 'live'
-    );
+      CREATE TABLE IF NOT EXISTS sessions (
+        session_id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        label TEXT,
+        created_at_ms INTEGER,
+        started_at_ms INTEGER NOT NULL,
+        ended_at_ms INTEGER,
+        started_by_id TEXT NOT NULL,
+        started_by_name TEXT NOT NULL,
+        source TEXT DEFAULT 'live'
+      );
 
-    CREATE TABLE IF NOT EXISTS latches (
-      key TEXT PRIMARY KEY,
-      guild_id TEXT NOT NULL,
-      channel_id TEXT NOT NULL,
-      expires_at_ms INTEGER NOT NULL
-    );
-  `;
+      CREATE TABLE IF NOT EXISTS latches (
+        key TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        expires_at_ms INTEGER NOT NULL
+      );
+    `;
 
-  db.exec(schema);
-  ingestLog.info(`Initialized database: ${dbPath}`);
+    db.exec(schema);
+    ingestLog.info(`Created new database: ${dbPath}`);
+  } else {
+    ingestLog.info(`Using existing database: ${dbPath}`);
+  }
 
   return db;
 }

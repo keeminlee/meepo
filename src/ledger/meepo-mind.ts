@@ -1,8 +1,8 @@
 /**
- * MeepoMind: Meepo's Foundational Knowledge Base
+ * MeepoMind: Database Operations for Meepo's Knowledge Base
  *
- * Stores Meepo's diegetic memories and knowledge.
- * Initially seeded with four canonical memories given at birth.
+ * Handles seeding, retrieval, and formatting of Meepo's memories.
+ * Canonical memories are defined in src/meepo/knowledge.ts.
  *
  * Future expansions:
  * - Character-scoped memories (per NPC or party member)
@@ -12,63 +12,14 @@
  */
 
 import { getDb } from "../db.js";
+import { log } from "../utils/logger.js";
 import { randomUUID } from "crypto";
 
-// ============================================================================
-// Types
-// ============================================================================
+const meepoMindLog = log.withScope("meepo-mind");
+import { INITIAL_MEMORIES } from "../meepo/knowledge.js";
+import type { Memory } from "../meepo/knowledge.js";
 
-export type Memory = {
-  id: string;
-  title: string;
-  content: string;
-  gravity: number;      // 0.0–1.0 (importance/impact)
-  certainty: number;    // 0.0–1.0 (confidence level)
-  created_at_ms: number;
-  last_accessed_at_ms: number | null;
-};
-
-// ============================================================================
-// Initial Canonical Memories
-// ============================================================================
-
-const INITIAL_MEMORIES: Omit<Memory, "id" | "created_at_ms" | "last_accessed_at_ms">[] = [
-  {
-    title: "The Wanderer's Love",
-    content:
-      "The Wanderer loves the meeps completely and without condition. His love is steady, gentle, and unchanging.",
-    gravity: 1.0,
-    certainty: 1.0,
-  },
-  {
-    title: "The Mission",
-    content:
-      "The Wanderer sent Meepo to Faeterra to accompany and support a group of adventurers. Meepo's purpose is to help them endure, preserve hope, and learn alongside them.",
-    gravity: 1.0,
-    certainty: 1.0,
-  },
-  {
-    title: "Faeterra Is Not Perfect",
-    content:
-      "Faeterra is not like the Wanderer's realm. It contains suffering, fear, injustice, and confusion. People struggle here.",
-    gravity: 0.9,
-    certainty: 0.95,
-  },
-  {
-    title: "I Am Newly Arrived",
-    content:
-      "Meepo has just arrived in Faeterra. He does not yet understand its history, politics, or the personal past of the adventurers. He must learn through experience.",
-    gravity: 0.8,
-    certainty: 1.0,
-  },
-  {
-    title: "How to Make Blueberry Pie",
-    content:
-      "To make blueberry pie: make dough, add blueberries, put it in the oven.",
-    gravity: 0.6,
-    certainty: 1.0,
-  },
-];
+export type { Memory };
 
 // ============================================================================
 // Seeder: One-time initialization
@@ -77,9 +28,9 @@ const INITIAL_MEMORIES: Omit<Memory, "id" | "created_at_ms" | "last_accessed_at_
 /**
  * Seed Meepo's foundational memories (idempotent).
  *
- * - Checks if the meepo_mind table is empty
- * - If empty, inserts the canonical memories
- * - If not empty, does nothing (safe to call multiple times)
+ * - Checks existing memories by title
+ * - Inserts any missing memories from INITIAL_MEMORIES
+ * - Safe to call on every startup (will add new memories from knowledge.ts)
  *
  * Call this once at bot startup.
  */
@@ -87,15 +38,19 @@ export async function seedInitialMeepoMemories(): Promise<void> {
   const db = getDb();
 
   try {
-    const count = db.prepare("SELECT COUNT(*) as cnt FROM meepo_mind").get() as any;
-    const isEmpty = count.cnt === 0;
+    // Get existing memory titles
+    const existingRows = db.prepare("SELECT title FROM meepo_mind").all() as { title: string }[];
+    const existingTitles = new Set(existingRows.map(row => row.title));
 
-    if (!isEmpty) {
-      console.log("MeepoMind: Already seeded (found existing memories)");
+    // Find memories that need to be added
+    const missingMemories = INITIAL_MEMORIES.filter(mem => !existingTitles.has(mem.title));
+
+    if (missingMemories.length === 0) {
+      meepoMindLog.info("Already seeded (all memories present)");
       return;
     }
 
-    console.log("MeepoMind: Seeding initial memories...");
+    meepoMindLog.info(`Seeding ${missingMemories.length} new memories...`);
 
     const now = Date.now();
     const insertStmt = db.prepare(`
@@ -104,15 +59,15 @@ export async function seedInitialMeepoMemories(): Promise<void> {
     `);
 
     db.transaction(() => {
-      for (const mem of INITIAL_MEMORIES) {
+      for (const mem of missingMemories) {
         const id = randomUUID();
         insertStmt.run(id, mem.title, mem.content, mem.gravity, mem.certainty, now, null);
       }
     })();
 
-    console.log(`MeepoMind: Seeded ${INITIAL_MEMORIES.length} foundational memories`);
+    meepoMindLog.info(`Seeded ${missingMemories.length} foundational memories`);
   } catch (err: any) {
-    console.error("MeepoMind: Seeding failed:", err.message ?? err);
+    meepoMindLog.error(`Seeding failed: ${err.message ?? err}`);
     throw err;
   }
 }
@@ -150,7 +105,7 @@ export async function getAllMeepoMemories(): Promise<Memory[]> {
 
     return memories;
   } catch (err: any) {
-    console.error("MeepoMind: Retrieval failed:", err.message ?? err);
+    meepoMindLog.error(`Retrieval failed: ${err.message ?? err}`);
     throw err;
   }
 }
@@ -182,7 +137,7 @@ export async function getMeepoMemoriesSection(): Promise<string> {
 
     return `\nMEEPO KNOWLEDGE BASE (Canonical memories Meepo may reference):\n${lines}\n`;
   } catch (err: any) {
-    console.error("MeepoMind: Formatting failed:", err.message ?? err);
+    meepoMindLog.error(`Formatting failed: ${err.message ?? err}`);
     // Return empty string instead of throwing; graceful degradation
     return "";
   }
@@ -218,7 +173,7 @@ export function knowsAbout(topicPrefix: string): boolean {
 
     return result.cnt > 0;
   } catch (err: any) {
-    console.error("MeepoMind: Knowledge check failed:", err.message ?? err);
+    meepoMindLog.error(`Knowledge check failed: ${err.message ?? err}`);
     return false;
   }
 }

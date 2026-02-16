@@ -2,8 +2,10 @@
 import { ping } from "./ping.js";
 import { meepo } from "./meepo.js";
 import { session } from "./session.js";
+import { meeps } from "./meeps.js";
+import { missions } from "./missions.js";
 
-export const commandList = [ping, meepo, session];
+export const commandList = [ping, meepo, session, meeps, missions];
 
 export const commandMap = new Collection(
   commandList.map((c: any) => [c.data.name, c])

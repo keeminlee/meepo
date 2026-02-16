@@ -4,13 +4,15 @@
  * Optional audio processing layer that applies pitch shift and reverb
  * to TTS output before playback. Provider-agnostic, fully reversible via env flags.
  * 
+ * Reverb Implementation: Multi-tap echo simulation (mimics freeverb-style decay)
+ * 
  * Env vars:
  * - AUDIO_FX_ENABLED=true|false (default: false)
  * - AUDIO_FX_PITCH=1.05 (default: 1.0, no change)
  * - AUDIO_FX_REVERB=true|false (default: false)
- * - AUDIO_FX_REVERB_WET=0.3 (default: 0.3, output gain for wet signal)
- * - AUDIO_FX_REVERB_DELAY_MS=20 (default: 20, small room)
- * - AUDIO_FX_REVERB_DECAY=0.4 (default: 0.4, how much echo fades)
+ * - AUDIO_FX_REVERB_WET=0.3 (default: 0.3, output gain for wet signal, 0-1)
+ * - AUDIO_FX_REVERB_ROOM_MS=100 (default: 100, simulated room size in ms)
+ * - AUDIO_FX_REVERB_DAMPING=0.7 (default: 0.7, high-freq damping, 0-1)
  */
 
 import { spawn } from "node:child_process";
@@ -18,7 +20,9 @@ import { writeFile, unlink } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { log } from "../utils/logger.js";
 
+const audioFxLog = log.withScope("audio-fx");
 const DEBUG_FX = process.env.DEBUG_VOICE === "true";
 
 /**
@@ -36,7 +40,7 @@ export async function applyPostTtsFx(
 
   if (!enabled) {
     if (DEBUG_FX) {
-      console.log("[AudioFX] Disabled");
+      audioFxLog.debug("Disabled");
     }
     return input;
   }
@@ -49,8 +53,8 @@ export async function applyPostTtsFx(
     const reverbDecay = parseFloat(process.env.AUDIO_FX_REVERB_DECAY ?? "0.4");
 
     if (DEBUG_FX || pitch !== 1.0 || reverbEnabled) {
-      console.log(
-        `[AudioFX] Enabled (pitch=${pitch.toFixed(2)}, reverb=${reverbEnabled})`
+      audioFxLog.debug(
+        `Enabled (pitch=${pitch.toFixed(2)}, reverb=${reverbEnabled})`
       );
     }
 
@@ -62,16 +66,28 @@ export async function applyPostTtsFx(
       filters.push(`rubberband=pitch=${pitch.toFixed(3)}`);
     }
 
-    // Reverb using aecho
+    // Reverb using multiple echo delays (simulates reverb decay)
     if (reverbEnabled) {
-      // aecho format: in_gain:out_gain:delay_ms:decay
-      // in_gain: input signal gain (0-1)
-      // out_gain: output/wet signal gain (0-1) - controls wet/dry mix
-      // delay_ms: echo delay time in milliseconds
-      // decay: how much the echo fades (0-1)
-      const inGain = 0.8;
-      const outGain = reverbWet;
-      filters.push(`aecho=${inGain}:${outGain}:${reverbDelay}:${reverbDecay}`);
+      // Create multiple staggered delays to simulate a reverb tail
+      // This is better than single aecho because it creates a more natural decay
+      const reverbRoom = parseInt(process.env.AUDIO_FX_REVERB_ROOM_MS ?? "100", 10); // room size in ms
+      const reverbDamping = parseFloat(process.env.AUDIO_FX_REVERB_DAMPING ?? "0.7"); // high freq damping
+      
+      // Build reverb using freeverb-style multi-tap delays
+      // Multiple echoes at different delays create the reverb "tail"
+      const taps = [
+        { delayMs: 30, gain: 0.4 },
+        { delayMs: 60, gain: 0.3 },
+        { delayMs: 100, gain: 0.2 },
+        { delayMs: 150, gain: 0.15 },
+      ];
+      
+      // Construct aecho with multiple taps: delays separated by | and gains by |
+      const delays = taps.map(t => t.delayMs).join("|");
+      const gains = taps.map(t => t.gain).join("|");
+      const aechoFilter = `aecho=0.8:${reverbWet}:${delays}:${gains}`;
+      
+      filters.push(aechoFilter);
     }
 
     // If no filters, return original

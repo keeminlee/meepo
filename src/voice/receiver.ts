@@ -16,6 +16,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pcmToWav } from "./stt/wav.js";
 import { log } from "../utils/logger.js";
+import { overlayEmitSpeaking } from "../overlay/server.js";
 
 /**
  * Phase 2 Task 1-2: Speaking detection + PCM capture pipeline
@@ -42,6 +43,9 @@ const MIN_AUDIO_MS = 250;        // require at least 250ms worth of PCM bytes
 const USER_COOLDOWN_MS = 300;    // prevent rapid retriggers
 const LONG_AUDIO_MS = 1200;      // long utterances bypass the "activity" gate + cooldown
 
+// Audio silence threshold for overlay speaking detection
+const AUDIO_SILENCE_THRESHOLD_MS = 150; // emit speaking=false after 150ms with no packets
+
 // Click filter: require enough "active" frames (energy) in the chunk
 const FRAME_MS = 20;
 const FRAME_BYTES = Math.round(BYTES_PER_SEC * (FRAME_MS / 1000)); // 3840 bytes for 20ms
@@ -58,6 +62,10 @@ let sttProvider: Awaited<ReturnType<typeof getSttProvider>> | null = null;
 // Maintains Promise<void> chain per guild to serialize transcriptions
 // Guarantees: no overlapping STT calls, FIFO order, no skipped utterances
 const guildSttChain = new Map<string, Promise<void>>();
+
+// Track overlay speaking state per user
+// Maps guildId -> userId -> { idleTimer: NodeJS.Timeout | null, hasEmittedTrue: boolean }
+const overlayUserState = new Map<string, Map<string, { idleTimer: NodeJS.Timeout | null; hasEmittedTrue: boolean }>>();
 
 // Track per guild listener so stopReceiver can detach cleanly
 type ReceiverHandlers = {
@@ -136,6 +144,60 @@ async function saveAudioChunk(
 }
 
 /**
+ * Helper to manage overlay speaking state for a user
+ * On first packet: emit speaking=true and start idle timer
+ * On subsequent packets: reset idle timer
+ * On idle timeout: emit speaking=false
+ */
+function updateOverlaySpeakingActivity(guildId: string, userId: string) {
+  if (!overlayUserState.has(guildId)) {
+    overlayUserState.set(guildId, new Map());
+  }
+
+  const guildState = overlayUserState.get(guildId)!;
+  let userState = guildState.get(userId);
+
+  if (!userState) {
+    // First packet: emit speaking=true
+    userState = { idleTimer: null, hasEmittedTrue: false };
+    guildState.set(userId, userState);
+    overlayEmitSpeaking(userId, true);
+    userState.hasEmittedTrue = true;
+  }
+
+  // Clear existing idle timer if any
+  if (userState.idleTimer) {
+    clearTimeout(userState.idleTimer);
+  }
+
+  // Set new idle timer: after AUDIO_SILENCE_THRESHOLD_MS with no packets, emit speaking=false
+  userState.idleTimer = setTimeout(() => {
+    overlayEmitSpeaking(userId, false);
+    guildState.delete(userId);
+  }, AUDIO_SILENCE_THRESHOLD_MS);
+}
+
+/**
+ * Cleanup overlay speaking state when capture ends
+ */
+function clearOverlaySpeakingState(guildId: string, userId: string) {
+  const guildState = overlayUserState.get(guildId);
+  if (!guildState) return;
+
+  const userState = guildState.get(userId);
+  if (userState) {
+    if (userState.idleTimer) {
+      clearTimeout(userState.idleTimer);
+    }
+    // Emit false immediately (finalize is called, so audio is definitely done)
+    if (userState.hasEmittedTrue) {
+      overlayEmitSpeaking(userId, false);
+    }
+  }
+  guildState.delete(userId);
+}
+
+/**
  * Handle transcription and ledger emission for accepted audio.
  * Called serially per guild via promise chaining (see call site).
  */
@@ -208,16 +270,24 @@ async function handleTranscription(
     });
 
     voiceLog.info(
-      `📝 Ledger: ${displayName} (${userId}), text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
+      `📝 Ledger: ${displayName}, text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
     );
 
     // Task 4.6: Check if addressed to Meepo and generate voice reply if conditions met
     const meepo = getActiveMeepo(guildId);
-    if (meepo && isAddressedToMeepo(contentNorm, meepo.form_id)) {
+    const addressedToMeepo = meepo && isAddressedToMeepo(contentNorm, meepo.form_id);
+    
+    const voiceDecision = addressedToMeepo ? "✓ replying" : "✗ ignored";
+    voiceLog.debug(
+      `🎯 VOICE GATE: addressed=${addressedToMeepo} (${displayName}) → ${voiceDecision}: "${result.text}"`
+    );
+
+    if (addressedToMeepo) {
       // Async, non-blocking—reply handler checks all preconditions internally
       respondToVoiceUtterance({
         guildId,
         channelId,
+        speakerId: userId,
         speakerName: displayName,
         utterance: contentNorm, // Use normalized for downstream processing
       }).catch((err) => {
@@ -225,35 +295,36 @@ async function handleTranscription(
       });
     }
   } catch (err) {
-    voiceLog.error(`Transcription failed for userId=${userId}:`, { err });
+    voiceLog.error(`Transcription failed:`, { err });
   }
 }
 
 export function startReceiver(guildId: string): void {
   const state = getVoiceState(guildId);
   if (!state) {
-    voiceLog.warn(`No voice state for guild ${guildId}`);
+    voiceLog.warn(`No voice state`);
     return;
   }
   if (!state.sttEnabled) {
-    voiceLog.warn(`STT not enabled for guild ${guildId}`);
+    voiceLog.warn(`STT not enabled`);
     return;
   }
 
   // Idempotent: don't register twice
   if (receiverHandlers.has(guildId)) {
-    voiceLog.debug(`Receiver already active for guild ${guildId}`);
+    voiceLog.debug(`Receiver already active`);
     return;
   }
 
   const connection = state.connection;
   const channelId = state.channelId;
+  const channelName = state.guild.channels.cache.get(channelId)?.name ?? "unknown";
 
   if (!activeSpeakers.has(guildId)) activeSpeakers.set(guildId, new Map());
   if (!pcmCaptures.has(guildId)) pcmCaptures.set(guildId, new Map());
   if (!userCooldowns.has(guildId)) userCooldowns.set(guildId, new Map());
 
-  voiceLog.info(`Starting receiver for guild ${guildId}, channel ${channelId}`);
+  voiceLog.info(`Starting receiver for channel #${channelName}`);
 
   const onStart = async (userId: string) => {
     const speakers = activeSpeakers.get(guildId);
@@ -312,6 +383,9 @@ export function startReceiver(guildId: string): void {
     opusDecoder.on("data", (pcmChunk: Buffer) => {
       const cap = captures.get(userId);
       if (!cap) return;
+
+      // Update overlay speaking activity (emits true on first packet, resets idle timer)
+      updateOverlaySpeakingActivity(guildId, userId);
 
       cap.pcmChunks.push(pcmChunk);
       cap.totalBytes += pcmChunk.length;
@@ -417,6 +491,9 @@ export function startReceiver(guildId: string): void {
           voiceLog.debug(`finalize reason=${reason} userId=${userId}`, { err });
         }
       } finally {
+        // Cleanup overlay speaking state
+        clearOverlaySpeakingState(guildId, userId);
+
         // ALWAYS cleanup to prevent duplicates/leaks
         speakers.delete(userId);
         captures.delete(userId);
@@ -471,6 +548,19 @@ export function stopReceiver(guildId: string): void {
 
   userCooldowns.get(guildId)?.clear();
   userCooldowns.delete(guildId);
+
+  // Clean up overlay speaking state for all users in this guild
+  const guildState = overlayUserState.get(guildId);
+  if (guildState) {
+    guildState.forEach((userState, userId) => {
+      if (userState.idleTimer) {
+        clearTimeout(userState.idleTimer);
+      }
+      // Ensure overlay clients are notified this user is no longer speaking
+      overlayEmitSpeaking(userId, false);
+    });
+    overlayUserState.delete(guildId);
+  }
 }
 
 export function isReceiverActive(guildId: string): boolean {

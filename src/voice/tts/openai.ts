@@ -15,7 +15,10 @@
  */
 
 import { getOpenAIClient } from "../../llm/client.js";
+import { log } from "../../utils/logger.js";
 import { TtsProvider } from "./provider.js";
+
+const ttsLog = log.withScope("tts");
 
 export class OpenAiTtsProvider implements TtsProvider {
   private model: string;
@@ -31,8 +34,8 @@ export class OpenAiTtsProvider implements TtsProvider {
     );
 
     if (process.env.DEBUG_VOICE === "true") {
-      console.log(
-        `[TTS] OpenAI provider initialized: model=${this.model}, voice=${this.voice}, maxCharsPerChunk=${this.maxCharsPerChunk}`
+      ttsLog.debug(
+        `OpenAI provider initialized: model=${this.model}, voice=${this.voice}, maxCharsPerChunk=${this.maxCharsPerChunk}`
       );
     }
   }
@@ -74,8 +77,8 @@ export class OpenAiTtsProvider implements TtsProvider {
       const chunks = this.chunkText(text.trim());
 
       if (process.env.DEBUG_VOICE === "true") {
-        console.log(
-          `[TTS] Synthesizing ${chunks.length} chunk(s), total chars=${text.length}`
+        ttsLog.debug(
+          `Synthesizing ${chunks.length} chunk(s), total chars=${text.length}`
         );
       }
 
@@ -95,8 +98,8 @@ export class OpenAiTtsProvider implements TtsProvider {
         buffers.push(buf);
 
         if (process.env.DEBUG_VOICE === "true" && chunks.length > 1) {
-          console.log(
-            `[TTS] Chunk ${i + 1}/${chunks.length}: ${chunk.substring(0, 50).replace(/\n/g, " ")}...`
+          ttsLog.debug(
+            `Chunk ${i + 1}/${chunks.length}: ${chunk.substring(0, 50).replace(/\n/g, " ")}...`
           );
         }
       }
@@ -105,16 +108,16 @@ export class OpenAiTtsProvider implements TtsProvider {
       const totalBuffer = Buffer.concat(buffers);
 
       if (process.env.DEBUG_VOICE === "true") {
-        console.log(
-          `[TTS] Synthesis complete: ${totalBuffer.length} bytes of MP3 audio`
+        ttsLog.debug(
+          `Synthesis complete: ${totalBuffer.length} bytes of MP3 audio`
         );
       }
 
       return totalBuffer;
     } catch (err: any) {
       const message = err.message ?? err.toString();
-      console.error(
-        `[TTS] OpenAI synthesis failed for text "${text.substring(0, 50).replace(/\n/g, " ")}...": ${message}`
+      ttsLog.error(
+        `OpenAI synthesis failed for text "${text.substring(0, 50).replace(/\n/g, " ")}...": ${message}`
       );
       throw err;
     }

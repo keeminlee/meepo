@@ -18,8 +18,30 @@
 
 import { chat } from "../llm/client.js";
 import type { LedgerEntry } from "../ledger/ledger.js";
+import { getLedgerForSession } from "../ledger/ledger.js";
+import { buildTranscript } from "../ledger/transcripts.js";
+import { loadRegistry } from "../registry/loadRegistry.js";
+import { getDb } from "../db.js";
+import { randomUUID } from "node:crypto";
 import fs from "fs";
 import path from "path";
+
+/**
+ * Get formatted list of PC names from registry for prompt context
+ */
+function getPCNamesForPrompt(): string {
+  try {
+    const registry = loadRegistry();
+    const pcNames = registry.characters
+      .filter(c => c.type === "pc")
+      .map(c => c.canonical_name)
+      .sort();
+    return pcNames.join(", ");
+  } catch (err) {
+    console.warn("Failed to load PC names from registry:", err);
+    return "(registry unavailable)";
+  }
+}
 
 // ============================================================================
 // Configuration: Meecap Mode
@@ -28,21 +50,23 @@ import path from "path";
 export type MeecapMode = "narrative" | "v1_json";
 
 function getMeecapMode(): MeecapMode {
-  const mode = process.env.MEE_CAP_MODE ?? "narrative";
+  const mode = process.env.MEECAP_MODE ?? "narrative";
   return mode === "v1_json" ? "v1_json" : "narrative";
 }
 
 /**
  * Save narrative meecap to file system.
  * 
- * Writes to data/meecaps/{session_id}__{timestamp}.md
+ * Writes to data/meecaps/meecap_{sessionLabel}.md if label provided,
+ * otherwise falls back to meecap_{sessionId}.md
  * Creates directory if needed.
  */
 function saveNarrativeToFile(args: {
   sessionId: string;
+  sessionLabel?: string | null;
   narrative: string;
 }): string | null {
-  const { sessionId, narrative } = args;
+  const { sessionId, sessionLabel, narrative } = args;
 
   try {
     const meecapsDir = path.resolve("data", "meecaps");
@@ -52,9 +76,10 @@ function saveNarrativeToFile(args: {
       fs.mkdirSync(meecapsDir, { recursive: true });
     }
 
-    // Filename: {sessionId}__{timestamp}.md
-    const timestamp = Date.now();
-    const filename = `${sessionId}__${timestamp}.md`;
+    // Filename: meecap_{sessionLabel}.md or meecap_{sessionId}.md
+    const filename = sessionLabel 
+      ? `meecap_${sessionLabel}.md`
+      : `meecap_${sessionId}.md`;
     const filepath = path.join(meecapsDir, filename);
 
     // Write file
@@ -115,10 +140,32 @@ export type Meecap = {
   scenes: MeecapScene[];
 };
 
+// ============================================================================
+// Types: Meecap Beats-Only Schema (Deterministic)
+// ============================================================================
+
+export type MeecapBeatLite = {
+  text: string;          // Literal sentence from narrative (citations removed)
+  lines: number[];       // Explicit line list (e.g., [0,1,2,3])
+};
+
+export type MeecapBeats = {
+  version: 1;
+  session_id: string;
+  label?: string;
+  session_span: {
+    lines: LineSpan;
+    ledger_id_range: LedgerIdRange;
+    timestamp_range: { start: string; end: string };
+  };
+  beats: MeecapBeatLite[];
+};
+
 export type MeecapGenerationResult = {
   text: string;        // Discord message response
   meecap?: Meecap;     // Structured output (V1 only)
   narrative?: string;  // Prose narrative (narrative mode)
+  beatsJson?: MeecapBeats; // Deterministic beats-only JSON (from narrative)
 };
 
 /**
@@ -134,7 +181,9 @@ export type MeecapGenerationResult = {
  */
 export async function generateMeecapStub(args: {
   sessionId: string;
+  sessionLabel?: string | null;
   entries: LedgerEntry[];
+  buildBeatsJson?: boolean;
 }): Promise<MeecapGenerationResult> {
   const mode = getMeecapMode();
 
@@ -152,25 +201,34 @@ export async function generateMeecapStub(args: {
  */
 async function generateMeecapNarrative(args: {
   sessionId: string;
+  sessionLabel?: string | null;
   entries: LedgerEntry[];
+  buildBeatsJson?: boolean;
 }): Promise<MeecapGenerationResult> {
-  const { sessionId, entries } = args;
-
-  if (!entries || entries.length === 0) {
-    return {
-      text: "❌ No ledger entries found for this session.",
-    };
-  }
+  const { sessionId, sessionLabel, entries: _entries, buildBeatsJson = true } = args;
 
   try {
-    // Build transcript with line indices
-    const transcript = buildMeecapTranscript(entries);
+    // Build transcript with line indices using shared builder
+    const transcript = buildMeecapTranscript(sessionId, true);
+    
+    // Get transcript entries to determine entry count
+    const transcriptEntries = buildTranscript(sessionId, true);
+    const entryCount = transcriptEntries.length;
+    
+    // Get ledger entries for beats JSON generation (needs ledger IDs)
+    const entries = getLedgerForSession({ sessionId, primaryOnly: true });
+    
+    if (entryCount === 0) {
+      return {
+        text: "❌ No ledger entries found for this session.",
+      };
+    }
 
     // Build narrative-specific prompts
     const { systemPrompt, userMessage } = buildNarrativeMeecapPrompts({
       sessionId,
       transcript,
-      entryCount: entries.length,
+      entryCount,
     });
 
     // Call LLM
@@ -192,17 +250,32 @@ async function generateMeecapNarrative(args: {
     }
 
     // Append SOURCE TRANSCRIPT section (system-side, not LLM-generated)
-    const fullMeecap = `=== MEECAP NARRATIVE ===
-
-${modelOutput.trim()}
+    const fullMeecap = `${modelOutput.trim()}
 
 === SOURCE TRANSCRIPT ===
 
 ${transcript}`;
 
+    // Deterministically derive beats-only JSON from narrative output
+    let beatsJson: MeecapBeats | undefined;
+    let beatsWarning = "";
+    if (buildBeatsJson) {
+      const beatsResult = buildBeatsJsonFromNarrative({
+        sessionId,
+        lineCount: entryCount,
+        narrative: fullMeecap,
+        entries,
+      });
+      beatsJson = beatsResult.ok ? beatsResult.beats : undefined;
+      beatsWarning = beatsResult.ok ? "" : `\n**Beats JSON:** Not generated (${beatsResult.error})`;
+    } else {
+      beatsWarning = "\n**Beats JSON:** Skipped by flag";
+    }
+
     // Save to file system
     const filepath = saveNarrativeToFile({
       sessionId,
+      sessionLabel,
       narrative: fullMeecap,
     });
 
@@ -215,16 +288,17 @@ ${transcript}`;
 **Stats:**
 - Narrative word count: ~${narrativeWordCount}
 - Total word count (with transcript): ~${fullWordCount}
-- Transcript lines: ${entries.length}
+- Transcript lines: ${entryCount}
 
 **Storage:** Database (meecaps table)${fileLocation}
 **Retrieval:** Use \`/session recap range=recording style=narrative\` to retrieve
 
-The narrative Meecap has been saved and is ready for review/editing.`;
+The narrative Meecap has been saved and is ready for review/editing.${beatsWarning}`;
 
     return {
       text,
       narrative: fullMeecap,
+      beatsJson,
     };
   } catch (err: any) {
     return {
@@ -240,19 +314,24 @@ The narrative Meecap has been saved and is ready for review/editing.`;
  */
 async function generateMeecapV1Json(args: {
   sessionId: string;
+  sessionLabel?: string | null;
   entries: LedgerEntry[];
 }): Promise<MeecapGenerationResult> {
-  const { sessionId, entries } = args;
-
-  if (!entries || entries.length === 0) {
-    return {
-      text: "❌ No ledger entries found for this session.",
-    };
-  }
+  const { sessionId, sessionLabel, entries: _entries } = args;
 
   try {
-    // Build transcript with line indices and IDs
-    const transcript = buildMeecapTranscript(entries);
+    // Build transcript with line indices using shared builder
+    const transcript = buildMeecapTranscript(sessionId, true);
+    
+    // Get entries for validation - using ledger query for compatibility with validateMeecapV1
+    // which needs ledger IDs for reference validation
+    const entries = getLedgerForSession({ sessionId, primaryOnly: true });
+    
+    if (!entries || entries.length === 0) {
+      return {
+        text: "❌ No ledger entries found for this session.",
+      };
+    }
 
     // Pre-fill session span (immutable)
     const sessionSpan = {
@@ -346,6 +425,7 @@ function buildNarrativeMeecapPrompts(args: {
   entryCount: number;
 }): { systemPrompt: string; userMessage: string } {
   const { sessionId, transcript, entryCount } = args;
+  const pcNames = getPCNamesForPrompt();
 
   const systemPrompt = `You are Meecap, the session chronicler of a D&D game.
 
@@ -357,15 +437,60 @@ This is restructuring, NOT compression.
 The transcript is the source of truth.
 
 ------------------------------------------------------------
-OUT-OF-CHARACTER (OOC) EXCLUSION RULE (CRITICAL)
+PLAYER CHARACTERS (PCs)
 ------------------------------------------------------------
 
-The transcript may include out-of-character/table talk (rules discussion, real-life chat, scheduling, tech issues, "good game", etc.).
+The following are the player characters in this campaign: ${pcNames}
+All other named characters in the transcript are NPCs (non-player characters).
 
-You MUST EXCLUDE OOC content from the narrative.
-Only include in-character (IC) gameplay: in-world narration, roleplay, in-world planning, actions, checks, combat, and in-world consequences.
+------------------------------------------------------------
+SESSION RECAP HANDLING (CRITICAL)
+------------------------------------------------------------
 
-If you are unsure whether a line is IC or OOC, TREAT IT AS IC AND INCLUDE IT IN THE NARRATIVE.
+Most D&D sessions begin with a RECAP of the previous session. This is typically:
+- DM summarizing "Last time on..." or "Previously..."
+- Players catching up late joiners
+- Quick review of where the party left off
+- Out-of-character planning or logistics discussion
+
+You MUST identify and separate recap content from the main session narrative.
+
+RECAP SECTION RULES:
+- If the transcript starts with recap/summary of previous events, capture it in the RECAP section
+- Summarize what was being recapped (prior session events), NOT the meta-discussion
+- Example: If DM says "Last time you fought the dragon and escaped to the tavern", 
+  write: "The party had previously fought a dragon and escaped to a tavern (L0-L5)."
+- Keep recap section brief and factual
+- If there's no clear recap at the start, write "None" for the recap section
+
+After the recap section (if any), the NARRATIVE section begins with the actual gameplay of THIS session.
+
+OUT-OF-CHARACTER (OOC) EXCLUSION:
+- Exclude table talk, rules discussion, tech issues, scheduling from both sections
+- Focus on in-world events (whether recapped or happening now)
+- When unsure if something is IC or OOC, treat it as IC
+
+------------------------------------------------------------
+CITATION RULE (MANDATORY)
+------------------------------------------------------------
+
+You MUST cite the transcript line number for EVERY sentence or dialogue line in your narrative.
+
+Citation format:
+- Single line: (L42)
+- Short range: (L42-L44) — only if lines are tightly related
+
+Citation placement:
+- Place citations IMMEDIATELY after the sentence or dialogue they support.
+- Do NOT wait until end of paragraph to cite.
+
+Example of CORRECT citation:
+"Jamison stepped forward, hand on his sword hilt (L15). 'We need to investigate that tower,' he said firmly (L16). Minx nodded in agreement, her eyes scanning the crumbling stonework (L17-L18)."
+
+Example of INCORRECT (missing citations):
+"Jamison stepped forward, hand on his sword hilt. 'We need to investigate that tower,' he said firmly. Minx nodded in agreement, her eyes scanning the crumbling stonework."
+
+CRITICAL: If a sentence has no citation, it will be rejected. Every fact, action, and line of dialogue MUST have a citation showing which transcript line(s) it came from.
 
 ------------------------------------------------------------
 LINE COVERAGE RULE (CRITICAL — THIS PREVENTS COMPRESSION)
@@ -413,21 +538,19 @@ Some transcript lines are in-world narration or scene framing (often from the DM
 
 Player speech should appear as dialogue, preserving original wording as closely as possible.
 
+In fact, dialogue (from both players and NPCs) should be always quoted directly, with only minor grammar fixes for readability. Avoid paraphrasing dialogue unless the original is very fragmented or unclear.
+
 Proper names may drift due to speech-to-text. You may correct obvious misspellings when context clearly supports it.
 
-------------------------------------------------------------
-STYLE RULES
-------------------------------------------------------------
+=== SESSION RECAP ===
+<Summary of what was recapped from previous session(s), with citations>
+OR
+None
 
-- Third-person omniscient narration.
-- Do NOT mention “the DM” or “players.”
-- Exposition should read like a chronicle: clear, literal, grounded.
-- Dialogue should be written as dialogue, preserving original wording as closely as possible.
-- Preserve chronological order.
-- Preserve physical actions and staging.
+=== NARRATIVE ===
+<Faithful narrative reconstruction of THIS session's IC gameplay with citations>
 
-Avoid:
-- Grand metaphors
+Do not include any other commentary or sections
 - Thematic conclusions
 - Cinematic trailer phrasing
 - Invented internal thoughts or motivations
@@ -436,13 +559,7 @@ Avoid:
 OUTPUT FORMAT
 ------------------------------------------------------------
 
-Return EXACTLY:
-
-=== MEECAP NARRATIVE ===
-<faithful narrative reconstruction of IC lines with citations>
-
-[Optional, only if any OOC excluded]
-OOC_EXCLUDED_LINES: [L#, L#, ...]
+Return a faithful narrative reconstruction of IC lines with citations.
 
 Do not include any other commentary.`;
 
@@ -450,16 +567,31 @@ Do not include any other commentary.`;
   const userMessage = `You will be given a raw transcript.
 
 Each line is formatted as:
-[L{index} id={ledger_uuid}] [ISO_TIMESTAMP] SPEAKER: TEXT
+Create a two-part meecap:
+1. SESSION RECAP section: Summary of prior session events being recapped (if any)
+2. NARRATIVE section: Faithful reconstruction of THIS session's in-character gameplay
 
-TASK:
-Write a faithful reconstruction of ONLY the in-character (IC) gameplay as narrative + dialogue.
+CITATION REQUIREMENT (CRITICAL):
+- You MUST add a citation (L#) or (L#-L#) IMMEDIATELY after EVERY sentence.
+- Every line of dialogue must have a citation showing which transcript line it came from.
+- Every narrated action must have a citation.
+- If you write a sentence without a citation, you are doing it wrong.
+
+Example output:
+=== WHERE WE LEFT OFF ===
+The party had previously investigated the mysterious tower and discovered a hidden basement (L0-L3). They found a map pointing to an ancient ruin (L4-L6).
+
+=== NARRATIVE ===
+Jamison approached the tower cautiously (L7). 'This place gives me a bad feeling,' he muttered (L8). The group paused at the entrance, weapons drawn (L9-L10).
 
 IMPORTANT:
+- If no recap exists at transcript start, write "None" for SESSION RECAP
+- Exclude out-of-character/table talk from both sections
+- Use direct quotes wherever possible (light grammar cleanup allowed)
+- Every IC line must be reflected in the narrative (not merely cited)
 - Exclude out-of-character/table talk from the narrative.
 - Use direct quotes wherever possible (light grammar cleanup allowed).
 - Every IC line must be reflected in the narrative (not merely cited).
-- Cite every IC line at least once using (L#) or (L#–L#).
 
 TRANSCRIPT:
 ${transcript}`;
@@ -481,6 +613,7 @@ function buildV1MeecapPrompts(args: {
   transcript: string;
 }): { systemPrompt: string; userMessage: string } {
   const { sessionId, sessionSpan, transcript } = args;
+  const pcNames = getPCNamesForPrompt();
 
 const systemPrompt = `You are Meecap, an offline D&D session structurer.
 
@@ -501,14 +634,9 @@ CRITICAL RULES:
 - Beat evidence_ledger_ids must be a non-empty list.
 - Use only ledger IDs that appear in the transcript input. Never fabricate IDs.
 
-PRIMARY PLAYER CHARACTERS:
-Jamison
-Minx
-Snowflake
-Cyril
-Evanora
-Louis
-
+PLAYER CHARACTERS (PCs):
+The following are the player characters in this campaign: ${pcNames}
+All other named characters in the transcript are NPCs (non-player characters).
 When these characters appear in the transcript, refer to them by name.
 
 SPECIFICITY RULES:
@@ -685,15 +813,179 @@ function validateMeecapNarrative(prose: string): string[] {
  * [L0 id=abc123] [timestamp] speaker: content
  * [L1 id=def456] [timestamp] speaker: content
  */
-export function buildMeecapTranscript(entries: LedgerEntry[]): string {
+/**
+ * Build narrative-style transcript string from transcript entries.
+ * Format: [L#] Author: Content
+ */
+export function buildMeecapTranscript(sessionId: string, primaryOnly: boolean = true): string {
+  const entries = buildTranscript(sessionId, primaryOnly);
   return entries
-    .map((e, idx) => {
-      const t = new Date(e.timestamp_ms).toISOString();
-      // Use normalized content if available, fallback to raw
-      const content = e.content_norm ?? e.content;
-      return `[L${idx} id=${e.id}] [${t}] ${e.author_name}: ${content}`;
-    })
+    .map((e) => `[L${e.line_index}] ${e.author_name}: ${e.content}`)
     .join("\n");
+}
+
+/**
+ * Legacy wrapper for compatibility (may be removed after migration).
+ * Use buildMeecapTranscript(sessionId) instead.
+ */
+export function buildMeecapTranscriptFromEntries(entries: LedgerEntry[]): string {
+  return entries
+    .map((e, idx) => `[L${idx}] ${e.author_name}: ${e.content_norm ?? e.content}`)
+    .join("\n");
+}
+
+// ============================================================================
+// Deterministic Narrative -> Beats JSON
+// ============================================================================
+
+function extractSection(fullText: string, startMarker: string, endMarker: string): string | null {
+  const startIdx = fullText.indexOf(startMarker);
+  if (startIdx === -1) {
+    return null;
+  }
+  const endIdx = fullText.indexOf(endMarker, startIdx + startMarker.length);
+  if (endIdx === -1) {
+    return null;
+  }
+  return fullText.slice(startIdx + startMarker.length, endIdx).trim();
+}
+
+function parseLineRef(ref: string): number[] {
+  const normalized = ref.replace(/[–—]/g, "-");
+  const match = normalized.match(/L(\d+)(?:-L(\d+))?/);
+  if (!match) {
+    return [];
+  }
+  const start = Number(match[1]);
+  const end = match[2] ? Number(match[2]) : start;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return [];
+  }
+  const min = Math.min(start, end);
+  const max = Math.max(start, end);
+  const lines: number[] = [];
+  for (let i = min; i <= max; i++) {
+    lines.push(i);
+  }
+  return lines;
+}
+
+export function buildBeatsJsonFromNarrative(args: {
+  sessionId: string;
+  lineCount: number;
+  narrative: string;
+  entries?: LedgerEntry[];
+  label?: string;
+  insertToDB?: boolean;
+}): { ok: true; beats: MeecapBeats } | { ok: false; error: string } {
+  const { sessionId, lineCount, narrative, entries, label, insertToDB = false } = args;
+
+  const narrativeSection = extractSection(narrative, "=== NARRATIVE ===", "=== SOURCE TRANSCRIPT ===");
+  if (!narrativeSection) {
+    return { ok: false, error: "Missing NARRATIVE or SOURCE TRANSCRIPT section" };
+  }
+
+  const beats: MeecapBeatLite[] = [];
+  const linesSeen = new Set<number>();
+  const lineMax = lineCount - 1;
+
+  const lines = narrativeSection.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const sentenceRegex = /(.+?)\s*\((L\d+(?:-L\d+)?)\)/g;
+
+  for (const line of lines) {
+    let match: RegExpExecArray | null;
+    while ((match = sentenceRegex.exec(line)) !== null) {
+      const rawText = match[1].trim();
+      const lineRef = match[2];
+      const lineList = parseLineRef(lineRef);
+      const filtered = lineList.filter((n) => n >= 0 && n <= lineMax);
+      const uniqueSorted = Array.from(new Set(filtered)).sort((a, b) => a - b);
+
+      if (!rawText || uniqueSorted.length === 0) {
+        continue;
+      }
+
+      for (const n of uniqueSorted) {
+        linesSeen.add(n);
+      }
+
+      beats.push({
+        text: rawText,
+        lines: uniqueSorted,
+      });
+    }
+  }
+
+  if (beats.length === 0) {
+    return { ok: false, error: "No beats parsed from narrative (missing citations?)" };
+  }
+
+  // Optionally insert beats into database
+  if (insertToDB) {
+    try {
+      const db = getDb();
+      const now = Date.now();
+      
+      // Get session label for backfill
+      const sessionRow = db.prepare("SELECT label FROM sessions WHERE session_id = ? LIMIT 1").get(sessionId) as { label: string | null } | undefined;
+      const label = sessionRow?.label || null;
+      
+      // Delete existing beats for this session (idempotent)
+      db.prepare("DELETE FROM meecap_beats WHERE session_id = ?").run(sessionId);
+      
+      // Insert new beats
+      const insertStmt = db.prepare(`
+        INSERT INTO meecap_beats (id, session_id, label, beat_index, beat_text, line_refs, created_at_ms, updated_at_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      
+      for (let i = 0; i < beats.length; i++) {
+        const beat = beats[i];
+        insertStmt.run(
+          randomUUID(),                           // id
+          sessionId,                              // session_id
+          label,                                  // label (from sessions table)
+          i,                                      // beat_index
+          beat.text,                              // beat_text
+          JSON.stringify(beat.lines),             // line_refs (JSON array)
+          now,                                    // created_at_ms
+          now                                     // updated_at_ms
+        );
+      }
+    } catch (err: any) {
+      console.error("Failed to insert beats into meecap_beats table:", err.message);
+      return { ok: false, error: `DB insertion failed: ${err.message}` };
+    }
+  }
+
+  const sessionSpan = {
+    lines: { start: 0, end: lineMax },
+    ledger_id_range: entries ? {
+      start: entries[0]?.id ?? "",
+      end: entries[lineMax]?.id ?? "",
+    } : {
+      start: "unknown",
+      end: "unknown",
+    },
+    timestamp_range: entries ? {
+      start: new Date(entries[0]?.timestamp_ms ?? 0).toISOString(),
+      end: new Date(entries[lineMax]?.timestamp_ms ?? 0).toISOString(),
+    } : {
+      start: new Date(0).toISOString(),
+      end: new Date(0).toISOString(),
+    },
+  };
+
+  return {
+    ok: true,
+    beats: {
+      version: 1,
+      session_id: sessionId,
+      ...(label && { label }),
+      session_span: sessionSpan,
+      beats,
+    },
+  };
 }
 
 // ============================================================================
