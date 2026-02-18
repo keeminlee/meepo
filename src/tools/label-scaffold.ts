@@ -40,12 +40,14 @@ function parseArgs(): {
   batchSize: number;
   dryRun: boolean;
   verbose: boolean;
+  force: boolean;
 } {
   const args = process.argv.slice(2);
   let sessionLabel: string | null = null;
   let batchSize = 10;
   let dryRun = false;
   let verbose = false;
+  let force = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -59,10 +61,12 @@ function parseArgs(): {
       dryRun = true;
     } else if (arg === "--verbose") {
       verbose = true;
+    } else if (arg === "--force") {
+      force = true;
     }
   }
 
-  return { sessionLabel, batchSize, dryRun, verbose };
+  return { sessionLabel, batchSize, dryRun, verbose, force };
 }
 
 // ── Load scaffold from DB ──────────────────────────────────────────────────
@@ -94,15 +98,59 @@ function loadScaffold(sessionId: string): any[] {
   );
 }
 
+// ── Load existing labeled events from DB ──────────────────────────────────
+
+function loadExistingLabeledEvents(sessionId: string): any[] | null {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT id, event_type, description, start_index, end_index, is_ooc 
+       FROM events 
+       WHERE session_id = ? 
+         AND description LIKE '%[boundary:%' 
+       ORDER BY start_index ASC`
+    )
+    .all(sessionId) as Array<{
+      id: string;
+      event_type: string;
+      description: string;
+      start_index: number;
+      end_index: number;
+      is_ooc: number;
+    }>;
+
+  if (rows.length === 0) return null;
+
+  // Parse out the title from description (format: "Title - [boundary:...]")
+  return rows.map((row) => {
+    const parts = row.description.split(" - [");
+    const title = parts[0] || row.description;
+    
+    return {
+      event_id: row.id,
+      start_index: row.start_index,
+      end_index: row.end_index,
+      title: title,
+      event_type: row.event_type,
+      is_ooc: row.is_ooc === 1,
+      boundary_reason: "loaded_from_db",
+      dm_ratio: 0,
+      participants: [], // Will be repopulated by persistLabeledEvents
+    };
+  });
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const { sessionLabel, batchSize, dryRun, verbose } = parseArgs();
+  const { sessionLabel, batchSize, dryRun, verbose, force } = parseArgs();
 
   if (!sessionLabel) {
     console.error(
-      "Usage: npx tsx src/tools/label-scaffold.ts --session <LABEL> [--batch-size 10] [--dry-run] [--verbose]"
+      "Usage: npx tsx src/tools/label-scaffold.ts --session <LABEL> [--batch-size 10] [--dry-run] [--verbose] [--force]"
     );
+    console.error("\nOptions:");
+    console.error("  --force       Force re-labeling even if events already exist");
     process.exit(1);
   }
 
@@ -130,26 +178,43 @@ async function main(): Promise<void> {
   const transcript = buildTranscript(session.session_id, true);
   console.log(`✓ Loaded transcript: ${transcript.length} lines\n`);
 
-  // Create batches
-  const batches = batchScaffold(
-    scaffold,
-    session.session_id,
-    session.label,
-    { batchSize }
-  );
+  // Check for existing labeled events (unless --force)
+  let allLabeled: any[] = [];
+  
+  if (!force) {
+    const existing = loadExistingLabeledEvents(session.session_id);
+    if (existing && existing.length > 0) {
+      console.log(`✓ Found ${existing.length} existing labeled events in DB`);
+      console.log(`  (Skipping LLM, will update participants only)\n`);
+      allLabeled = existing;
+    }
+  }
 
-  console.log(`✓ Batched into ${batches.length} batch(es)\n`);
+  // If no existing events or --force, run LLM labeling
+  if (allLabeled.length === 0) {
+    if (force) {
+      console.log(`🔄 --force flag set, re-labeling from scratch\n`);
+    }
 
-  // Metrics collector
-  const metrics = new MetricsCollector(session.label, session.source as "live" | "ingest-media");
+    // Create batches
+    const batches = batchScaffold(
+      scaffold,
+      session.session_id,
+      session.label,
+      { batchSize }
+    );
 
-  // Process each batch
-  const allLabeled: any[] = [];
-  let successCount = 0;
-  let failCount = 0;
+    console.log(`✓ Batched into ${batches.length} batch(es)\n`);
 
-  for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
-    const batch = batches[batchIdx];
+    // Metrics collector
+    const metrics = new MetricsCollector(session.label, session.source as "live" | "ingest-media");
+
+    // Process each batch
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+      const batch = batches[batchIdx];
 
     try {
       // Populate excerpts
@@ -204,11 +269,12 @@ async function main(): Promise<void> {
       );
       failCount++;
     }
-  }
+    }
 
-  // Print summary
-  const sessionMetrics = metrics.getSessionMetrics(allLabeled);
-  metrics.printSessionSummary(sessionMetrics);
+    // Print summary
+    const sessionMetrics = metrics.getSessionMetrics(allLabeled);
+    metrics.printSessionSummary(sessionMetrics);
+  } // end if (allLabeled.length === 0)
 
   // Persist to DB and artifact
   if (dryRun) {
