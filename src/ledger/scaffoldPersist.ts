@@ -70,8 +70,19 @@ export function persistLabeledEventsToDb(
 
       const timestamp_ms = transcriptRow?.timestamp_ms ?? Date.now();
 
-      // Extract participants from labeled event
-      const participants = event.participants || [];
+      // Extract participants from transcript (all unique authors in event span)
+      const participantRows = db
+        .prepare(
+          `SELECT DISTINCT author_name FROM ledger_entries 
+           WHERE session_id = ? 
+             AND source IN ('text', 'voice', 'offline_ingest')
+             AND narrative_weight = 'primary'
+           ORDER BY timestamp_ms ASC, id ASC
+           LIMIT ? OFFSET ?`
+        )
+        .all(sessionId, event.end_index - event.start_index + 1, event.start_index) as Array<{ author_name: string }>;
+      
+      const participants = participantRows.map(r => r.author_name);
 
       // Build description: title + scaffold context
       const description = [
@@ -167,6 +178,20 @@ export function exportLabeledEventsToJson(
 
       const timestamp_ms = transcriptRow?.timestamp_ms ?? Date.now();
 
+      // Extract participants from transcript (all unique authors in event span)
+      const participantRows = db
+        .prepare(
+          `SELECT DISTINCT author_name FROM ledger_entries 
+           WHERE session_id = ? 
+             AND source IN ('text', 'voice', 'offline_ingest')
+             AND narrative_weight = 'primary'
+           ORDER BY timestamp_ms ASC, id ASC
+           LIMIT ? OFFSET ?`
+        )
+        .all(sessionId, e.end_index - e.start_index + 1, e.start_index) as Array<{ author_name: string }>;
+      
+      const participants = participantRows.map(r => r.author_name);
+
       // Build description from title + metadata
       const description = e.title || `Event: ${e.event_type}`;
 
@@ -179,7 +204,7 @@ export function exportLabeledEventsToJson(
         id: e.event_id,
         session_id: sessionId,
         event_type: e.event_type,
-        participants: e.participants || [],
+        participants: participants,
         description: description,
         confidence: confidence,
         start_index: e.start_index,
