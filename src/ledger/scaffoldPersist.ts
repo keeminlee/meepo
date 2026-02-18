@@ -71,16 +71,15 @@ export function persistLabeledEventsToDb(
       const timestamp_ms = transcriptRow?.timestamp_ms ?? Date.now();
 
       // Extract participants from transcript (all unique authors in event span)
+      // Use bronze_transcript if available (has line_index), otherwise fall back to ledger
       const participantRows = db
         .prepare(
-          `SELECT DISTINCT author_name FROM ledger_entries 
+          `SELECT DISTINCT author_name FROM bronze_transcript 
            WHERE session_id = ? 
-             AND source IN ('text', 'voice', 'offline_ingest')
-             AND narrative_weight = 'primary'
-           ORDER BY timestamp_ms ASC, id ASC
-           LIMIT ? OFFSET ?`
+             AND line_index >= ? 
+             AND line_index <= ?`
         )
-        .all(sessionId, event.end_index - event.start_index + 1, event.start_index) as Array<{ author_name: string }>;
+        .all(sessionId, event.start_index, event.end_index) as Array<{ author_name: string }>;
       
       const participants = participantRows.map(r => r.author_name);
 
@@ -179,16 +178,15 @@ export function exportLabeledEventsToJson(
       const timestamp_ms = transcriptRow?.timestamp_ms ?? Date.now();
 
       // Extract participants from transcript (all unique authors in event span)
+      // Use bronze_transcript if available (has line_index), otherwise fall back to ledger
       const participantRows = db
         .prepare(
-          `SELECT DISTINCT author_name FROM ledger_entries 
+          `SELECT DISTINCT author_name FROM bronze_transcript 
            WHERE session_id = ? 
-             AND source IN ('text', 'voice', 'offline_ingest')
-             AND narrative_weight = 'primary'
-           ORDER BY timestamp_ms ASC, id ASC
-           LIMIT ? OFFSET ?`
+             AND line_index >= ? 
+             AND line_index <= ?`
         )
-        .all(sessionId, e.end_index - e.start_index + 1, e.start_index) as Array<{ author_name: string }>;
+        .all(sessionId, e.start_index, e.end_index) as Array<{ author_name: string }>;
       
       const participants = participantRows.map(r => r.author_name);
 
