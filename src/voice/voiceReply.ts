@@ -23,6 +23,9 @@ import { getSanitizedSpeakerName } from "../ledger/speakerSanitizer.js";
 import { logSystemEvent } from "../ledger/system.js";
 import { applyPostTtsFx } from "./audioFx.js";
 import { getDiscordClient } from "../bot.js";
+import { getActiveSession } from "../sessions/sessions.js";
+import { logConvoTurn } from "../ledger/meepoConvo.js";
+import { buildConvoTailContext } from "../recall/buildConvoTailContext.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
 import type { TextChannel } from "discord.js";
 import { loadRegistry } from "../registry/loadRegistry.js";
@@ -208,12 +211,17 @@ export async function respondToVoiceUtterance({
       }
     }
 
+    // Layer 0: Build conversation tail context (session-scoped)
+    const activeSession = getActiveSession(guildId);
+    const { tailBlock } = buildConvoTailContext(activeSession?.session_id ?? null);
+
     // Build system prompt with persona
     const systemPrompt = await buildMeepoPrompt({
       meepo: active,
       recentContext: recentContext || undefined,
       hasVoiceContext: hasVoice,
       partyMemory,
+      convoTail: tailBlock || undefined,
     });
 
     // Build user message with sanitized speaker name
@@ -223,12 +231,38 @@ export async function respondToVoiceUtterance({
       content: utterance,
     });
 
+    // Layer 0: Log player utterance before LLM call
+    if (activeSession) {
+      logConvoTurn({
+        session_id: activeSession.session_id,
+        channel_id: channelId,
+        message_id: null, // Voice has no Discord message_id
+        speaker_id: speakerId,
+        speaker_name: sanitizedSpeakerName,
+        role: "player",
+        content_raw: utterance,
+      });
+    }
+
     // Call LLM to generate response (shorter tokens for voice)
     const responseText = await chat({
       systemPrompt,
       userMessage,
       maxTokens: 100, // Shorter responses for voice
     });
+
+    // Layer 0: Log Meepo's response after LLM call
+    if (activeSession) {
+      logConvoTurn({
+        session_id: activeSession.session_id,
+        channel_id: channelId,
+        message_id: null, // Voice has no Discord message_id
+        speaker_id: getDiscordClient().user?.id ?? null,
+        speaker_name: "Meepo",
+        role: "meepo",
+        content_raw: responseText,
+      });
+    }
 
     if (DEBUG_VOICE) {
       voiceReplyLog.debug(`LLM response: "${responseText.substring(0, 50)}..."`);

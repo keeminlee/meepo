@@ -8,6 +8,8 @@ import { startAutoSleepChecker } from "./meepo/autoSleep.js";
 import { getActiveSession } from "./sessions/sessions.js";
 import { appendLedgerEntry, getVoiceAwareContext } from "./ledger/ledger.js";
 import { getSanitizedSpeakerName } from "./ledger/speakerSanitizer.js";
+import { logConvoTurn } from "./ledger/meepoConvo.js";
+import { buildConvoTailContext } from "./recall/buildConvoTailContext.js";
 import { isAddressed } from "./meepo/triggers.js";
 import { chat } from "./llm/client.js";
 import { buildMeepoPrompt, buildUserMessage } from "./llm/prompts.js";
@@ -530,11 +532,16 @@ client.on("messageCreate", async (message: any) => {
         recallLog.debug(`Injecting party memory into prompt`);
       }
 
+      // Layer 0: Build conversation tail context (session-scoped)
+      const activeSession = getActiveSession(message.guildId);
+      const { tailBlock } = buildConvoTailContext(activeSession?.session_id ?? null);
+
       const systemPrompt = await buildMeepoPrompt({
         meepo: active,
         recentContext,
         hasVoiceContext: hasVoice,
         partyMemory,
+        convoTail: tailBlock || undefined,
       });
 
       const sanitizedAuthorName = getSanitizedSpeakerName(
@@ -548,10 +555,36 @@ client.on("messageCreate", async (message: any) => {
         content,
       });
 
+      // Layer 0: Log player message before LLM call
+      if (activeSession) {
+        logConvoTurn({
+          session_id: activeSession.session_id,
+          channel_id: message.channelId,
+          message_id: message.id,
+          speaker_id: message.author.id,
+          speaker_name: sanitizedAuthorName,
+          role: "player",
+          content_raw: content,
+        });
+      }
+
       const response = await chat({
         systemPrompt,
         userMessage,
       });
+
+      // Layer 0: Log Meepo's response after LLM call
+      if (activeSession) {
+        logConvoTurn({
+          session_id: activeSession.session_id,
+          channel_id: message.channelId,
+          message_id: null, // Will be set once reply is sent
+          speaker_id: client.user?.id ?? null,
+          speaker_name: "Meepo",
+          role: "meepo",
+          content_raw: response,
+        });
+      }
 
       textReplyLog.info(`💬 Meepo: "${response}"`);
 

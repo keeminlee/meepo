@@ -623,6 +623,70 @@ function applyMigrations(db: Database.Database) {
     `);
   }
 
+  // Migration: Add source metadata to meepo_mind (Layer 0 - Conversation Memory)
+  const mindColumns = db.pragma("table_info(meepo_mind)") as any[];
+  const hasMindSourceType = mindColumns.some((col: any) => col.name === "source_type");
+  
+  if (!hasMindSourceType) {
+    console.log("Migrating: Adding source metadata to meepo_mind (Layer 0)");
+    db.exec(`
+      ALTER TABLE meepo_mind ADD COLUMN source_type TEXT;
+      ALTER TABLE meepo_mind ADD COLUMN source_ref TEXT;
+    `);
+  }
+
+  // Migration: Create meepo_convo_log table (Layer 0 - Conversation Memory)
+  const tablesForConvoLog = db.pragma("table_list") as any[];
+  const hasConvoLog = tablesForConvoLog.some((t: any) => t.name === "meepo_convo_log");
+  
+  if (!hasConvoLog) {
+    console.log("Migrating: Creating meepo_convo_log table (Layer 0 - Conversation Memory)");
+    db.exec(`
+      CREATE TABLE meepo_convo_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        message_id TEXT,
+        speaker_id TEXT,
+        speaker_name TEXT,
+        role TEXT CHECK(role IN ('player','meepo','system')) NOT NULL,
+        content_raw TEXT NOT NULL,
+        content_norm TEXT,
+        ts_ms INTEGER NOT NULL,
+        FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+      );
+      
+      CREATE INDEX idx_meepo_convo_log_session ON meepo_convo_log(session_id, ts_ms);
+      CREATE INDEX idx_meepo_convo_log_channel ON meepo_convo_log(channel_id, ts_ms);
+      CREATE UNIQUE INDEX idx_meepo_convo_log_message ON meepo_convo_log(message_id) WHERE message_id IS NOT NULL;
+    `);
+  }
+
+  // Migration: Create meepo_convo_candidate table (Layer 0 - Conversation Memory)
+  const tablesForConvoCandidate = db.pragma("table_list") as any[];
+  const hasConvoCandidate = tablesForConvoCandidate.some((t: any) => t.name === "meepo_convo_candidate");
+  
+  if (!hasConvoCandidate) {
+    console.log("Migrating: Creating meepo_convo_candidate table (Layer 0 - Conversation Memory)");
+    db.exec(`
+      CREATE TABLE meepo_convo_candidate (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_log_id INTEGER NOT NULL,
+        candidate_type TEXT,
+        candidate_text TEXT NOT NULL,
+        reason TEXT,
+        status TEXT CHECK(status IN ('pending','approved','rejected')) DEFAULT 'pending',
+        reviewed_ts_ms INTEGER,
+        review_notes TEXT,
+        created_ts_ms INTEGER NOT NULL,
+        FOREIGN KEY(source_log_id) REFERENCES meepo_convo_log(id) ON DELETE CASCADE,
+        UNIQUE(source_log_id, candidate_type)
+      );
+      
+      CREATE INDEX idx_meepo_convo_candidate_status ON meepo_convo_candidate(status);
+    `);
+  }
+
   // (Future migrations can go here)
 }
 

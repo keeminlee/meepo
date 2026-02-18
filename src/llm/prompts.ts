@@ -11,6 +11,7 @@ export async function buildMeepoPrompt(opts: {
   recentContext?: string;
   hasVoiceContext?: boolean; // Task 4.7: Indicates voice entries in context
   partyMemory?: string; // Task 9: Party memory capsules from recall pipeline
+  convoTail?: string; // Layer 0: Recent conversation tail (session-scoped)
 }): Promise<string> {
   const persona = getPersona(opts.meepo.form_id);
   llmLog.debug(`Using persona: ${persona.displayName}`);
@@ -26,6 +27,11 @@ export async function buildMeepoPrompt(opts: {
 
   const partyMemory = opts.partyMemory
     ? `\n\n${opts.partyMemory}\n`
+    : "";
+
+  // Layer 0: Conversation tail (quoted chat log, not canonical truth)
+  const convoTail = opts.convoTail
+    ? `\n\n${opts.convoTail}`
     : "";
 
   const context = opts.recentContext
@@ -45,7 +51,8 @@ export async function buildMeepoPrompt(opts: {
     console.warn(`Warning: Persona ${opts.meepo.form_id} missing styleGuard`);
   }
 
-  // Order matters: Guardrails → Identity → Memory → Meepo Knowledge Base → Party Memory → Speech Style → Personality → Style Guard → Voice Hint → Custom → Context
+  // Order matters: Guardrails → Identity → Memory → Meepo Knowledge Base → Party Memory → Conversation Tail (Layer 0) → Speech Style → Personality → Style Guard → Voice Hint → Custom → Context
+  // Note: Conversation tail is treated as "reported speech" (what was said), not canonical truth
   return (
     persona.systemGuardrails +
     "\n" +
@@ -53,6 +60,7 @@ export async function buildMeepoPrompt(opts: {
     memory +
     meepoMemories +
     partyMemory +
+    convoTail +
     "\n" +
     persona.speechStyle +
     "\n" +
