@@ -3,6 +3,9 @@
  * 
  * Consolidates ledger querying logic used by both Meecap and Events tools.
  * Handles narrative_weight filtering upstream, always uses normalized content.
+ *
+ * Preferred source: bronze_transcript (pre-compiled, voice-fused).
+ * Fallback: live query from ledger_entries (used when bronze hasn't been compiled).
  */
 
 import { getDb } from "../db.js";
@@ -83,19 +86,39 @@ function toRequestedLineNumbers(selector: TranscriptLineSelector): number[] {
     return Array.from(out).sort((a, b) => a - b);
   }
 
-  addRange(selector);
+  addRange(selector as TranscriptLineRange);
 
   return Array.from(out).sort((a, b) => a - b);
 }
 
 /**
- * Load session transcript from ledger with consistent filtering.
- * 
+ * Load session transcript with consistent filtering.
+ *
+ * Prefers bronze_transcript (pre-compiled, voice-fused) when available.
+ * Falls back to a live query from ledger_entries if bronze hasn't been compiled.
+ *
  * @param sessionId - Session UUID
  * @param primaryOnly - If true, filters to narrative_weight='primary' only. Default: true
+ *                      (ignored when reading from bronze, which is always primary)
  * @returns Array of transcript entries with stable line indices
  */
 export function buildTranscript(
+  sessionId: string,
+  primaryOnly: boolean = true
+): TranscriptEntry[] {
+  // Prefer bronze when available
+  const bronze = tryGetBronzeTranscript(sessionId);
+  if (bronze !== null) return bronze;
+
+  // Fallback: live query from ledger_entries
+  return buildTranscriptFromLedger(sessionId, primaryOnly);
+}
+
+/**
+ * Build transcript directly from ledger_entries (bypasses bronze).
+ * Use this only if you explicitly want the raw ledger view.
+ */
+export function buildTranscriptFromLedger(
   sessionId: string,
   primaryOnly: boolean = true
 ): TranscriptEntry[] {
@@ -191,4 +214,58 @@ export function getTranscriptLinesDetailed(
     lines: results,
     missing,
   };
+}
+// ── Bronze transcript reader ──────────────────────────────────────────────────
+
+/**
+ * Read bronze_transcript for a session. Returns null if not yet compiled.
+ * Internal — callers should use buildTranscript() which auto-falls back.
+ */
+function tryGetBronzeTranscript(sessionId: string): TranscriptEntry[] | null {
+  const db = getDb();
+
+  const rows = db
+    .prepare(
+      `SELECT line_index, author_name, content, timestamp_ms
+       FROM bronze_transcript
+       WHERE session_id = ?
+       ORDER BY line_index ASC`
+    )
+    .all(sessionId) as Array<{
+      line_index: number;
+      author_name: string;
+      content: string;
+      timestamp_ms: number;
+    }>;
+
+  if (rows.length === 0) return null;
+
+  return rows.map((row) => ({
+    line_index: row.line_index,
+    author_name: row.author_name,
+    content: row.content,
+    timestamp_ms: row.timestamp_ms,
+  }));
+}
+
+/**
+ * Read bronze_transcript for a session.
+ * Throws if bronze hasn't been compiled yet (use compile-transcripts first).
+ */
+export function getBronzeTranscript(sessionId: string): TranscriptEntry[] {
+  const rows = tryGetBronzeTranscript(sessionId);
+  if (rows === null) {
+    throw new Error(
+      `No bronze transcript found for session ${sessionId}. ` +
+        `Run: npx tsx src/tools/compile-transcripts.ts --session <LABEL>`
+    );
+  }
+  return rows;
+}
+
+/**
+ * Returns true if bronze_transcript has been compiled for this session.
+ */
+export function hasBronzeTranscript(sessionId: string): boolean {
+  return tryGetBronzeTranscript(sessionId) !== null;
 }

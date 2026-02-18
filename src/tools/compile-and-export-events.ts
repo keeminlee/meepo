@@ -6,10 +6,15 @@
  * Options:
  *   --force    Force recompilation even if events already exist in database
  * 
+ * Policy (Task 4.2 - Live-only gating):
+ * - LIVE sessions: Use deterministic scaffold + batch LLM labeling (preferred)
+ * - INGEST-MEDIA sessions: Use legacy monolithic LLM extraction (fallback)
+ * 
  * Behavior:
  * 1. Load session transcript from ledger
  * 2. Check for existing events (skip if found, unless --force)
- * 3. Call LLM to extract structured events (if needed)
+ * 3a. [LIVE] Compile scaffold → batch label with LLM
+ * 3b. [INGEST] Call single LLM to extract structured events
  * 4. Validate: no gaps, no overlaps, ascending coverage
  * 5. UPSERT events into database (idempotent)
  * 6. Populate character_event_index with PC exposure classification
@@ -25,6 +30,13 @@ import YAML from "yaml";
 import { getDb } from "../db.js";
 import { buildTranscript } from "../ledger/transcripts.js";
 import { chat } from "../llm/client.js";
+
+// Scaffold pipeline imports (Task 4.2)
+import { batchScaffold } from "../ledger/scaffoldBatcher.js";
+import { buildExcerpt } from "../ledger/scaffoldExcerpt.js";
+import { labelScaffoldBatch } from "../ledger/scaffoldLabel.js";
+import { applyLabels } from "../ledger/scaffoldJoin.js";
+import type { LabeledScaffoldEvent } from "../ledger/scaffoldBatchTypes.js";
 
 const DEFAULT_NARRATIVE_WEIGHT = "primary";
 
@@ -237,7 +249,7 @@ Requirements
     userMessage,
     model: process.env.LLM_MODEL ?? "gpt-4o-mini",
     temperature: 0.2,
-    maxTokens: 2000,
+    maxTokens: 16000,
   });
 
   try {
@@ -355,6 +367,106 @@ function loadPCRegistry(): Map<string, string> {
   return pcMap;
 }
 
+// Load scaffold from event_scaffold table
+function loadScaffold(sessionId: string): any[] {
+  const db = getDb();
+  return db
+    .prepare(
+      `SELECT event_id, session_id, start_index, end_index, boundary_reason,
+              confidence, dm_ratio, signal_hits, compiled_at_ms
+       FROM event_scaffold
+       WHERE session_id = ?
+       ORDER BY start_index ASC`
+    )
+    .all(sessionId) as any[];
+}
+
+// Extract events via scaffold pipeline (for live sessions)
+async function extractEventsViaScaffold(
+  sessionId: string,
+  sessionLabel: string,
+  transcript: Array<{ index: number; author: string; content: string; timestamp: number }>,
+  batchSize: number = 10
+): Promise<ExtractedEvent[]> {
+  const db = getDb();
+
+  // Load scaffold
+  const scaffold = loadScaffold(sessionId);
+  if (scaffold.length === 0) {
+    throw new Error(
+      `No scaffold found for ${sessionLabel}. Run compile-scaffold.ts first.`
+    );
+  }
+
+  console.log(`  ✓ Loaded scaffold: ${scaffold.length} spans`);
+
+  // Batch scaffold
+  const batches = batchScaffold(scaffold, sessionId, sessionLabel, { batchSize });
+  console.log(`  ✓ Batched into ${batches.length} batch(es)`);
+
+  // Build transcript entries for excerpts
+  const transcriptForExcerpt = transcript.map((e) => ({
+    line_index: e.index,
+    author_name: e.author,
+    content: e.content,
+    timestamp_ms: e.timestamp,
+  }));
+
+  // Process each batch
+  const allLabeled: LabeledScaffoldEvent[] = [];
+  let successCount = 0;
+
+  for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+    const batch = batches[batchIdx];
+
+    try {
+      // Populate excerpts
+      for (const item of batch.items) {
+        item.excerpt = buildExcerpt(
+          transcriptForExcerpt,
+          item.start_index,
+          item.end_index,
+          { maxLines: 60 }
+        );
+      }
+
+      // Call LLM
+      const result = await labelScaffoldBatch(
+        batch,
+        process.env.LLM_MODEL ?? "gpt-4o-mini"
+      );
+
+      // Join labels
+      const joinResult = applyLabels(batch, result.labels);
+
+      if (joinResult.missingLabels.length > 0) {
+        console.error(
+          `  ⚠️  [${batch.batch_id}] Missing labels for: ${joinResult.missingLabels.join(", ")}`
+        );
+        continue;
+      }
+
+      allLabeled.push(...joinResult.labeled);
+      successCount++;
+    } catch (err) {
+      console.error(
+        `  ❌ [${batch.batch_id}] ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  console.log(`  ✓ Labeled ${allLabeled.length} events (${successCount}/${batches.length} batches succeeded)`);
+
+  // Convert to ExtractedEvent format
+  return allLabeled.map((e) => ({
+    start_index: e.start_index,
+    end_index: e.end_index,
+    title: e.title || `Event: ${e.event_type}`,
+    event_type: e.event_type as ExtractedEvent["event_type"],
+    is_ooc: e.is_ooc,
+  }));
+}
+
 // Check if events already exist in database
 function loadExistingEvents(sessionId: string): ExtractedEvent[] | null {
   const db = getDb();
@@ -432,7 +544,6 @@ function exportEventsToJSON(
 // Populate character_event_index with PC exposure classification
 function populateCharacterEventIndex(sessionId: string, events: ExtractedEvent[]): void {
   const db = getDb();
-  const authorIdToPcId = loadPCRegistry();
   const allPCs = getAllPCs();
 
   const populateTransaction = db.transaction(() => {
@@ -454,18 +565,6 @@ function populateCharacterEventIndex(sessionId: string, events: ExtractedEvent[]
         .run(...eventIds);
     }
 
-    // Get all ledger entries for this session
-    const allEntries = db
-      .prepare(
-        `SELECT author_id, author_name
-         FROM ledger_entries 
-         WHERE session_id = ?
-           AND source IN ('text', 'offline_ingest')
-           AND narrative_weight = ?
-         ORDER BY timestamp_ms ASC, id ASC`
-      )
-      .all(sessionId, DEFAULT_NARRATIVE_WEIGHT) as Array<{ author_id: string; author_name: string }>;
-
     // For each event, classify PC exposure (skip OOC events)
     let insertedCount = 0;
     for (const event of events) {
@@ -474,13 +573,13 @@ function populateCharacterEventIndex(sessionId: string, events: ExtractedEvent[]
         continue;
       }
 
-      // Get the event ID from database
+      // Get the event ID and participants from database
       const eventRow = db
         .prepare(
-          `SELECT id FROM events 
+          `SELECT id, participants FROM events 
            WHERE session_id = ? AND start_index = ? AND end_index = ? AND event_type = ?`
         )
-        .get(sessionId, event.start_index, event.end_index, event.event_type) as { id: string } | undefined;
+        .get(sessionId, event.start_index, event.end_index, event.event_type) as { id: string; participants: string } | undefined;
 
       if (!eventRow) {
         console.warn(
@@ -490,31 +589,25 @@ function populateCharacterEventIndex(sessionId: string, events: ExtractedEvent[]
       }
 
       const eventId = eventRow.id;
-
-      // Build set of author_ids that appear in this event's span
-      const spanAuthorIds = new Set<string>();
-      for (let i = event.start_index; i <= event.end_index && i < allEntries.length; i++) {
-        if (allEntries[i]?.author_id) {
-          spanAuthorIds.add(allEntries[i].author_id);
-        }
+      
+      // Parse participants JSON array
+      let participants: string[] = [];
+      try {
+        participants = JSON.parse(eventRow.participants || "[]");
+      } catch (err) {
+        console.warn(`⚠️  Failed to parse participants for event ${eventId}, treating as empty`);
+        participants = [];
       }
 
       // Classify each PC
       for (const pc of allPCs) {
-        // Find Discord author_id for this PC
-        let pcAuthorId: string | null = null;
-        for (const [authorId, mappedPcId] of authorIdToPcId) {
-          if (mappedPcId === pc.id) {
-            pcAuthorId = authorId;
-            break;
-          }
-        }
+        // Check if PC's canonical_name appears in any participant
+        // Fuzzy match: "Snowflake" matches "Snowflake (Panda)"
+        const isDirect = participants.some(participant => 
+          participant.toLowerCase().includes(pc.canonical_name.toLowerCase())
+        );
 
-        if (!pcAuthorId) {
-          continue;
-        }
-
-        const exposureType = spanAuthorIds.has(pcAuthorId) ? "direct" : "witnessed";
+        const exposureType = isDirect ? "direct" : "witnessed";
 
         // INSERT OR REPLACE
         db.prepare(
@@ -733,12 +826,31 @@ export async function compileAndExportSession(sessionLabel: string, force: boole
         }
       }
       
-      // Extract events via LLM
-      console.log("\nCalling LLM to extract events...");
-      const extracted = await extractEvents(transcript, entries.length);
-      events = extracted;
-      needsUpsert = true;
-      console.log(`✓ Extracted ${events.length} events`);
+      // **Policy Switch (Task 4.2): Live-only gating**
+      // - LIVE sessions → use deterministic scaffold + batch LLM labeling
+      // - INGEST-MEDIA sessions → use legacy monolithic LLM extraction
+      const useLegacyExtraction = session.source !== "live";
+      
+      if (useLegacyExtraction) {
+        // Legacy: Monolithic LLM extraction (single call for entire session)
+        console.log("\n[LEGACY] Calling LLM to extract events (monolithic)...");
+        const extracted = await extractEvents(transcript, entries.length);
+        events = extracted;
+        needsUpsert = true;
+        console.log(`✓ Extracted ${events.length} events`);
+      } else {
+        // Modern: Scaffold + batch LLM labeling (deterministic boundaries)
+        console.log("\n[SCAFFOLD] Extracting events via scaffold pipeline...");
+        const extracted = await extractEventsViaScaffold(
+          session.session_id,
+          session.label,
+          entries,
+          10 // batch size
+        );
+        events = extracted;
+        needsUpsert = true;
+        console.log(`✓ Extracted ${events.length} events`);
+      }
     }
 
     // Validate events (even if loaded from DB, validate for consistency)
@@ -764,12 +876,13 @@ export async function compileAndExportSession(sessionLabel: string, force: boole
     if (needsUpsert) {
       console.log("\nUpserting events into database...");
       upsertEvents(session.session_id, events, entries);
-
-      console.log("Populating PC exposure classification...");
-      populateCharacterEventIndex(session.session_id, events);
     } else {
       console.log("\n✓ Events already in database (skipping upsert)");
     }
+
+    // Populate PC exposure classification (always run, uses participants from DB)
+    console.log("Populating PC exposure classification...");
+    populateCharacterEventIndex(session.session_id, events);
 
     // Build and export visualization
     console.log("\nBuilding event visualization...");

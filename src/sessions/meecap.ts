@@ -57,7 +57,7 @@ function getMeecapMode(): MeecapMode {
 /**
  * Save narrative meecap to file system.
  * 
- * Writes to data/meecaps/meecap_{sessionLabel}.md if label provided,
+ * Writes to data/meecaps/narratives/meecap_{sessionLabel}.md if label provided,
  * otherwise falls back to meecap_{sessionId}.md
  * Creates directory if needed.
  */
@@ -69,7 +69,7 @@ function saveNarrativeToFile(args: {
   const { sessionId, sessionLabel, narrative } = args;
 
   try {
-    const meecapsDir = path.resolve("data", "meecaps");
+    const meecapsDir = path.resolve("data", "meecaps", "narratives");
     
     // Ensure directory exists
     if (!fs.existsSync(meecapsDir)) {

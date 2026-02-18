@@ -70,7 +70,7 @@ function main(): void {
   db.pragma("journal_mode = WAL");
 
   // Build query based on filters
-  let whereClause = "WHERE source = 'offline_ingest'";
+  let whereClause = "WHERE narrative_weight = 'primary' AND source IN ('text', 'voice', 'offline_ingest')";
   const params: any[] = [];
   
   if (args.sessionLabel) {
@@ -120,8 +120,9 @@ function main(): void {
   console.log("Sessions to process:");
   for (const [sessionId, stats] of bySession.entries()) {
     // Get session label for readability
-    const labelRow = db.prepare("SELECT label FROM sessions WHERE session_id = ?").get(sessionId) as { label?: string } | undefined;
-    const label = labelRow?.label || sessionId.substring(0, 8);
+    const sessionIdStr = sessionId || "unknown";
+    const labelRow = db.prepare("SELECT label FROM sessions WHERE session_id = ?").get(sessionIdStr) as { label?: string } | undefined;
+    const label = labelRow?.label || sessionIdStr.substring(0, 8);
     console.log(`  - ${label}: ${stats.total} entries (${stats.artifacts} with artifacts)`);
   }
 

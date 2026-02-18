@@ -297,6 +297,47 @@ ON mission_claims(guild_id, session_id, created_at_ms);
 CREATE INDEX IF NOT EXISTS idx_mission_beneficiary
 ON mission_claims(beneficiary_discord_id, created_at_ms);
 
+-- Event Scaffold: deterministic heuristic partitioning of bronze transcript
+-- Built by compile-scaffold.ts. No LLM required.
+-- Provides stable, bounded chunks for downstream LLM event labeling.
+CREATE TABLE IF NOT EXISTS event_scaffold (
+  event_id TEXT NOT NULL,                  -- e.g. "E0001" (stable within session)
+  session_id TEXT NOT NULL,                -- FK to sessions
+  start_index INTEGER NOT NULL,            -- 0-based line index in bronze_transcript (inclusive)
+  end_index INTEGER NOT NULL,              -- 0-based line index in bronze_transcript (inclusive)
+  boundary_reason TEXT NOT NULL,           -- BoundaryReason enum value
+  confidence REAL NOT NULL,                -- 0–1 aggregate confidence
+  dm_ratio REAL NOT NULL,                  -- fraction of lines spoken by DM
+  signal_hits TEXT NOT NULL,               -- JSON array of signal pattern names
+  compiled_at_ms INTEGER NOT NULL,
+
+  PRIMARY KEY (session_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_scaffold_session
+ON event_scaffold(session_id);
+
+-- Bronze Transcript: compiled, fused, stable transcript per session
+-- Built by compile-transcripts.ts. For live sessions, consecutive same-speaker
+-- voice utterances within VOICE_FUSE_GAP_MS are merged into one line.
+-- For ingest-media sessions, each ledger entry maps 1:1 to a line.
+-- Both meecap generation and event compilation should prefer this table.
+CREATE TABLE IF NOT EXISTS bronze_transcript (
+  session_id TEXT NOT NULL,              -- FK to sessions.session_id
+  line_index INTEGER NOT NULL,           -- 0-based stable line number (stable after compile)
+  author_name TEXT NOT NULL,             -- Speaker name (normalized)
+  content TEXT NOT NULL,                 -- Fused + normalized content
+  timestamp_ms INTEGER NOT NULL,         -- Timestamp of the first source ledger entry
+  source_type TEXT NOT NULL,             -- 'voice_fused' | 'voice' | 'text' | 'offline_ingest'
+  source_ids TEXT NOT NULL,              -- JSON array of contributing ledger_entry IDs
+  compiled_at_ms INTEGER NOT NULL,       -- When this line was compiled
+
+  PRIMARY KEY (session_id, line_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bronze_transcript_session
+ON bronze_transcript(session_id);
+
 -- Guild Runtime State: minimal session tracking
 CREATE TABLE IF NOT EXISTS guild_runtime_state (
   guild_id TEXT PRIMARY KEY,

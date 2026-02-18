@@ -9,8 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import path from "node:path";
-import { getDb } from "../db.js";
+import path from "node:path";import YAML from "yaml";import { getDb } from "../db.js";
 import type { LabeledScaffoldEvent } from "./scaffoldBatchTypes.js";
 
 export interface PersistOptions {

@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { getDb } from "../db.js";
 import { compileAndExportSession } from "./compile-and-export-events.js";
+import { getOfficialSessionLabels } from "../sessions/officialSessions.js";
 
 function parseArgs(): { force: boolean } {
   const args = process.argv.slice(2);
@@ -19,23 +20,12 @@ async function main(): Promise<void> {
   const { force } = parseArgs();
   const db = getDb();
 
-  const rows = db
-    .prepare(
-      `SELECT label, created_at_ms
-       FROM sessions
-       WHERE label IS NOT NULL
-         AND label <> ''
-         AND LOWER(label) NOT LIKE '%test%'
-       ORDER BY created_at_ms DESC`
-    )
-    .all() as Array<{ label: string; created_at_ms: number }>;
+  const labels = getOfficialSessionLabels(db);
 
-  if (rows.length === 0) {
+  if (labels.length === 0) {
     console.log("No labeled sessions found (excluding labels containing 'test').");
     return;
   }
-
-  const labels = Array.from(new Set(rows.map((row) => row.label)));
 
   console.log(`Found ${labels.length} session label(s) to compile.`);
   for (const label of labels) {
