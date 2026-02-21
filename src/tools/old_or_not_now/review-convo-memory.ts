@@ -16,7 +16,7 @@
  */
 
 import * as readline from "node:readline";
-import { getDb } from "../db.js";
+import { getDb } from "../../db.js";
 import { randomUUID } from "node:crypto";
 import {
   listPendingCandidates,
@@ -24,7 +24,7 @@ import {
   approveCandidate,
   rejectCandidate,
   type ConvoCandidate,
-} from "../ledger/meepoConvo.js";
+} from "../../ledger/meepoConvo.js";
 
 // Denylist patterns (reject automatically)
 const DENYLIST_PATTERNS = [

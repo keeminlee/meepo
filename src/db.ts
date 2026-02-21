@@ -558,6 +558,240 @@ function applyMigrations(db: Database.Database) {
         CREATE INDEX idx_char_event_exposure ON character_event_index(exposure_type);
       `);
     }
+
+    // Migration: Create causal_loops table (Silver Core v0)
+    const tablesForCausalLoops = db.pragma("table_list") as any[];
+    const hasCausalLoopsTable = tablesForCausalLoops.some((t: any) => t.name === "causal_loops");
+
+    if (!hasCausalLoopsTable) {
+      console.log("Migrating: Creating causal_loops table (Silver Core v0)");
+      db.exec(`
+        CREATE TABLE causal_loops (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          chunk_id TEXT NOT NULL,
+          chunk_index INTEGER NOT NULL,
+          actor TEXT NOT NULL,
+          start_index INTEGER NOT NULL,
+          end_index INTEGER NOT NULL,
+          intent_text TEXT,
+          intent_type TEXT,
+          consequence_type TEXT,
+          roll_type TEXT,
+          roll_subtype TEXT,
+          outcome_text TEXT,
+          confidence REAL,
+          intent_anchor_index INTEGER,
+          consequence_anchor_index INTEGER,
+          created_at_ms INTEGER
+        );
+
+        CREATE INDEX idx_causal_session_actor ON causal_loops(session_id, actor);
+      `);
+    } else {
+      const causalColumns = db.pragma("table_info(causal_loops)") as any[];
+      const hasChunkIndex = causalColumns.some((col: any) => col.name === "chunk_index");
+      const hasIntentAnchor = causalColumns.some((col: any) => col.name === "intent_anchor_index");
+      const hasConsequenceAnchor = causalColumns.some(
+        (col: any) => col.name === "consequence_anchor_index"
+      );
+
+      if (!hasChunkIndex) {
+        console.log("Migrating: Adding chunk_index to causal_loops");
+        db.exec("ALTER TABLE causal_loops ADD COLUMN chunk_index INTEGER NOT NULL DEFAULT 0");
+      }
+
+      if (!hasIntentAnchor) {
+        console.log("Migrating: Adding intent_anchor_index to causal_loops");
+        db.exec("ALTER TABLE causal_loops ADD COLUMN intent_anchor_index INTEGER");
+      }
+
+      if (!hasConsequenceAnchor) {
+        console.log("Migrating: Adding consequence_anchor_index to causal_loops");
+        db.exec("ALTER TABLE causal_loops ADD COLUMN consequence_anchor_index INTEGER");
+      }
+
+      const indexes = db.pragma("index_list(causal_loops)") as any[];
+      const hasIndex = indexes.some((idx: any) => idx.name === "idx_causal_session_actor");
+      if (!hasIndex) {
+        db.exec("CREATE INDEX idx_causal_session_actor ON causal_loops(session_id, actor)");
+      }
+    }
+  }
+
+  // Migration: Create graph tables (Intent-Consequence Graph v0)
+  const tablesForCausalLinks = db.pragma("table_list") as any[];
+  const hasCausalLinks = tablesForCausalLinks.some((t: any) => t.name === "causal_links");
+
+  if (!hasCausalLinks) {
+    console.log("Migrating: Creating causal_links table (Cause-Effect Links v1)");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS causal_links (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+
+        cause_text TEXT,
+        cause_type TEXT,
+        cause_mass REAL,
+        cause_anchor_index INTEGER,
+
+        effect_text TEXT,
+        effect_type TEXT,
+        effect_mass REAL,
+        effect_anchor_index INTEGER,
+
+        mass_base REAL,
+        mass REAL,
+        link_mass REAL,
+        center_index INTEGER,
+        mass_boost REAL,
+
+        strength_ce REAL,
+        strength REAL,
+        kernel_version TEXT,
+        kernel_params_json TEXT,
+        extracted_at_ms INTEGER,
+
+        intent_text TEXT,
+        intent_type TEXT,
+        intent_strength TEXT,
+        intent_anchor_index INTEGER,
+        consequence_text TEXT,
+        consequence_type TEXT,
+        consequence_anchor_index INTEGER,
+        distance INTEGER,
+        score REAL,
+        claimed INTEGER,
+        created_at_ms INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_causal_links_session ON causal_links(session_id);
+      CREATE INDEX IF NOT EXISTS idx_causal_links_session_anchor ON causal_links(session_id, cause_anchor_index);
+      CREATE INDEX IF NOT EXISTS idx_causal_links_session_claimed ON causal_links(session_id, claimed);
+    `);
+  } else {
+    const causalLinkColumns = db.pragma("table_info(causal_links)") as any[];
+    const hasColumn = (name: string) => causalLinkColumns.some((col: any) => col.name === name);
+
+    const maybeAddColumn = (name: string, typeSql: string) => {
+      if (!hasColumn(name)) {
+        console.log(`Migrating: Adding ${name} to causal_links`);
+        db.exec(`ALTER TABLE causal_links ADD COLUMN ${name} ${typeSql}`);
+      }
+    };
+
+    maybeAddColumn("cause_text", "TEXT");
+    maybeAddColumn("cause_type", "TEXT");
+    maybeAddColumn("cause_mass", "REAL");
+    maybeAddColumn("cause_anchor_index", "INTEGER");
+    maybeAddColumn("effect_text", "TEXT");
+    maybeAddColumn("effect_type", "TEXT");
+    maybeAddColumn("effect_mass", "REAL");
+    maybeAddColumn("effect_anchor_index", "INTEGER");
+    maybeAddColumn("mass_base", "REAL");
+    maybeAddColumn("mass", "REAL");
+    maybeAddColumn("link_mass", "REAL");
+    maybeAddColumn("center_index", "INTEGER");
+    maybeAddColumn("mass_boost", "REAL");
+    maybeAddColumn("strength_ce", "REAL");
+    maybeAddColumn("strength", "REAL");
+    maybeAddColumn("kernel_version", "TEXT");
+    maybeAddColumn("kernel_params_json", "TEXT");
+    maybeAddColumn("extracted_at_ms", "INTEGER");
+
+    db.exec(`
+      UPDATE causal_links
+      SET
+        cause_text = COALESCE(cause_text, intent_text),
+        cause_type = COALESCE(cause_type, intent_type),
+        cause_anchor_index = COALESCE(cause_anchor_index, intent_anchor_index),
+        effect_text = COALESCE(effect_text, consequence_text),
+        effect_type = COALESCE(effect_type, consequence_type),
+        effect_anchor_index = COALESCE(effect_anchor_index, consequence_anchor_index),
+        strength_ce = COALESCE(strength_ce, score),
+        strength = COALESCE(strength, score),
+        kernel_version = COALESCE(kernel_version, 'cause-effect-kernel-v1'),
+        kernel_params_json = COALESCE(kernel_params_json, '{}'),
+        extracted_at_ms = COALESCE(extracted_at_ms, created_at_ms)
+      WHERE
+        cause_text IS NULL
+        OR cause_type IS NULL
+        OR cause_anchor_index IS NULL
+        OR effect_text IS NULL
+        OR effect_type IS NULL
+        OR effect_anchor_index IS NULL
+        OR strength_ce IS NULL
+        OR strength IS NULL
+        OR kernel_version IS NULL
+        OR kernel_params_json IS NULL
+        OR extracted_at_ms IS NULL;
+    `);
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_causal_links_session ON causal_links(session_id);
+      CREATE INDEX IF NOT EXISTS idx_causal_links_session_anchor ON causal_links(session_id, cause_anchor_index);
+      CREATE INDEX IF NOT EXISTS idx_causal_links_session_claimed ON causal_links(session_id, claimed);
+    `);
+  }
+
+  // Migration: Create graph tables (Intent-Consequence Graph v0)
+  const tablesForIntentGraph = db.pragma("table_list") as any[];
+  const hasIntentNodes = tablesForIntentGraph.some((t: any) => t.name === "intent_nodes");
+  const hasConsequenceNodes = tablesForIntentGraph.some((t: any) => t.name === "consequence_nodes");
+  const hasIntentEdges = tablesForIntentGraph.some((t: any) => t.name === "intent_consequence_edges");
+
+  if (!hasIntentNodes || !hasConsequenceNodes || !hasIntentEdges) {
+    console.log("Migrating: Creating intent graph tables (Intent-Consequence Graph v0)");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS intent_nodes (
+        intent_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        chunk_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        anchor_index INTEGER NOT NULL,
+        intent_type TEXT NOT NULL,
+        text TEXT NOT NULL,
+        source TEXT NOT NULL,
+        is_strong_intent INTEGER DEFAULT 1,
+        created_at_ms INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_intent_nodes_session_chunk ON intent_nodes(session_id, chunk_id);
+      CREATE INDEX IF NOT EXISTS idx_intent_nodes_session_actor ON intent_nodes(session_id, actor_id);
+
+      CREATE TABLE IF NOT EXISTS consequence_nodes (
+        consequence_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        chunk_id TEXT NOT NULL,
+        anchor_index INTEGER NOT NULL,
+        consequence_type TEXT NOT NULL,
+        roll_type TEXT,
+        roll_subtype TEXT,
+        text TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_consequence_nodes_session_chunk ON consequence_nodes(session_id, chunk_id);
+
+      CREATE TABLE IF NOT EXISTS intent_consequence_edges (
+        edge_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        chunk_id TEXT NOT NULL,
+        intent_id TEXT NOT NULL,
+        consequence_id TEXT NOT NULL,
+        distance INTEGER NOT NULL,
+        distance_score REAL NOT NULL,
+        lexical_score REAL NOT NULL,
+        heuristic_boost REAL NOT NULL,
+        base_score REAL NOT NULL,
+        adjusted_score REAL NOT NULL,
+        shared_terms_json TEXT NOT NULL,
+        flags_json TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_edges_session_chunk ON intent_consequence_edges(session_id, chunk_id);
+      CREATE INDEX IF NOT EXISTS idx_edges_session_intent ON intent_consequence_edges(session_id, intent_id);
+      CREATE INDEX IF NOT EXISTS idx_edges_session_consequence ON intent_consequence_edges(session_id, consequence_id);
+    `);
   }
 
   // Migration: Create meep_usages table (Phase 1C - MVP Silver)

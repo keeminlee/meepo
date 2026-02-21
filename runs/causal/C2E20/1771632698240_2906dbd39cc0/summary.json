@@ -1,0 +1,168 @@
+{
+  "session_id": "74f8f86f-609f-4814-a609-bec2cff41ee7",
+  "run_id": "1771632698240_2906dbd39cc0",
+  "provenance": {
+    "kernel_version": "ce-mass-v2",
+    "params_json": "{\"kernel\":{\"kLocal\":8,\"hillTau\":8,\"hillSteepness\":2.2,\"betaLex\":2,\"strongMinScore\":1,\"weakMinScore\":1},\"anneal\":{\"windowLinks\":8,\"hillTau\":8,\"hillSteepness\":2.2,\"betaLex\":0.8,\"lambda\":0.8,\"topKContrib\":5},\"linkLinks\":{\"kLocalLinks\":8,\"hillTau\":30,\"hillSteepness\":2.2,\"betaLex\":2,\"minBridge\":1,\"maxForwardLines\":120},\"maxLevel\":3}",
+    "param_hash": "2906dbd39cc0"
+  },
+  "max_round": 3,
+  "total_phases": 6,
+  "rounds": [
+    {
+      "round": 1,
+      "phase": "link",
+      "counts": {
+        "nodes_total": 276,
+        "pairs_formed": 189,
+        "effects_total": 92,
+        "effects_unique_claimed": 41,
+        "effects_unclaimed": 51
+      },
+      "stats": {
+        "strength_bridge": {
+          "min": 0,
+          "p50": 1.0671025281938855,
+          "p90": 1.319728704693357,
+          "max": 2.3095252332133747
+        },
+        "strength_internal": {
+          "min": 0,
+          "p50": 1.0671025281938855,
+          "p90": 1.319728704693357,
+          "max": 2.3095252332133747
+        },
+        "mass": {
+          "min": 0.45,
+          "p50": 0.6871583397002237,
+          "p90": 1.461720125607609,
+          "max": 2.064567098885629
+        }
+      }
+    },
+    {
+      "round": 1,
+      "phase": "anneal",
+      "counts": {
+        "nodes": 276,
+        "neighbor_edges": 656
+      },
+      "stats": {
+        "strength_internal": {
+          "min": 0,
+          "p50": 1.0671025281938855,
+          "p90": 1.319728704693357,
+          "max": 2.3095252332133747
+        },
+        "mass": {
+          "min": 0.45,
+          "p50": 1.880743787772811,
+          "p90": 4.071667627327937,
+          "max": 7.1785469841737
+        }
+      }
+    },
+    {
+      "round": 2,
+      "phase": "link",
+      "counts": {
+        "nodes_total": 182,
+        "pairs_formed": 94,
+        "unpaired_total": 88
+      },
+      "stats": {
+        "strength_bridge": {
+          "min": 0,
+          "p50": 1.1397965285200178,
+          "p90": 1.3582492346371844,
+          "max": 1.6796855440763911
+        },
+        "strength_internal": {
+          "min": 0,
+          "p50": 1.1397965285200178,
+          "p90": 1.3582492346371844,
+          "max": 1.6796855440763911
+        },
+        "mass": {
+          "min": 0.45,
+          "p50": 1.7696928628994961,
+          "p90": 3.8170975304521013,
+          "max": 7.1785469841737
+        }
+      }
+    },
+    {
+      "round": 2,
+      "phase": "anneal",
+      "counts": {
+        "nodes": 182,
+        "neighbor_edges": 222
+      },
+      "stats": {
+        "strength_internal": {
+          "min": 0,
+          "p50": 1.3992125609741235,
+          "p90": 3.5919882892120256,
+          "max": 5.1304533126865035
+        },
+        "mass": {
+          "min": 0.45,
+          "p50": 2.831228489820939,
+          "p90": 8.544843339437163,
+          "max": 19.163443903002047
+        }
+      }
+    },
+    {
+      "round": 3,
+      "phase": "link",
+      "counts": {
+        "nodes_total": 137,
+        "pairs_formed": 45,
+        "unpaired_total": 92
+      },
+      "stats": {
+        "strength_bridge": {
+          "min": 0,
+          "p50": 1.11352109458502,
+          "p90": 1.319728704693357,
+          "max": 1.6796855440763911
+        },
+        "strength_internal": {
+          "min": 0,
+          "p50": 1.1273177216342412,
+          "p90": 3.19523685491292,
+          "max": 3.9750924030241714
+        },
+        "mass": {
+          "min": 0.45,
+          "p50": 2.6823389422996335,
+          "p90": 8.544843339437163,
+          "max": 19.163443903002047
+        }
+      }
+    },
+    {
+      "round": 3,
+      "phase": "anneal",
+      "counts": {
+        "nodes": 137,
+        "neighbor_edges": 114
+      },
+      "stats": {
+        "strength_internal": {
+          "min": 0,
+          "p50": 2.1637161025153153,
+          "p90": 6.992085257670473,
+          "max": 8.830205915832336
+        },
+        "mass": {
+          "min": 0.45,
+          "p50": 3.998106083050346,
+          "p90": 18.942004711558056,
+          "max": 49.02921265425131
+        }
+      }
+    }
+  ]
+}

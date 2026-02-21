@@ -1,0 +1,41 @@
+{
+  "description": "Test fixture for DM consequence-centric attachment with overlap scoring",
+  "transcript": [
+    {"line_index": 100, "author_name": "Alice (Player1)", "content": "Can I search the room for hidden doors?"},
+    {"line_index": 101, "author_name": "Bob (Player2)", "content": "I want to check the bookshelf for clues."},
+    {"line_index": 102, "author_name": "DM", "content": "Alice, roll an investigation check for the hidden doors."},
+    {"line_index": 103, "author_name": "Alice (Player1)", "content": "Nat 20!"},
+    {"line_index": 104, "author_name": "DM", "content": "You find a hidden door behind the tapestry. It's cleverly concealed but you spot the seam."},
+    {"line_index": 105, "author_name": "DM", "content": "Bob, you notice the bookshelf has several old journals. One mentions 'the secret passage.'"},
+    {"line_index": 106, "author_name": "Bob (Player2)", "content": "I take the journal."},
+    {"line_index": 107, "author_name": "DM", "content": "You take the journal."}
+  ],
+  "expected": {
+    "loops": [
+      {
+        "actor_name": "Alice",
+        "intent_line": 100,
+        "consequence_line": 104,
+        "reason": "Overlap scoring should match 'hidden door' keywords"
+      },
+      {
+        "actor_name": "Bob", 
+        "intent_line": 101,
+        "consequence_line": 105,
+        "reason": "Overlap scoring should match 'bookshelf' keyword"
+      },
+      {
+        "actor_name": "Bob",
+        "intent_line": 106,
+        "consequence_line": 107,
+        "reason": "Direct DM response to 'take the journal'"
+      }
+    ]
+  },
+  "notes": [
+    "Line 102 is DM asking for roll (not a consequence)",
+    "Line 104 should attach to Alice@100 via 'hidden door' overlap",
+    "Line 105 should attach to Bob@101 via 'bookshelf' overlap",
+    "Line 107 should attach to Bob@106 via direct response pattern"
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "session_id": "test_distance_first",
+  "session_label": "test_distance_first",
+  "lines": [
+    {
+      "line_index": 232,
+      "author_name": "PC_Snowflake",
+      "content": "Is anyone guarding the prisoner?"
+    },
+    {
+      "line_index": 233,
+      "author_name": "DM",
+      "content": "The hallway is dimly lit and cold."
+    },
+    {
+      "line_index": 234,
+      "author_name": "DM",
+      "content": "Yes, there are guards actively guarding the prisoner."
+    },
+    {
+      "line_index": 235,
+      "author_name": "PC_Jamison",
+      "content": "How many guards are there?"
+    },
+    {
+      "line_index": 236,
+      "author_name": "DM",
+      "content": "Two guards stand watch."
+    },
+    {
+      "line_index": 237,
+      "author_name": "DM",
+      "content": "The guards and their prisoner are heavily equipped with extensive guarding protocols and multiple layers of security for the guarded area where the prisoner in custody is being carefully guarded."
+    }
+  ],
+  "actors": [
+    {
+      "id": "pc_snowflake",
+      "canonical_name": "Snowflake",
+      "aliases": ["PC_Snowflake", "Snowflake"]
+    },
+    {
+      "id": "pc_jamison",
+      "canonical_name": "Jamison",
+      "aliases": ["PC_Jamison", "Jamison"]
+    }
+  ],
+  "expected": {
+    "intent_at_232": {
+      "anchor_index": 232,
+      "actor_id": "pc_snowflake",
+      "text": "Is anyone guarding the prisoner?"
+    },
+    "top_consequence_should_be": 234,
+    "rationale": "L234 'Yes, there are guards posted' is the direct answer (d=2) with answer_form boost and shares 'guards'. L237 (d=5) has MUCH higher lexical overlap ('guards', 'guarding', 'guarded', 'prisoner') but is distant commentary. Distance-first scoring should make L234 win."
+  }
+}

@@ -19,7 +19,7 @@
 import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
-import { buildBeatsJsonFromNarrative } from "../sessions/meecap.js";
+import { buildBeatsJsonFromNarrative } from "../../sessions/meecap.js";
 
 /**
  * Parse command-line arguments (dependency-free).

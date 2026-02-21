@@ -1,0 +1,842 @@
+[
+  {
+    "left_id": "b66188ab-1a66-4365-8cbe-5cdaf69317e3+1bd320eb-7115-40b1-81e9-c10f717f3f75",
+    "right_id": "4075e064-ec4e-4481-a413-25531b3c6b22+e7d5d9c9-ed6c-41b5-a56b-1df5a1dcd45b",
+    "left_center": 1861,
+    "right_center": 1869,
+    "center_distance": 8,
+    "lexical_score": 0.19718309859154928,
+    "strength_bridge": 1.3221851015039805,
+    "chosen": true
+  },
+  {
+    "left_id": "9ed37619-2f42-4627-ac53-0e0768eb1e7d+81d4d1d4-0962-49ed-a610-319e3d5fc044",
+    "right_id": "988c05d5-c93f-47d9-8d49-816f72aa9ccf+117d3999-59c8-475a-aafd-5bac1142cbb7",
+    "left_center": 1475,
+    "right_center": 1486,
+    "center_distance": 11,
+    "lexical_score": 0.22,
+    "strength_bridge": 1.2972959764961425,
+    "chosen": true
+  },
+  {
+    "left_id": "988c05d5-c93f-47d9-8d49-816f72aa9ccf+117d3999-59c8-475a-aafd-5bac1142cbb7",
+    "right_id": "9511bbc6-c62e-4a72-bb17-93226565e37c+71c967d2-b3c3-4bed-9dad-2ce78db74e81",
+    "left_center": 1486,
+    "right_center": 1495,
+    "center_distance": 9,
+    "lexical_score": 0.17647058823529413,
+    "strength_bridge": 1.2635568163851076,
+    "chosen": false
+  },
+  {
+    "left_id": "39f95dbf-f3eb-459b-b975-bfc122149628",
+    "right_id": "a8361df1-5565-4c5e-8237-7b513c56a7d2+728b49ba-def7-47b8-b21d-efa5b6fb603c",
+    "left_center": 871,
+    "right_center": 884,
+    "center_distance": 13,
+    "lexical_score": 0.22916666666666666,
+    "strength_bridge": 1.2584229926115902,
+    "chosen": true
+  },
+  {
+    "left_id": "bbae1c6c-7c71-4f53-9a2f-b8a5f4ee03ec+9c7521da-ffdd-49cd-a644-e77d5928689e",
+    "right_id": "557e249e-1266-4ff6-8e3e-e26698f055f3+12cb132b-8882-458f-9dfb-378dfd40da62",
+    "left_center": 1569,
+    "right_center": 1572,
+    "center_distance": 3,
+    "lexical_score": 0.125,
+    "strength_bridge": 1.2421624845732078,
+    "chosen": true
+  },
+  {
+    "left_id": "c8534780-767c-4670-92d2-6d31e69af91e+ee8d6411-37e6-4241-af4b-18f2f62a5446",
+    "right_id": "c24adfe9-c04e-4deb-9805-2f6d8122310c+af90305c-8bec-4bd5-8d59-abece52b2cfe",
+    "left_center": 335,
+    "right_center": 346,
+    "center_distance": 11,
+    "lexical_score": 0.18055555555555555,
+    "strength_bridge": 1.2262249777837768,
+    "chosen": true
+  },
+  {
+    "left_id": "75d7cd90-8c1c-4fbd-a488-34c22074c469",
+    "right_id": "6d45a15f-999b-4602-9caf-91651e97750b+03466c7b-c9e4-48dd-b764-6d68b02049c5",
+    "left_center": 1325,
+    "right_center": 1330,
+    "center_distance": 5,
+    "lexical_score": 0.11267605633802817,
+    "strength_bridge": 1.2020186888690576,
+    "chosen": true
+  },
+  {
+    "left_id": "0dc1abc8-9aa8-418f-8b67-f4226893b976+019cb20c-aae2-4848-ac64-5ae94ec41df3",
+    "right_id": "559811d7-c6e4-4390-9aef-856d4e7eede7+82896759-e99b-491a-980f-a35aabeeafe6",
+    "left_center": 1233,
+    "right_center": 1244,
+    "center_distance": 11,
+    "lexical_score": 0.16666666666666666,
+    "strength_bridge": 1.201199978237169,
+    "chosen": true
+  },
+  {
+    "left_id": "3736c7b2-3055-42cf-8eaa-09554311ba65+42826b9f-abfa-479c-b6a7-f89792892c56",
+    "right_id": "b0175a00-c65b-4365-8256-f3e6fecfbf7b+7026143c-2ae1-4ed3-98b7-9cb859da4e77",
+    "left_center": 1206,
+    "right_center": 1212,
+    "center_distance": 6,
+    "lexical_score": 0.11764705882352941,
+    "strength_bridge": 1.2004904743569507,
+    "chosen": true
+  },
+  {
+    "left_id": "9511bbc6-c62e-4a72-bb17-93226565e37c+71c967d2-b3c3-4bed-9dad-2ce78db74e81",
+    "right_id": "50c01b24-070c-4398-be08-dd799ac54102+7ea93f3d-d20a-48bc-806f-e24055e0e0e5",
+    "left_center": 1495,
+    "right_center": 1501,
+    "center_distance": 6,
+    "lexical_score": 0.11764705882352941,
+    "strength_bridge": 1.2004904743569507,
+    "chosen": true
+  },
+  {
+    "left_id": "d95fe032-6714-419d-9c1f-5d7c8db14766+ba721fdf-eb75-4c27-b520-dfe419417cd2",
+    "right_id": "33d70d59-662d-4ee6-aed1-f90dd058575f+20295f0e-9fce-4ccc-85d2-099cee61af98",
+    "left_center": 1588,
+    "right_center": 1602,
+    "center_distance": 14,
+    "lexical_score": 0.21153846153846154,
+    "strength_bridge": 1.1988969670523102,
+    "chosen": true
+  },
+  {
+    "left_id": "97cd543b-5739-40a5-9ae0-923287957b10+6bf0b560-ed82-4c44-b8ce-14300bcfe835",
+    "right_id": "39f95dbf-f3eb-459b-b975-bfc122149628",
+    "left_center": 866,
+    "right_center": 871,
+    "center_distance": 5,
+    "lexical_score": 0.10810810810810811,
+    "strength_bridge": 1.1930567601542836,
+    "chosen": false
+  },
+  {
+    "left_id": "a8e838f2-ba3d-4fb0-af62-665fec8bcf96+3abdfa03-f873-4812-b7b9-c49962afa844",
+    "right_id": "5d965d81-5804-4d15-8fe3-dadc46eb4efe+16553bf2-bb59-4894-aa63-b80a1714351e",
+    "left_center": 305,
+    "right_center": 308,
+    "center_distance": 3,
+    "lexical_score": 0.1,
+    "strength_bridge": 1.1924759851902793,
+    "chosen": true
+  },
+  {
+    "left_id": "da52fa2a-ba7e-4289-a117-cb3c8fcdc564",
+    "right_id": "a84962ad-9529-4465-b41d-fb487bb567f4+cca70865-5cff-4187-aa50-56ed93e76192",
+    "left_center": 1416,
+    "right_center": 1417,
+    "center_distance": 1,
+    "lexical_score": 0.09523809523809523,
+    "strength_bridge": 1.1898065994677922,
+    "chosen": true
+  },
+  {
+    "left_id": "400bdd3c-77cb-4f41-849c-92dfa4c24032+c23f6842-bcb5-4c38-9119-ef8494f6e5d7",
+    "right_id": "5ea3845b-9e0c-4151-b3fc-5e01f99b8b2d+2a9b7233-64c2-4d35-9c74-efcabd60494d",
+    "left_center": 521,
+    "right_center": 528,
+    "center_distance": 7,
+    "lexical_score": 0.11842105263157894,
+    "strength_bridge": 1.188476189736368,
+    "chosen": true
+  },
+  {
+    "left_id": "b0175a00-c65b-4365-8256-f3e6fecfbf7b+7026143c-2ae1-4ed3-98b7-9cb859da4e77",
+    "right_id": "a410e71c-c792-44ed-9c56-5e2ccfc55de2+1a756abd-317c-42eb-af6b-28ff17a610a3",
+    "left_center": 1212,
+    "right_center": 1220,
+    "center_distance": 8,
+    "lexical_score": 0.125,
+    "strength_bridge": 1.1852921995805887,
+    "chosen": false
+  },
+  {
+    "left_id": "a8e838f2-ba3d-4fb0-af62-665fec8bcf96+3abdfa03-f873-4812-b7b9-c49962afa844",
+    "right_id": "b69643cf-0cce-494c-8041-bd4804448530+faac8167-3685-4d60-8894-aee15d2a1f1b",
+    "left_center": 305,
+    "right_center": 309,
+    "center_distance": 4,
+    "lexical_score": 0.09859154929577464,
+    "strength_bridge": 1.1831259831077288,
+    "chosen": false
+  },
+  {
+    "left_id": "bcbd6ab4-b034-4580-9903-77d39c560e29+29826d4e-37ee-4b03-8b89-7981b1a547ae",
+    "right_id": "5e22240d-0e35-4388-ad0f-664db22f5ded+bfdf4854-fa49-4c9e-b4a5-964a1093e816",
+    "left_center": 616,
+    "right_center": 626,
+    "center_distance": 10,
+    "lexical_score": 0.14102564102564102,
+    "strength_bridge": 1.1770647492607806,
+    "chosen": true
+  },
+  {
+    "left_id": "ac0c96bc-53f4-4fe5-ba71-196cfa3298e1+f5e4da7f-221b-40cc-b710-7103af011701",
+    "right_id": "0f88535c-8ffa-419d-a064-bf455b3c10a6",
+    "left_center": 2018,
+    "right_center": 2024,
+    "center_distance": 6,
+    "lexical_score": 0.10526315789473684,
+    "strength_bridge": 1.176420489908691,
+    "chosen": true
+  },
+  {
+    "left_id": "3d552445-b5e3-4cf5-8085-37210ceabfee+6eaafc35-86c6-439f-9520-7b4a245da7de",
+    "right_id": "4027bd9e-2216-469d-bb61-d277920cd9cd+a465dcf6-f9b6-4d3b-adeb-0799959e793f",
+    "left_center": 1347,
+    "right_center": 1349,
+    "center_distance": 2,
+    "lexical_score": 0.0851063829787234,
+    "strength_bridge": 1.167194604273929,
+    "chosen": true
+  },
+  {
+    "left_id": "b317171a-d940-4f08-b27c-ffe176461996+a8d073f6-cb82-4569-a6ea-be5c14642bf2",
+    "right_id": "ac0c96bc-53f4-4fe5-ba71-196cfa3298e1+f5e4da7f-221b-40cc-b710-7103af011701",
+    "left_center": 2010,
+    "right_center": 2018,
+    "center_distance": 8,
+    "lexical_score": 0.11428571428571428,
+    "strength_bridge": 1.1649729047306359,
+    "chosen": false
+  },
+  {
+    "left_id": "33fbaf4e-f951-4a2f-a415-f96638ea8933+2c9156dd-10ba-43a4-9ff4-b70c408ff451",
+    "right_id": "a84962ad-9529-4465-b41d-fb487bb567f4+cca70865-5cff-4187-aa50-56ed93e76192",
+    "left_center": 1403,
+    "right_center": 1417,
+    "center_distance": 14,
+    "lexical_score": 0.19047619047619047,
+    "strength_bridge": 1.16340838244201,
+    "chosen": false
+  },
+  {
+    "left_id": "a5a2c5e4-eff9-4830-8a27-c030ca79a41a+5a8de067-ae95-4b87-8f2e-a608371bf51c",
+    "right_id": "c8534780-767c-4670-92d2-6d31e69af91e+ee8d6411-37e6-4241-af4b-18f2f62a5446",
+    "left_center": 331,
+    "right_center": 335,
+    "center_distance": 4,
+    "lexical_score": 0.08333333333333333,
+    "strength_bridge": 1.1529678698128258,
+    "chosen": false
+  },
+  {
+    "left_id": "559811d7-c6e4-4390-9aef-856d4e7eede7+82896759-e99b-491a-980f-a35aabeeafe6",
+    "right_id": "d4026618-d785-4797-ba4b-f5348b35a9ac+81a0ba3d-6a0c-44d4-b733-fa4baf7499bc",
+    "left_center": 1244,
+    "right_center": 1253,
+    "center_distance": 9,
+    "lexical_score": 0.11666666666666667,
+    "strength_bridge": 1.1518510688496126,
+    "chosen": false
+  },
+  {
+    "left_id": "edaf8d67-d0a2-44bf-bccf-978915a511b4+c966746f-cecc-460a-b7c4-27a9925dd7c4",
+    "right_id": "9af4de25-386e-4de8-875d-fdc4ed2292b4+7d8932ab-bb21-40cd-99bb-58f3eb0b372f",
+    "left_center": 263,
+    "right_center": 267,
+    "center_distance": 4,
+    "lexical_score": 0.08,
+    "strength_bridge": 1.146379481985324,
+    "chosen": true
+  },
+  {
+    "left_id": "975ffcf7-35e9-44d4-86b5-9606ca311ee4+c3d5d58f-2812-4fd8-8bbe-6b054288b66b",
+    "right_id": "8f33a2c1-be3a-43fb-9f26-f205234964d0+3c30db30-1f6a-4ac9-97fa-8f0a309e98b2",
+    "left_center": 1098,
+    "right_center": 1105,
+    "center_distance": 7,
+    "lexical_score": 0.09523809523809523,
+    "strength_bridge": 1.143923384244731,
+    "chosen": true
+  },
+  {
+    "left_id": "2c4d26f2-f2db-463e-b959-d09d75170dd2",
+    "right_id": "b0175a00-c65b-4365-8256-f3e6fecfbf7b+7026143c-2ae1-4ed3-98b7-9cb859da4e77",
+    "left_center": 1211,
+    "right_center": 1212,
+    "center_distance": 1,
+    "lexical_score": 0.07142857142857142,
+    "strength_bridge": 1.1422143354890804,
+    "chosen": false
+  },
+  {
+    "left_id": "5751c129-b26a-4fe1-9e0f-3105f53f079e+169be6c1-fbbf-402e-8e86-6b27e1b52102",
+    "right_id": "7a959c95-9aac-4692-be8b-f61b781b1e38",
+    "left_center": 1128,
+    "right_center": 1141,
+    "center_distance": 13,
+    "lexical_score": 0.15789473684210525,
+    "strength_bridge": 1.1354192414540665,
+    "chosen": true
+  },
+  {
+    "left_id": "9392d3b2-1dc9-4a6c-b90f-0d0ad44277ef",
+    "right_id": "d1e4effe-518d-4154-a29f-b763bb4b3e86+6efb3d03-583b-41b0-9758-30d35436408a",
+    "left_center": 1945,
+    "right_center": 1950,
+    "center_distance": 5,
+    "lexical_score": 0.07692307692307693,
+    "strength_bridge": 1.1318743621976537,
+    "chosen": true
+  },
+  {
+    "left_id": "a6ec95c2-1c31-444d-be5a-3a7c6919b590+f11dda63-656d-4e71-99cb-c74c93e337b6",
+    "right_id": "6a90cded-b2a5-48ac-980b-7e99e8d2093e",
+    "left_center": 1161,
+    "right_center": 1167,
+    "center_distance": 6,
+    "lexical_score": 0.08,
+    "strength_bridge": 1.1273177216342412,
+    "chosen": true
+  },
+  {
+    "left_id": "9ed37619-2f42-4627-ac53-0e0768eb1e7d+81d4d1d4-0962-49ed-a610-319e3d5fc044",
+    "right_id": "9511bbc6-c62e-4a72-bb17-93226565e37c+71c967d2-b3c3-4bed-9dad-2ce78db74e81",
+    "left_center": 1475,
+    "right_center": 1495,
+    "center_distance": 20,
+    "lexical_score": 0.29411764705882354,
+    "strength_bridge": 1.1265472397171603,
+    "chosen": false
+  },
+  {
+    "left_id": "561be1e9-150c-46db-b28b-568c5a463d65+b741aaa0-7f69-44be-a50e-801ececef9ec",
+    "right_id": "d27bfdfb-29ef-4a7a-b5ce-70853b7ac2c6",
+    "left_center": 1711,
+    "right_center": 1712,
+    "center_distance": 1,
+    "lexical_score": 0.0625,
+    "strength_bridge": 1.1243672364970636,
+    "chosen": true
+  },
+  {
+    "left_id": "ff03fb47-7b7e-4f22-98b9-cb065aae0717+a3c5afb5-1805-4c50-9d26-7fec7046d4f8",
+    "right_id": "cf7d3705-d177-493c-8ebb-ba3510bc6e8d+18b83170-3fbb-4c4a-bc13-8aaed6f4583c",
+    "left_center": 560,
+    "right_center": 566,
+    "center_distance": 6,
+    "lexical_score": 0.07407407407407407,
+    "strength_bridge": 1.1157997883352961,
+    "chosen": true
+  },
+  {
+    "left_id": "d4026618-d785-4797-ba4b-f5348b35a9ac+81a0ba3d-6a0c-44d4-b733-fa4baf7499bc",
+    "right_id": "33d26595-933d-4fea-8783-66e9f787a6f8+808d34d4-3c48-4347-a1f5-886c8d8c0101",
+    "left_center": 1253,
+    "right_center": 1254,
+    "center_distance": 1,
+    "lexical_score": 0.05714285714285714,
+    "strength_bridge": 1.1136589771018535,
+    "chosen": true
+  },
+  {
+    "left_id": "ff491b3c-084f-421c-8e2f-49208a633b0a+d9e864a3-ecf6-4438-b2d7-3291146cd19b",
+    "right_id": "d1e4effe-518d-4154-a29f-b763bb4b3e86+6efb3d03-583b-41b0-9758-30d35436408a",
+    "left_center": 1941,
+    "right_center": 1950,
+    "center_distance": 9,
+    "lexical_score": 0.09574468085106383,
+    "strength_bridge": 1.112771590378004,
+    "chosen": false
+  },
+  {
+    "left_id": "629985c0-a2a0-47c4-9c70-f27d246e2aca",
+    "right_id": "d65b533c-c642-492a-a3dc-126cc9df2241+c6124ba7-a17f-42c0-8154-986b980c93a3",
+    "left_center": 1798,
+    "right_center": 1803,
+    "center_distance": 5,
+    "lexical_score": 0.06666666666666667,
+    "strength_bridge": 1.11175215131414,
+    "chosen": true
+  },
+  {
+    "left_id": "4c51bc38-f31d-419c-8ac8-16e90002b472+11cd8d35-9d20-496d-937e-6e48e1f04829",
+    "right_id": "ca5725ed-069d-4441-bd92-ba391029c106",
+    "left_center": 1847,
+    "right_center": 1857,
+    "center_distance": 10,
+    "lexical_score": 0.10526315789473684,
+    "strength_bridge": 1.1113969264072845,
+    "chosen": true
+  },
+  {
+    "left_id": "09b1d91e-aa02-4323-872f-9b335b4ba33b",
+    "right_id": "4e5d4cc3-f67f-4ec1-bdf9-93d534172246+fb708ea6-0b4b-4173-886f-ec803ed780ad",
+    "left_center": 483,
+    "right_center": 497,
+    "center_distance": 14,
+    "lexical_score": 0.1590909090909091,
+    "strength_bridge": 1.1105261832401006,
+    "chosen": true
+  },
+  {
+    "left_id": "0172614a-7976-4e89-acb5-e3ae419e3df4+3046803e-bc6a-48ef-8a9f-220b2d77cd33",
+    "right_id": "1a512002-f84b-408f-a61b-5727882beb23",
+    "left_center": 1553,
+    "right_center": 1557,
+    "center_distance": 4,
+    "lexical_score": 0.058823529411764705,
+    "strength_bridge": 1.1045238416694299,
+    "chosen": true
+  },
+  {
+    "left_id": "629985c0-a2a0-47c4-9c70-f27d246e2aca",
+    "right_id": "db75e17f-8e71-45f3-91cb-9fa95513fee8+fbab2af1-9abf-4d96-9e2d-638a3449585b",
+    "left_center": 1798,
+    "right_center": 1803,
+    "center_distance": 5,
+    "lexical_score": 0.0625,
+    "strength_bridge": 1.1035775031427124,
+    "chosen": false
+  },
+  {
+    "left_id": "a84962ad-9529-4465-b41d-fb487bb567f4+cca70865-5cff-4187-aa50-56ed93e76192",
+    "right_id": "127a04fa-253a-4ddf-84d4-f1faa20206b2+f2329d2b-488e-463a-848e-f1206289b5d8",
+    "left_center": 1417,
+    "right_center": 1429,
+    "center_distance": 12,
+    "lexical_score": 0.125,
+    "strength_bridge": 1.103062662746433,
+    "chosen": false
+  },
+  {
+    "left_id": "fb288f03-d57d-4971-9c22-20d0574ecc34",
+    "right_id": "45b99f2c-d2a3-4417-b085-57694c7a9921+b62ee46a-ef7f-44ad-99c0-6d9b75462a4b",
+    "left_center": 782,
+    "right_center": 784,
+    "center_distance": 2,
+    "lexical_score": 0.05263157894736842,
+    "strength_bridge": 1.1024125114051366,
+    "chosen": true
+  },
+  {
+    "left_id": "29fd9e06-d6c7-47d4-9171-6d272f4eb682+fae7e380-065f-4665-a980-07f7da2396eb",
+    "right_id": "a5a2c5e4-eff9-4830-8a27-c030ca79a41a+5a8de067-ae95-4b87-8f2e-a608371bf51c",
+    "left_center": 323,
+    "right_center": 331,
+    "center_distance": 8,
+    "lexical_score": 0.08,
+    "strength_bridge": 1.0999511612107862,
+    "chosen": true
+  },
+  {
+    "left_id": "3736c7b2-3055-42cf-8eaa-09554311ba65+42826b9f-abfa-479c-b6a7-f89792892c56",
+    "right_id": "a410e71c-c792-44ed-9c56-5e2ccfc55de2+1a756abd-317c-42eb-af6b-28ff17a610a3",
+    "left_center": 1206,
+    "right_center": 1220,
+    "center_distance": 14,
+    "lexical_score": 0.15,
+    "strength_bridge": 1.095208580712651,
+    "chosen": false
+  },
+  {
+    "left_id": "28aad481-4917-4009-a0f9-0bb576288c90+70af8928-b1c2-4ae0-8d92-86c66e8ade43",
+    "right_id": "2aa3091a-c56b-46cc-be95-34bb955758d3",
+    "left_center": 654,
+    "right_center": 656,
+    "center_distance": 2,
+    "lexical_score": 0.04878048780487805,
+    "strength_bridge": 1.0947301942524879,
+    "chosen": true
+  },
+  {
+    "left_id": "f9f77e33-ebe2-44db-940e-4f016f739074",
+    "right_id": "80b4e1a0-94b1-499d-9c85-4c532a2f4501+4c29410c-8525-48f9-9a0c-bb4fe0748ee7",
+    "left_center": 409,
+    "right_center": 417,
+    "center_distance": 8,
+    "lexical_score": 0.07692307692307693,
+    "strength_bridge": 1.094115876535928,
+    "chosen": true
+  },
+  {
+    "left_id": "9655f95d-bb6c-4dbc-9776-09954271b626+39a7e237-5364-4dc7-b205-b4389701cf8f",
+    "right_id": "ce7bd9a9-90db-4bda-a34b-a2830c2a0c71",
+    "left_center": 363,
+    "right_center": 367,
+    "center_distance": 4,
+    "lexical_score": 0.05128205128205128,
+    "strength_bridge": 1.0896179868560771,
+    "chosen": true
+  },
+  {
+    "left_id": "5d965d81-5804-4d15-8fe3-dadc46eb4efe+16553bf2-bb59-4894-aa63-b80a1714351e",
+    "right_id": "b69643cf-0cce-494c-8041-bd4804448530+faac8167-3685-4d60-8894-aee15d2a1f1b",
+    "left_center": 308,
+    "right_center": 309,
+    "center_distance": 1,
+    "lexical_score": 0.04225352112676056,
+    "strength_bridge": 1.0838970542757294,
+    "chosen": false
+  },
+  {
+    "left_id": "df017af7-8ff6-4f13-9c53-7a9a1086ca22+5018c710-5824-415e-9069-598162ca53cd",
+    "right_id": "5751c129-b26a-4fe1-9e0f-3105f53f079e+169be6c1-fbbf-402e-8e86-6b27e1b52102",
+    "left_center": 1119,
+    "right_center": 1128,
+    "center_distance": 9,
+    "lexical_score": 0.08,
+    "strength_bridge": 1.0833626269180139,
+    "chosen": false
+  },
+  {
+    "left_id": "4624152e-6eea-45ac-bf4d-b98a9c855532+de607b08-77ac-47df-a859-4d6839e97407",
+    "right_id": "27575df1-a8f3-48dd-ad82-60c8da4f9500+d1b34a08-a532-401c-a066-ead591721a81",
+    "left_center": 1442,
+    "right_center": 1453,
+    "center_distance": 11,
+    "lexical_score": 0.1,
+    "strength_bridge": 1.081079980413452,
+    "chosen": true
+  },
+  {
+    "left_id": "e7e38e52-d07c-4ede-9ce5-a963b7a351d2+692e15e6-2b15-4855-be62-8d1d75608c72",
+    "right_id": "317a4fa5-7d6b-42e3-8f27-dcb9bc07aa28+bf0d6f03-427a-4304-9829-1caba7d578c3",
+    "left_center": 276,
+    "right_center": 290,
+    "center_distance": 14,
+    "lexical_score": 0.14035087719298245,
+    "strength_bridge": 1.0789504236440421,
+    "chosen": true
+  },
+  {
+    "left_id": "0e983ee6-3909-45f8-8b10-7fdc924e4825+f6e47be1-d1b5-4321-9b0e-c3632cd437aa",
+    "right_id": "e610682b-febf-444d-88cd-ba449fe08249+9925fd6a-dd07-44ae-bab1-97c8286f83f4",
+    "left_center": 1015,
+    "right_center": 1028,
+    "center_distance": 13,
+    "lexical_score": 0.125,
+    "strength_bridge": 1.078648279381363,
+    "chosen": true
+  },
+  {
+    "left_id": "3d552445-b5e3-4cf5-8085-37210ceabfee+6eaafc35-86c6-439f-9520-7b4a245da7de",
+    "right_id": "44e2d7cb-e893-4978-a12a-312372ed3a2c+44e22347-272c-43f2-9f70-ed8ad718a9db",
+    "left_center": 1347,
+    "right_center": 1364,
+    "center_distance": 17,
+    "lexical_score": 0.19298245614035087,
+    "strength_bridge": 1.0772059292138227,
+    "chosen": false
+  },
+  {
+    "left_id": "b3ec63f0-4fe4-4b40-a1ee-3fbda184a07c+0b3f7ee5-9a0a-46b2-87d5-142c9d9280bf",
+    "right_id": "400bdd3c-77cb-4f41-849c-92dfa4c24032+c23f6842-bcb5-4c38-9119-ef8494f6e5d7",
+    "left_center": 517,
+    "right_center": 521,
+    "center_distance": 4,
+    "lexical_score": 0.043478260869565216,
+    "strength_bridge": 1.0741936675274775,
+    "chosen": false
+  },
+  {
+    "left_id": "a8361df1-5565-4c5e-8237-7b513c56a7d2+728b49ba-def7-47b8-b21d-efa5b6fb603c",
+    "right_id": "837e10f6-7136-4bfb-8df9-37d4697ce9ef",
+    "left_center": 884,
+    "right_center": 892,
+    "center_distance": 8,
+    "lexical_score": 0.0625,
+    "strength_bridge": 1.06676297962253,
+    "chosen": false
+  },
+  {
+    "left_id": "271e453f-9948-48b0-94cf-fdf28eede70b",
+    "right_id": "400bdd3c-77cb-4f41-849c-92dfa4c24032+c23f6842-bcb5-4c38-9119-ef8494f6e5d7",
+    "left_center": 515,
+    "right_center": 521,
+    "center_distance": 6,
+    "lexical_score": 0.043478260869565216,
+    "strength_bridge": 1.0563321979331344,
+    "chosen": false
+  },
+  {
+    "left_id": "286ab627-b406-4a44-b3b8-a9706f047828",
+    "right_id": "3736c7b2-3055-42cf-8eaa-09554311ba65+42826b9f-abfa-479c-b6a7-f89792892c56",
+    "left_center": 1203,
+    "right_center": 1206,
+    "center_distance": 3,
+    "lexical_score": 0.029411764705882353,
+    "strength_bridge": 1.0521846928149523,
+    "chosen": false
+  },
+  {
+    "left_id": "d4026618-d785-4797-ba4b-f5348b35a9ac+81a0ba3d-6a0c-44d4-b733-fa4baf7499bc",
+    "right_id": "2fa402e6-936e-46d7-8d21-eb117a77c395",
+    "left_center": 1253,
+    "right_center": 1256,
+    "center_distance": 3,
+    "lexical_score": 0.02857142857142857,
+    "strength_bridge": 1.0505145583819129,
+    "chosen": false
+  },
+  {
+    "left_id": "143352ed-1879-467e-9cd7-9c85ff0fecc1",
+    "right_id": "df017af7-8ff6-4f13-9c53-7a9a1086ca22+5018c710-5824-415e-9069-598162ca53cd",
+    "left_center": 1113,
+    "right_center": 1119,
+    "center_distance": 6,
+    "lexical_score": 0.04,
+    "strength_bridge": 1.0495716718663626,
+    "chosen": true
+  },
+  {
+    "left_id": "ab38281a-99d5-4ae6-8613-1902525ddaae+bb54278b-fe8c-4a98-8386-a5c737ed0c00",
+    "right_id": "f90e215d-ac59-4a71-93d1-7b719df620fc+8b4d33b7-e536-48bc-9414-588ebf8adf0f",
+    "left_center": 1830,
+    "right_center": 1835,
+    "center_distance": 5,
+    "lexical_score": 0.034482758620689655,
+    "strength_bridge": 1.048610041300355,
+    "chosen": true
+  },
+  {
+    "left_id": "620ceb9a-61fb-4d33-a6f7-43f19becec6a",
+    "right_id": "ff03fb47-7b7e-4f22-98b9-cb065aae0717+a3c5afb5-1805-4c50-9d26-7fec7046d4f8",
+    "left_center": 546,
+    "right_center": 560,
+    "center_distance": 14,
+    "lexical_score": 0.12,
+    "strength_bridge": 1.044660492372067,
+    "chosen": false
+  },
+  {
+    "left_id": "a890e769-e2f5-46e7-9fcd-4e247f4dc86c",
+    "right_id": "3eb6e251-5c6c-4bcd-9d84-30981496ca1b+1081fa05-e39b-4242-a22e-285b875f128c",
+    "left_center": 843,
+    "right_center": 851,
+    "center_distance": 8,
+    "lexical_score": 0.05063291139240506,
+    "strength_bridge": 1.0442574315292277,
+    "chosen": true
+  },
+  {
+    "left_id": "810cfd5e-86e0-4c3d-8910-101e5c41eb7c",
+    "right_id": "ecc7e222-c10e-466e-a0b0-bf7c906786f6+16b5478c-a9c8-489e-b36e-74839d2ffe4b",
+    "left_center": 705,
+    "right_center": 722,
+    "center_distance": 17,
+    "lexical_score": 0.1702127659574468,
+    "strength_bridge": 1.0418116056576454,
+    "chosen": true
+  },
+  {
+    "left_id": "bfee0b3f-f6d8-4f0b-a2b6-9790114249ab+a38a05fb-1f5c-4335-a178-4add07670274",
+    "right_id": "87fcb001-1c0c-462c-9332-e866d113b041",
+    "left_center": 1658,
+    "right_center": 1668,
+    "center_distance": 10,
+    "lexical_score": 0.06666666666666667,
+    "strength_bridge": 1.04052523834653,
+    "chosen": true
+  },
+  {
+    "left_id": "6d45a15f-999b-4602-9caf-91651e97750b+03466c7b-c9e4-48dd-b764-6d68b02049c5",
+    "right_id": "3d552445-b5e3-4cf5-8085-37210ceabfee+6eaafc35-86c6-439f-9520-7b4a245da7de",
+    "left_center": 1330,
+    "right_center": 1347,
+    "center_distance": 17,
+    "lexical_score": 0.16901408450704225,
+    "strength_bridge": 1.039948316400936,
+    "chosen": false
+  },
+  {
+    "left_id": "3736c7b2-3055-42cf-8eaa-09554311ba65+42826b9f-abfa-479c-b6a7-f89792892c56",
+    "right_id": "2c4d26f2-f2db-463e-b959-d09d75170dd2",
+    "left_center": 1206,
+    "right_center": 1211,
+    "center_distance": 5,
+    "lexical_score": 0.029411764705882353,
+    "strength_bridge": 1.0386611794284353,
+    "chosen": false
+  },
+  {
+    "left_id": "7e7fddcf-ed07-4ab5-9e0c-b5c6c5a1e43b",
+    "right_id": "ad413036-7819-48ac-9d8f-4a29933b381c+a6ff3532-8b02-4026-98d0-48260462a69d",
+    "left_center": 583,
+    "right_center": 596,
+    "center_distance": 13,
+    "lexical_score": 0.1,
+    "strength_bridge": 1.0355023482061085,
+    "chosen": true
+  },
+  {
+    "left_id": "f90e215d-ac59-4a71-93d1-7b719df620fc+8b4d33b7-e536-48bc-9414-588ebf8adf0f",
+    "right_id": "4c51bc38-f31d-419c-8ac8-16e90002b472+11cd8d35-9d20-496d-937e-6e48e1f04829",
+    "left_center": 1835,
+    "right_center": 1847,
+    "center_distance": 12,
+    "lexical_score": 0.08620689655172414,
+    "strength_bridge": 1.0345967043690685,
+    "chosen": false
+  },
+  {
+    "left_id": "ff491b3c-084f-421c-8e2f-49208a633b0a+d9e864a3-ecf6-4438-b2d7-3291146cd19b",
+    "right_id": "9392d3b2-1dc9-4a6c-b90f-0d0ad44277ef",
+    "left_center": 1941,
+    "right_center": 1945,
+    "center_distance": 4,
+    "lexical_score": 0.02127659574468085,
+    "strength_bridge": 1.0303117134497592,
+    "chosen": false
+  },
+  {
+    "left_id": "9a62878d-15be-40a9-a597-9164abf65db2",
+    "right_id": "28aad481-4917-4009-a0f9-0bb576288c90+70af8928-b1c2-4ae0-8d92-86c66e8ade43",
+    "left_center": 649,
+    "right_center": 654,
+    "center_distance": 5,
+    "lexical_score": 0.024390243902439025,
+    "strength_bridge": 1.0288093796235585,
+    "chosen": false
+  },
+  {
+    "left_id": "50c01b24-070c-4398-be08-dd799ac54102+7ea93f3d-d20a-48bc-806f-e24055e0e0e5",
+    "right_id": "4881bf5f-fc28-4074-b84a-765edf52d4ad",
+    "left_center": 1501,
+    "right_center": 1510,
+    "center_distance": 9,
+    "lexical_score": 0.05,
+    "strength_bridge": 1.0273266289739789,
+    "chosen": false
+  },
+  {
+    "left_id": "33fbaf4e-f951-4a2f-a415-f96638ea8933+2c9156dd-10ba-43a4-9ff4-b70c408ff451",
+    "right_id": "da52fa2a-ba7e-4289-a117-cb3c8fcdc564",
+    "left_center": 1403,
+    "right_center": 1416,
+    "center_distance": 13,
+    "lexical_score": 0.09523809523809523,
+    "strength_bridge": 1.0272840756012982,
+    "chosen": false
+  },
+  {
+    "left_id": "b0a8ea10-14ad-43a2-a3f7-cea38c74740e",
+    "right_id": "bfee0b3f-f6d8-4f0b-a2b6-9790114249ab+a38a05fb-1f5c-4335-a178-4add07670274",
+    "left_center": 1655,
+    "right_center": 1658,
+    "center_distance": 3,
+    "lexical_score": 0.016666666666666666,
+    "strength_bridge": 1.0268543205805185,
+    "chosen": false
+  },
+  {
+    "left_id": "9d98abe7-28a0-409c-ac90-bf328c85a5d4",
+    "right_id": "392ec4e4-4772-4917-9f97-8cc7712947cd+9417c4e4-6175-47fd-a671-4febe2880c13",
+    "left_center": 224,
+    "right_center": 233,
+    "center_distance": 9,
+    "lexical_score": 0.04878048780487805,
+    "strength_bridge": 1.025048742878693,
+    "chosen": true
+  },
+  {
+    "left_id": "ca5725ed-069d-4441-bd92-ba391029c106",
+    "right_id": "b66188ab-1a66-4365-8cbe-5cdaf69317e3+1bd320eb-7115-40b1-81e9-c10f717f3f75",
+    "left_center": 1857,
+    "right_center": 1861,
+    "center_distance": 4,
+    "lexical_score": 0.01818181818181818,
+    "strength_bridge": 1.0241948350025623,
+    "chosen": false
+  },
+  {
+    "left_id": "14dc04ff-9dfe-4411-91d2-fb38e6e04ab3",
+    "right_id": "5e22240d-0e35-4388-ad0f-664db22f5ded+bfdf4854-fa49-4c9e-b4a5-964a1093e816",
+    "left_center": 624,
+    "right_center": 626,
+    "center_distance": 2,
+    "lexical_score": 0.01282051282051282,
+    "strength_bridge": 1.0229957370792477,
+    "chosen": false
+  },
+  {
+    "left_id": "559811d7-c6e4-4390-9aef-856d4e7eede7+82896759-e99b-491a-980f-a35aabeeafe6",
+    "right_id": "33d26595-933d-4fea-8783-66e9f787a6f8+808d34d4-3c48-4347-a1f5-886c8d8c0101",
+    "left_center": 1244,
+    "right_center": 1254,
+    "center_distance": 10,
+    "lexical_score": 0.05,
+    "strength_bridge": 1.0099215548657499,
+    "chosen": false
+  },
+  {
+    "left_id": "b69643cf-0cce-494c-8041-bd4804448530+faac8167-3685-4d60-8894-aee15d2a1f1b",
+    "right_id": "29fd9e06-d6c7-47d4-9171-6d272f4eb682+fae7e380-065f-4665-a980-07f7da2396eb",
+    "left_center": 309,
+    "right_center": 323,
+    "center_distance": 14,
+    "lexical_score": 0.09859154929577464,
+    "strength_bridge": 1.0085886171243263,
+    "chosen": false
+  },
+  {
+    "left_id": "78789b53-4982-44e8-b53c-067923c1d101+56640e8a-0f33-4d22-b2fa-43610074360a",
+    "right_id": "19ea1043-07ba-4944-a647-68572ad533f0",
+    "left_center": 1890,
+    "right_center": 1901,
+    "center_distance": 11,
+    "lexical_score": 0.05970149253731343,
+    "strength_bridge": 1.0084701309826978,
+    "chosen": true
+  },
+  {
+    "left_id": "cc56334a-4455-4a29-bb82-2892d996cd5a+983dd73f-8341-430b-bf2c-655b4670c871",
+    "right_id": "0172614a-7976-4e89-acb5-e3ae419e3df4+3046803e-bc6a-48ef-8a9f-220b2d77cd33",
+    "left_center": 1542,
+    "right_center": 1553,
+    "center_distance": 11,
+    "lexical_score": 0.058823529411764705,
+    "strength_bridge": 1.0068882170517448,
+    "chosen": false
+  },
+  {
+    "left_id": "a410e71c-c792-44ed-9c56-5e2ccfc55de2+1a756abd-317c-42eb-af6b-28ff17a610a3",
+    "right_id": "0dc1abc8-9aa8-418f-8b67-f4226893b976+019cb20c-aae2-4848-ac64-5ae94ec41df3",
+    "left_center": 1220,
+    "right_center": 1233,
+    "center_distance": 13,
+    "lexical_score": 0.08333333333333333,
+    "strength_bridge": 1.0067383940892722,
+    "chosen": false
+  },
+  {
+    "left_id": "da52fa2a-ba7e-4289-a117-cb3c8fcdc564",
+    "right_id": "127a04fa-253a-4ddf-84d4-f1faa20206b2+f2329d2b-488e-463a-848e-f1206289b5d8",
+    "left_center": 1416,
+    "right_center": 1429,
+    "center_distance": 13,
+    "lexical_score": 0.08333333333333333,
+    "strength_bridge": 1.0067383940892722,
+    "chosen": false
+  },
+  {
+    "left_id": "9af4de25-386e-4de8-875d-fdc4ed2292b4+7d8932ab-bb21-40cd-99bb-58f3eb0b372f",
+    "right_id": "e7e38e52-d07c-4ede-9ce5-a963b7a351d2+692e15e6-2b15-4855-be62-8d1d75608c72",
+    "left_center": 267,
+    "right_center": 276,
+    "center_distance": 9,
+    "lexical_score": 0.03773584905660377,
+    "strength_bridge": 1.0044188310723292,
+    "chosen": false
+  },
+  {
+    "left_id": "4b626907-e4b9-44e0-8124-835f1ea9024c+e43f9fd0-fc68-418b-834a-85bdcf9e2b34",
+    "right_id": "6849506c-866d-450c-b271-c830b0793c5c",
+    "left_center": 815,
+    "right_center": 823,
+    "center_distance": 8,
+    "lexical_score": 0.028846153846153848,
+    "strength_bridge": 1.0029395534912675,
+    "chosen": true
+  }
+]

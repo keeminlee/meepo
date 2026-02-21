@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
 import yaml from "yaml";
-import { loadRegistry, normKey } from "../registry/loadRegistry.js";
+import { loadRegistry, normKey } from "../../registry/loadRegistry.js";
 
 /**
  * Phase 1B: Name Scanner
