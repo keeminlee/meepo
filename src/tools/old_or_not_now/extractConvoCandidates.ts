@@ -17,8 +17,8 @@
  * - "I told you" / "I said"
  */
 
-import { getDb } from "../db.js";
-import { insertCandidate, type ConvoTurn } from "../ledger/meepoConvo.js";
+import { getDb } from "../../db.js";
+import { insertCandidate, type ConvoTurn } from "../../ledger/meepoConvo.js";
 
 // Patterns that indicate sticky memory candidates
 const STICKY_PATTERNS = [

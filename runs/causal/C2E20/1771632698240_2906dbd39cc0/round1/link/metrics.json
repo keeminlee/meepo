@@ -1,0 +1,33 @@
+{
+  "round": 1,
+  "phase": "link",
+  "label": "link",
+  "timestamp_ms": 1771632698183,
+  "counts": {
+    "nodes_total": 276,
+    "pairs_formed": 189,
+    "effects_total": 92,
+    "effects_unique_claimed": 41,
+    "effects_unclaimed": 51
+  },
+  "stats": {
+    "strength_bridge": {
+      "min": 0,
+      "p50": 1.0671025281938855,
+      "p90": 1.319728704693357,
+      "max": 2.3095252332133747
+    },
+    "strength_internal": {
+      "min": 0,
+      "p50": 1.0671025281938855,
+      "p90": 1.319728704693357,
+      "max": 2.3095252332133747
+    },
+    "mass": {
+      "min": 0.45,
+      "p50": 0.6871583397002237,
+      "p90": 1.461720125607609,
+      "max": 2.064567098885629
+    }
+  }
+}

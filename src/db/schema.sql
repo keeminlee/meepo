@@ -317,6 +317,139 @@ CREATE TABLE IF NOT EXISTS event_scaffold (
 CREATE INDEX IF NOT EXISTS idx_event_scaffold_session
 ON event_scaffold(session_id);
 
+-- Causal Loops: per-actor intent → consequence chains (deterministic v0)
+CREATE TABLE IF NOT EXISTS causal_loops (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  chunk_id TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  actor TEXT NOT NULL,
+  start_index INTEGER NOT NULL,
+  end_index INTEGER NOT NULL,
+  intent_text TEXT,
+  intent_type TEXT,
+  consequence_type TEXT,
+  roll_type TEXT,
+  roll_subtype TEXT,
+  outcome_text TEXT,
+  confidence REAL,
+  intent_anchor_index INTEGER,
+  consequence_anchor_index INTEGER,
+  created_at_ms INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_causal_session_actor
+ON causal_loops(session_id, actor);
+
+
+-- Causal Links: Chunkless deterministic intent → consequence chains (v1 architecture)
+-- Built by chunkless causal link kernel, gated by eligibility mask.
+-- One row per claimed (intent, consequence) pair.
+CREATE TABLE IF NOT EXISTS causal_links (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  intent_text TEXT NOT NULL,
+  intent_type TEXT NOT NULL,
+  intent_strength TEXT NOT NULL,  -- strong | weak
+  intent_anchor_index INTEGER NOT NULL,
+  consequence_text TEXT,
+  consequence_type TEXT,
+  consequence_anchor_index INTEGER,
+  distance INTEGER,  -- NULL if no consequence claimed
+  score REAL,        -- Final allocation score
+  claimed INTEGER NOT NULL,  -- 1 if consequence claimed, 0 otherwise
+  created_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_causal_links_session
+ON causal_links(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_causal_links_session_actor
+ON causal_links(session_id, actor);
+
+CREATE INDEX IF NOT EXISTS idx_causal_links_strength
+ON causal_links(session_id, intent_strength);
+
+
+-- OOC Span Classifications: LLM-based per-event OOC classification cache
+-- Keyed by (session_id, span_start, span_end). Automatically invalidated on re-ingest
+-- (new session_id UUID). Populated by buildRefinedEligibilityMask / classifyChunkOocCached.
+CREATE TABLE IF NOT EXISTS ooc_span_classifications (
+  session_id TEXT NOT NULL,
+  span_start INTEGER NOT NULL,            -- absolute start_index of the OOC-flagged span
+  span_end INTEGER NOT NULL,              -- absolute end_index of the OOC-flagged span
+  classifications TEXT NOT NULL,          -- JSON: Array<{start_index, end_index, is_ooc}>
+  classified_at_ms INTEGER NOT NULL,
+
+  PRIMARY KEY (session_id, span_start, span_end)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ooc_span_classifications_session
+ON ooc_span_classifications(session_id);
+
+
+-- Intent-Consequence Graph v0
+CREATE TABLE IF NOT EXISTS intent_nodes (
+  intent_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  chunk_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  anchor_index INTEGER NOT NULL,
+  intent_type TEXT NOT NULL,
+  text TEXT NOT NULL,
+  source TEXT NOT NULL,
+  is_strong_intent INTEGER DEFAULT 1,
+  created_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_intent_nodes_session_chunk
+ON intent_nodes(session_id, chunk_id);
+
+CREATE INDEX IF NOT EXISTS idx_intent_nodes_session_actor
+ON intent_nodes(session_id, actor_id);
+
+CREATE TABLE IF NOT EXISTS consequence_nodes (
+  consequence_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  chunk_id TEXT NOT NULL,
+  anchor_index INTEGER NOT NULL,
+  consequence_type TEXT NOT NULL,
+  roll_type TEXT,
+  roll_subtype TEXT,
+  text TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_consequence_nodes_session_chunk
+ON consequence_nodes(session_id, chunk_id);
+
+CREATE TABLE IF NOT EXISTS intent_consequence_edges (
+  edge_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  chunk_id TEXT NOT NULL,
+  intent_id TEXT NOT NULL,
+  consequence_id TEXT NOT NULL,
+  distance INTEGER NOT NULL,
+  distance_score REAL NOT NULL,
+  lexical_score REAL NOT NULL,
+  heuristic_boost REAL NOT NULL,
+  base_score REAL NOT NULL,
+  adjusted_score REAL NOT NULL,
+  shared_terms_json TEXT NOT NULL,
+  flags_json TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_edges_session_chunk
+ON intent_consequence_edges(session_id, chunk_id);
+
+CREATE INDEX IF NOT EXISTS idx_edges_session_intent
+ON intent_consequence_edges(session_id, intent_id);
+
+CREATE INDEX IF NOT EXISTS idx_edges_session_consequence
+ON intent_consequence_edges(session_id, consequence_id);
+
 -- Bronze Transcript: compiled, fused, stable transcript per session
 -- Built by compile-transcripts.ts. For live sessions, consecutive same-speaker
 -- voice utterances within VOICE_FUSE_GAP_MS are merged into one line.

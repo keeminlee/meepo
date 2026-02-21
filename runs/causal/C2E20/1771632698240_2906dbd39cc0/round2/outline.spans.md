@@ -1,0 +1,992 @@
+# Composite Spans
+
+---
+- [L2 m=19.16 s=2.26 span L1257–L1266 center=L1260]
+  - join: dCenter=6 lex=0.13 bridge=1.21
+  - [L1 m=1.79 s=1.05 span L1257–L1263 center=L1260]
+    - L1257 (Snowflake (Panda)): "Is there like a gift shop?"
+    - L1263 (Keemin (DM)): "No, no, it's just common."
+  - [L1 m=1.22 s=0.00 span L1266–L1266 center=L1266]
+    - L1266 (Evanora (Juls)): "Is there any significance in that?"
+- covered_range: L1257..L1266
+
+---
+- [L2 m=15.52 s=1.19 span L1254–L1262 center=L1254]
+  - join: dCenter=8 lex=0.13 bridge=1.19
+  - [L1 m=0.86 s=0.00 span L1254–L1254 center=L1254]
+    - L1254 (Snowflake (Panda)): "Does the Fleshing Arena provide clothes for the nobles?"
+  - [L1 m=1.01 s=0.00 span L1262–L1262 center=L1262]
+    - L1262 (Evanora (Juls)): "Is the inscription from the bed in Inferno, I checked?"
+- covered_range: L1254..L1262
+
+---
+- [L2 m=14.78 s=3.39 span L1247–L1267 center=L1253]
+  - join: dCenter=10 lex=0.19 bridge=1.27
+  - [L1 m=0.77 s=1.10 span L1247–L1258 center=L1253]
+    - L1247 (Louis (Jojo)): "written in blood, could that be the password?"
+    - L1258 (Keemin (DM)): "He requested one and and she gestures towards the body. I mean he's wearing it right now"
+  - [L1 m=1.77 s=1.02 span L1259–L1267 center=L1263]
+    - L1259 (Jamison (BrassOnes)): "Was that the same clothes he was wearing during the dinner?"
+    - L1267 (Keemin (DM)): "And intentional here, I'll note, also since Snowflake rolled a 15 on the investigation check, the D seems... and Slake."
+- covered_range: L1247..L1267
+
+---
+- [L2 m=13.65 s=5.13 span L1709–L1714 center=L1711]
+  - join: dCenter=3 lex=0.20 bridge=1.39
+  - [L1 m=0.99 s=1.43 span L1709–L1712 center=L1711]
+    - L1709 (Jamison (BrassOnes)): "Jamison would like to... is there any of Fig's blood anywhere?"
+    - L1712 (Keemin (DM)): "uh like dried it's not like it's not like wet fresh blood or anything"
+  - [L1 m=1.14 s=2.31 span L1713–L1714 center=L1714]
+    - L1713 (Jamison (BrassOnes)): "Is there any on Fig?"
+    - L1714 (Keemin (DM)): "Any blood on Fig?"
+- covered_range: L1709..L1714
+
+---
+- [L2 m=13.56 s=2.36 span L518–L526 center=L521]
+  - join: dCenter=1 lex=0.13 bridge=1.27
+  - [L1 m=0.76 s=0.00 span L521–L521 center=L521]
+    - L521 (Evanora (Juls)): "What else could be pinned for this that isn't in this group? Possibly?"
+  - [L1 m=1.29 s=1.09 span L518–L526 center=L522]
+    - L518 (Louis (Jojo)): "We could try."
+    - L526 (Keemin (DM)): "you can make one. I personally don't really see, you know, how that, how that could happen."
+- covered_range: L518..L526
+
+---
+- [L2 m=12.35 s=2.91 span L1498–L1502 center=L1499]
+  - join: dCenter=3 lex=0.09 bridge=1.17
+  - [L1 m=1.85 s=1.73 span L1498–L1499 center=L1499]
+    - L1498 (Snowflake (Panda)): "Is there a fig-shaped acid shadow?"
+    - L1499 (Keemin (DM)): "No, there is no fig-shaped acid shadow. That's a very specific thing to ask."
+  - [L1 m=1.05 s=0.00 span L1502–L1502 center=L1502]
+    - L1502 (Evanora (Juls)): "Let's see, is there any-"
+- covered_range: L1498..L1502
+
+---
+- [L2 m=12.11 s=2.31 span L510–L524 center=L517]
+  - join: dCenter=6 lex=0.13 bridge=1.21
+  - [L1 m=0.64 s=1.10 span L510–L524 center=L517]
+    - L510 (Evanora (Juls)): "Why are you and Meepo talking?"
+    - L524 (Keemin (DM)): "If you have an argument..."
+  - [L1 m=0.76 s=0.00 span L523–L523 center=L523]
+    - L523 (Evanora (Juls)): "Or are they the only suspects?"
+- covered_range: L510..L524
+
+---
+- [L2 m=11.88 s=3.50 span L1495–L1513 center=L1501]
+  - join: dCenter=10 lex=0.18 bridge=1.25
+  - [L1 m=1.01 s=1.06 span L1495–L1506 center=L1501]
+    - L1495 (Snowflake (Panda)): "Is it just like a hole in the wall, like in between the hallway?"
+    - L1506 (Keemin (DM)): "You investigate around the rest"
+  - [L1 m=0.78 s=1.19 span L1509–L1513 center=L1511]
+    - L1509 (Evanora (Juls)): "What's the detect magic? Do I not see any runes?"
+    - L1513 (Keemin (DM)): "What do you mean by runes?"
+- covered_range: L1495..L1513
+
+---
+- [L2 m=10.98 s=3.72 span L1493–L1507 center=L1495]
+  - join: dCenter=10 lex=0.21 bridge=1.30
+  - [L1 m=1.40 s=1.28 span L1493–L1496 center=L1495]
+    - L1493 (Snowflake (Panda)): "Can we investigate the gap in the door that was in the illusion?"
+    - L1496 (Keemin (DM)): "Yeah, not all the way through the wall, but the wall's made out of stone, so it is pretty impressive the amount of the wall that has managed to have been impacted."
+  - [L1 m=1.52 s=1.14 span L1503–L1507 center=L1505]
+    - L1503 (Jamison (BrassOnes)): "Does anything else in the room look like it's been disturbed?"
+    - L1507 (Keemin (DM)): "of the room, and yeah, I'll say that you pretty much don't find anything else, so it seems like you've gleaned everything that you can from here."
+- covered_range: L1493..L1507
+
+---
+- [L2 m=9.97 s=2.85 span L1212–L1217 center=L1212]
+  - join: dCenter=3 lex=0.27 bridge=1.54
+  - [L1 m=0.86 s=0.00 span L1212–L1212 center=L1212]
+    - L1212 (Jamison (BrassOnes)): "Does she really have that scar?"
+  - [L1 m=1.25 s=1.32 span L1213–L1217 center=L1215]
+    - L1213 (Snowflake (Panda)): "Does it look fresh?"
+    - L1217 (Keemin (DM)): "Yeah, yeah, yeah, it is, it is. She does have a scar on her face."
+- covered_range: L1212..L1217
+
+---
+- [L2 m=8.61 s=2.26 span L330–L338 center=L331]
+  - join: dCenter=3 lex=0.11 bridge=1.21
+  - [L1 m=0.93 s=0.00 span L331–L331 center=L331]
+    - L331 (Evanora (Juls)): "Yeah, they summoned everyone, where the fuck is this shit?"
+  - [L1 m=1.77 s=1.05 span L330–L338 center=L334]
+    - L330 (Jamison (BrassOnes)): "Oh, where the hell is he? Where's Henroc?"
+    - L338 (Keemin (DM)): "Jamison, as you poke your head down the hall, please roll a perception check."
+- covered_range: L330..L338
+
+---
+- [L2 m=8.42 s=3.56 span L652–L661 center=L654]
+  - join: dCenter=6 lex=0.09 bridge=1.15
+  - [L1 m=0.60 s=1.07 span L652–L655 center=L654]
+    - L652 (Snowflake (Panda)): "What do you mean your hands are tight?"
+    - L655 (Keemin (DM)): "the evidence is just overwhelming and and you can start to kind of tell like Corah Malora's starting to get a little bit irritated as she's like all right well if that's all that there is then then I"
+  - [L1 m=1.01 s=1.34 span L659–L661 center=L660]
+    - L659 (Louis (Jojo)): "Can I attempt to help?"
+    - L661 (Keemin (DM)): "Sure, we'll say with all five of you guys, you can help."
+- covered_range: L652..L661
+
+---
+- [L2 m=8.00 s=3.38 span L230–L237 center=L233]
+  - join: dCenter=1 lex=0.13 bridge=1.26
+  - [L1 m=0.64 s=1.11 span L230–L235 center=L233]
+    - L230 (Jamison (BrassOnes)): "Uh, I just, I, I mean, how has it fallen on us? when you guys..."
+    - L235 (Keemin (DM)): "We, and we were, it's just, it's complicated. Just don't ask too many questions."
+  - [L1 m=1.22 s=1.01 span L231–L237 center=L234]
+    - L231 (Jamison (BrassOnes)): "took Cyril and and put him somewhere away from the rest of us. How does that fall on us?"
+    - L237 (Keemin (DM)): "It seems that your lot is very, very good at destruction."
+- covered_range: L230..L237
+
+---
+- [L2 m=7.53 s=3.63 span L1205–L1220 center=L1206]
+  - join: dCenter=14 lex=0.16 bridge=1.11
+  - [L1 m=0.69 s=1.20 span L1205–L1206 center=L1206]
+    - L1205 (Evanora (Juls)): "Did you? Because this seems to be not just poison."
+    - L1206 (Keemin (DM)): "And yeah, just, I mean, first glance Evanora, this, this, if there's poison like this, I mean, you know, it's not poison. That's for sure."
+  - [L1 m=1.90 s=1.32 span L1219–L1220 center=L1220]
+    - L1219 (Snowflake (Panda)): "Does it look fresh?"
+    - L1220 (Keemin (DM)): "It looks like what... It does not look fresh. It looks like it's been there for a while."
+- covered_range: L1205..L1220
+
+---
+- [L2 m=7.23 s=3.43 span L1797–L1809 center=L1803]
+  - join: dCenter=5 lex=0.16 bridge=1.29
+  - [L1 m=0.57 s=1.09 span L1797–L1808 center=L1803]
+    - L1797 (Evanora (Juls)): "They wanted to come here, according to you, did you not?"
+    - L1808 (Keemin (DM)): "So, I will tell you guys, this is the moment where you guys have seen a lot of clues."
+  - [L1 m=0.56 s=1.05 span L1806–L1809 center=L1808]
+    - L1806 (Snowflake (Panda)): "Maybe. Should we tell her right now?"
+    - L1809 (Keemin (DM)): "I will advise you guys to circle up, get an account of all the facts, try to get some kind of picture of what you think is going on. If you want to go to Corah Malora and tell her a story, you'll definitely have a better chance of convincing her that this is a story worth telling the more pieces of the plot you have together."
+- covered_range: L1797..L1809
+
+---
+- [L2 m=7.22 s=1.12 span L1803–L1810 center=L1803]
+  - join: dCenter=7 lex=0.08 bridge=1.12
+  - [L1 m=0.64 s=0.00 span L1803–L1803 center=L1803]
+    - L1803 (Jamison (BrassOnes)): "Did you give them directions, like, down to here? Or where exactly, Fig?"
+  - [L1 m=0.62 s=0.00 span L1810–L1810 center=L1810]
+    - L1810 (Jamison (BrassOnes)): "Now, correct me if I'm wrong, she said they did have camera footage, correct?"
+- covered_range: L1803..L1810
+
+---
+- [L2 m=7.11 s=1.17 span L308–L314 center=L308]
+  - join: dCenter=6 lex=0.10 bridge=1.17
+  - [L1 m=0.73 s=0.00 span L308–L308 center=L308]
+    - L308 (Jamison (BrassOnes)): "How was his body even found? Like, what condition was it in?"
+  - [L1 m=0.68 s=0.00 span L314–L314 center=L314]
+    - L314 (Jamison (BrassOnes)): "and what possibly could we say to change her mind?"
+- covered_range: L308..L314
+
+---
+- [L2 m=7.06 s=3.23 span L527–L531 center=L528]
+  - join: dCenter=2 lex=0.03 bridge=1.07
+  - [L1 m=0.67 s=1.13 span L527–L528 center=L528]
+    - L527 (Louis (Jojo)): "You know what? We could. Vincenzo was helping Jamison. What if he snuck something into the food?"
+    - L528 (Keemin (DM)): "What? Why am I catching strays here? It's preposterous!"
+  - [L1 m=0.64 s=1.03 span L529–L531 center=L530]
+    - L529 (Evanora (Juls)): "But here's the thing, if Lord Pinkertrick, how did he fucking, how did he fucking die?"
+    - L531 (Keemin (DM)): "Again, if I say the wrong thing here, as he like nervously glances at the guards, I could get in a lot of liability stuff. Just, just come with me. You guys can talk with the Corah Malora. Worst case scenario, you know, she tells you guys to piss off and we're back to square one. And, um, yeah, that would, that would really suck. But."
+- covered_range: L527..L531
+
+---
+- [L2 m=6.97 s=3.39 span L307–L317 center=L309]
+  - join: dCenter=6 lex=0.17 bridge=1.30
+  - [L1 m=0.66 s=1.08 span L307–L310 center=L309]
+    - L307 (Jamison (BrassOnes)): "Nice little explanation of why he wound up dead, but be honest Lord Pincushion, like what makes you think that it was very apparent that Cyril did it?"
+    - L310 (Keemin (DM)): "my lips are sealed if you want to discuss confidential matters in in in order to to try to free your uh your wing member who has"
+  - [L1 m=0.60 s=1.01 span L313–L317 center=L315]
+    - L313 (Jamison (BrassOnes)): "What are the chances that she would want to listen to any of us?"
+    - L317 (Keemin (DM)): "You know, the Fleshing Arena's all about spectacle, right? And we usually try to give our new recruits, you know, second chances. It's just when it comes to third chances, it gets a little dicey. Picking up what I'm putting down."
+- covered_range: L307..L317
+
+---
+- [L2 m=6.83 s=3.38 span L324–L347 center=L335]
+  - join: dCenter=9 lex=0.12 bridge=1.16
+  - [L1 m=0.95 s=1.11 span L324–L345 center=L335]
+    - L324 (Jamison (BrassOnes)): "Henroc, do you got anything to say? You're being real quiet over there. You're usually the one to jump in all white knight and shit."
+    - L345 (Keemin (DM)): "Yeah, with the five, as the piercing whistle bounces off the walls of the row of cells off in the one corner of the Merc Wolf wing, you get no response."
+  - [L1 m=1.86 s=1.10 span L341–L347 center=L344]
+    - L341 (Evanora (Juls)): "Is he getting murdered?"
+    - L347 (Keemin (DM)): "Okay, if you walk down the hall, then no perception check needed. You see Henroc through the bars of his cell all the way at the far end of the hallway. He is sitting like in the like, he's sitting in like the the kneeled like prayer position. And now that you're closer, you can like hear his like ardent, desperate pleadings to the wanderer."
+- covered_range: L324..L347
+
+---
+- [L2 m=6.71 s=3.28 span L1858–L1867 center=L1861]
+  - join: dCenter=3 lex=0.07 bridge=1.14
+  - [L1 m=0.88 s=1.03 span L1858–L1863 center=L1861]
+    - L1858 (Jamison (BrassOnes)): "Well, let me ask you, let me ask you something, Lord Pincushion. You've worked here for a long time, right? You've been here for quite a while."
+    - L1863 (Keemin (DM)): "Uh, I mean that's kind of hard for me to keep track of. I'm sure there's lots of vendettas. It's not like we have the cream of the crop, but there's a society down here."
+  - [L1 m=1.15 s=1.11 span L1860–L1867 center=L1864]
+    - L1860 (Jamison (BrassOnes)): "Is there anybody that has been..."
+    - L1867 (Keemin (DM)): "Whoa, whoa, whoa, whoa, whoa, whoa. That is totally not the PR way of saying it, but I mean, kinda?"
+- covered_range: L1858..L1867
+
+---
+- [L2 m=6.59 s=3.20 span L295–L315 center=L305]
+  - join: dCenter=3 lex=0.07 bridge=1.13
+  - [L1 m=0.64 s=1.03 span L295–L315 center=L305]
+    - L295 (Louis (Jojo)): "They have no clue what the shit happened, do they?"
+    - L315 (Keemin (DM)): "Look, the way I see it..."
+  - [L1 m=0.67 s=1.05 span L304–L311 center=L308]
+    - L304 (Louis (Jojo)): "I don't have to plead any case, I don't know the guy, was it Neera?"
+    - L311 (Keemin (DM)): "has possibly not really done anything wrong as far as I can tell off the record, please go ahead and do so yourselves. She's not going to listen to me."
+- covered_range: L295..L315
+
+---
+- [L2 m=6.20 s=3.46 span L1218–L1226 center=L1220]
+  - join: dCenter=5 lex=0.08 bridge=1.14
+  - [L1 m=0.94 s=1.20 span L1218–L1222 center=L1220]
+    - L1218 (Jamison (BrassOnes)): "And looking at that, does it look like a cut or a burn or?"
+    - L1222 (Keemin (DM)): "Pauline does kind of catch the two of you staring at her and she like kind of self-consciously puts a hand up against her cheek though."
+  - [L1 m=0.80 s=1.12 span L1224–L1226 center=L1225]
+    - L1224 (Jamison (BrassOnes)): "How'd you get that?"
+    - L1226 (Keemin (DM)): "Um, well, uh, yeah, uh, it was an accident when I was younger, um, but, uh, mm, I'll spare you the details."
+- covered_range: L1218..L1226
+
+---
+- [L2 m=6.16 s=3.73 span L2013–L2027 center=L2018]
+  - join: dCenter=7 lex=0.25 bridge=1.44
+  - [L1 m=0.60 s=1.19 span L2013–L2023 center=L2018]
+    - L2013 (Louis (Jojo)): "Oh no, did they used to date?"
+    - L2023 (Keemin (DM)): "I don't remember, sorry, what did you trade me?"
+  - [L1 m=0.54 s=1.10 span L2022–L2027 center=L2025]
+    - L2022 (Jamison (BrassOnes)): "on the first night we were here. What did I trade you?"
+    - L2027 (Keemin (DM)): "What the..."
+- covered_range: L2013..L2027
+
+---
+- [L2 m=5.94 s=3.84 span L1864–L1874 center=L1869]
+  - join: dCenter=2 lex=0.22 bridge=1.43
+  - [L1 m=0.89 s=1.07 span L1864–L1874 center=L1869]
+    - L1864 (Jamison (BrassOnes)): "But I mean, like, a lot of people here are here for punishment to be killed in the Fleshing Arena, correct?"
+    - L1874 (Keemin (DM)): "Okay, that is true, but unless they were really just really in fear of their life or something, I wouldn't see a reason. And at that point, why not just march in through the doors and and, you know, we're always, we're always, you know, happy to add more to our collection."
+  - [L1 m=1.70 s=1.34 span L1869–L1872 center=L1871]
+    - L1869 (Jamison (BrassOnes)): "Is there anybody that would have come here, I don't know, to maybe escape? Something on the outside?"
+    - L1872 (Keemin (DM)): "No, that sounds really, really stupid. I mean, this is, uh, I mean, I don't want to put it like this, but like, why would you? And this is a prison, like you said."
+- covered_range: L1864..L1874
+
+---
+- [L2 m=5.77 s=2.31 span L408–L425 center=L417]
+  - join: dCenter=6 lex=0.13 bridge=1.23
+  - [L1 m=1.19 s=1.08 span L408–L425 center=L417]
+    - L408 (Jamison (BrassOnes)): "More PINKUSHNINKLINGS! What the hell is snappin'?"
+    - L425 (Keemin (DM)): "Can't you see that the whole Fleshing Arena is falling apart?"
+  - [L1 m=0.59 s=0.00 span L423–L423 center=L423]
+    - L423 (Snowflake (Panda)): "How do you say, constricted to our quarters and our progression in the rankings? Like, how do you expect us to care?"
+- covered_range: L408..L425
+
+---
+- [L2 m=5.73 s=1.40 span L417–L418 center=L417]
+  - join: dCenter=1 lex=0.20 bridge=1.40
+  - [L1 m=0.66 s=0.00 span L417–L417 center=L417]
+    - L417 (Louis (Jojo)): "We're done this. So FaneCushion, what's our new ranking? How do we do?"
+  - [L1 m=0.65 s=0.00 span L418–L418 center=L418]
+    - L418 (Snowflake (Panda)): "Yeah, how do we do?"
+- covered_range: L417..L418
+
+---
+- [L2 m=5.63 s=3.95 span L1845–L1851 center=L1847]
+  - join: dCenter=2 lex=0.15 bridge=1.30
+  - [L1 m=1.97 s=1.38 span L1845–L1849 center=L1847]
+    - L1845 (Louis (Jojo)): "Can I inside him? Is he the real Lord Pincushion?"
+    - L1849 (Keemin (DM)): "Yeah, you can roll an insight check, Louis."
+  - [L1 m=0.88 s=1.27 span L1847–L1851 center=L1849]
+    - L1847 (Evanora (Juls)): "Didn't you like to go with the boy?"
+    - L1851 (Keemin (DM)): "It's you guys."
+- covered_range: L1845..L1851
+
+---
+- [L2 m=5.50 s=1.33 span L1349–L1357 center=L1349]
+  - join: dCenter=8 lex=0.20 bridge=1.33
+  - [L1 m=0.87 s=0.00 span L1349–L1349 center=L1349]
+    - L1349 (Snowflake (Panda)): "Sister Romero, what do you think?"
+  - [L1 m=0.69 s=0.00 span L1357–L1357 center=L1357]
+    - L1357 (Snowflake (Panda)): "Can you look at all of them?"
+- covered_range: L1349..L1357
+
+---
+- [L2 m=5.42 s=3.64 span L1346–L1356 center=L1347]
+  - join: dCenter=9 lex=0.14 bridge=1.19
+  - [L1 m=2.06 s=1.32 span L1346–L1347 center=L1347]
+    - L1346 (Snowflake (Panda)): "Can I examine the wound and see if it's like, what kind of weapon? Like, is it like a dagger size? Is it a arrow? Arrowhead size is it?"
+    - L1347 (Keemin (DM)): "If you'd like, you can roll a medicine check, or you can ask Sister Valmira to roll the medicine check. She is available."
+  - [L1 m=0.64 s=1.13 span L1355–L1356 center=L1356]
+    - L1355 (Snowflake (Panda)): "F plus Cyril to medicine. So, Sister Vulnera, do you know what, like what weapon was used?"
+    - L1356 (Keemin (DM)): "How would I know such a thing? Up until just now, I..."
+- covered_range: L1346..L1356
+
+---
+- [L2 m=4.92 s=3.42 span L2007–L2018 center=L2010]
+  - join: dCenter=5 lex=0.13 bridge=1.24
+  - [L1 m=0.56 s=1.08 span L2007–L2012 center=L2010]
+    - L2007 (Louis (Jojo)): "That's a six. You know what? I'm going to use a thingy."
+    - L2012 (Keemin (DM)): "Uh, I think I'm okay. I don't know. Old Xoblob suddenly cuts through the air. The apple of my eye."
+  - [L1 m=0.60 s=1.10 span L2011–L2018 center=L2015]
+    - L2011 (Louis (Jojo)): "Fig, buddy, what's wrong with you?"
+    - L2018 (Keemin (DM)): "Yeah, yeah, unless you're already in the green room, I don't know."
+- covered_range: L2007..L2018
+
+---
+- [L2 m=4.92 s=3.51 span L318–L335 center=L323]
+  - join: dCenter=12 lex=0.20 bridge=1.24
+  - [L1 m=0.64 s=1.00 span L318–L328 center=L323]
+    - L318 (Jamison (BrassOnes)): "But if he didn't do it, how is that a third chance?"
+    - L328 (Keemin (DM)): "Henroc, actually, you know, depicted on here, but is nowhere to be seen."
+  - [L1 m=0.95 s=1.27 span L334–L335 center=L335]
+    - L334 (Snowflake (Panda)): "Are you saying that this is just a gummy?"
+    - L335 (Keemin (DM)): "If you wanna, if you wanna go find Henroc, you can go to him."
+- covered_range: L318..L335
+
+---
+- [L2 m=4.76 s=2.54 span L1938–L1944 center=L1941]
+  - join: dCenter=1 lex=0.14 bridge=1.27
+  - [L1 m=0.48 s=1.27 span L1938–L1944 center=L1941]
+    - L1938 (Louis (Jojo)): "Hey Rae, look, I have some pocket jerky, why don't you try some? And like, put it in her mouth."
+    - L1944 (Keemin (DM)): "Yeah, I will say that he does, but before we get to Sen's reaction, Rei's going to start rambling about the velvetic fawn that she saw. Oh, you should have been there, Evanora. It was so pretty, so cute, and the description was so interesting. It was completely heartless, can you believe it, but very poisonous, and what was it? Her blood smells like..."
+  - [L1 m=0.56 s=0.00 span L1942–L1942 center=L1942]
+    - L1942 (Louis (Jojo)): "What will you name your van? You mean Cobee? Coby! Could you name another car? The Mercedes. Anything else? Yeah. And we'll pick it out by car, because we have another very modest set in the Deus Vac Eğer, and it's just so ridiculous how demand on that vehicle is so far below where we're at. … Hey!"
+- covered_range: L1938..L1944
+
+---
+- [L2 m=4.62 s=2.31 span L1417–L1434 center=L1417]
+  - join: dCenter=12 lex=0.22 bridge=1.27
+  - [L1 m=0.82 s=0.00 span L1417–L1417 center=L1417]
+    - L1417 (Evanora (Juls)): "Can Evanora get the bag from Pauline?"
+  - [L1 m=0.91 s=1.03 span L1424–L1434 center=L1429]
+    - L1424 (Evanora (Juls)): "and can I, can I see the bag?"
+    - L1434 (Keemin (DM)): "And as you whisper your name"
+- covered_range: L1417..L1434
+
+---
+- [L2 m=4.45 s=3.60 span L557–L574 center=L566]
+  - join: dCenter=2 lex=0.07 bridge=1.14
+  - [L1 m=1.35 s=1.23 span L557–L574 center=L566]
+    - L557 (Jamison (BrassOnes)): "Hey, what's the holdup? Is my whistle not working?"
+    - L574 (Keemin (DM)): "No! We are not pitting it on Vincenzo! Vincenzo has done nothing wrong!"
+  - [L1 m=1.00 s=1.23 span L567–L568 center=L568]
+    - L567 (Jamison (BrassOnes)): "Do we gotta go, like, right now, Lord Pincushion? Or, uh, like, what's the deal?"
+    - L568 (Keemin (DM)): "Lord Pincushion has no idea. Like right now, the entire Fleshing Arena, according to him, is in chaos. He has no idea. He can't give you times. He can't give you deadlines. For the first time, he's just completely at a loss. Like this is this is gone beyond what paperwork powers he has."
+- covered_range: L557..L574
+
+---
+- [L2 m=4.43 s=2.18 span L260–L266 center=L263]
+  - join: dCenter=2 lex=0.05 bridge=1.09
+  - [L1 m=0.68 s=1.09 span L260–L266 center=L263]
+    - L260 (Jamison (BrassOnes)): "Well, who else knows about that other than you guys? You can spin it however you want."
+    - L266 (Keemin (DM)): "He's being carefully monitored in a location that I cannot disclose."
+  - [L1 m=0.73 s=0.00 span L265–L265 center=L265]
+    - L265 (Jamison (BrassOnes)): "Well, where is Cyril right now?"
+- covered_range: L260..L266
+
+---
+- [L2 m=4.29 s=3.29 span L1101–L1122 center=L1105]
+  - join: dCenter=9 lex=0.15 bridge=1.21
+  - [L1 m=0.73 s=1.08 span L1101–L1109 center=L1105]
+    - L1101 (Jamison (BrassOnes)): "Oh my god, can we just get off the fact that we didn't kill him, that that's above our pay grade? We're just grunts fighting for everybody's amusement. We're not espionage people that run around killing nobles for no reason."
+    - L1109 (Keemin (DM)): "did not watch the fight because midway through Around Wing 5, I was called to investigate a death."
+  - [L1 m=0.71 s=1.01 span L1105–L1122 center=L1114]
+    - L1105 (Jamison (BrassOnes)): "Yeah, did you watch that fight? That's what I'm about, is making wolf heads kiss. I don't care about- killing a novi-"
+    - L1122 (Keemin (DM)): "Yeah, you don't really know how all the cleric-y stuff works, Jamison."
+- covered_range: L1101..L1122
+
+---
+- [L2 m=4.26 s=2.66 span L267–L269 center=L267]
+  - join: dCenter=2 lex=0.09 bridge=1.18
+  - [L1 m=0.72 s=0.00 span L267–L267 center=L267]
+    - L267 (Jamison (BrassOnes)): "Why ain't he already dead and why wasn't he being monitored when he did it?"
+  - [L1 m=0.64 s=1.48 span L268–L269 center=L269]
+    - L268 (Evanora (Juls)): "Why is this falling? Onto"
+    - L269 (Keemin (DM)): "This is..."
+- covered_range: L267..L269
+
+---
+- [L2 m=4.11 s=2.49 span L559–L569 center=L560]
+  - join: dCenter=4 lex=0.18 bridge=1.35
+  - [L1 m=0.70 s=0.00 span L560–L560 center=L560]
+    - L560 (Louis (Jojo)): "You whistled?"
+  - [L1 m=0.74 s=1.15 span L559–L569 center=L564]
+    - L559 (Evanora (Juls)): "You whistled?"
+    - L569 (Keemin (DM)): "He has no more information than the rest of you guys, according to him."
+- covered_range: L559..L569
+
+---
+- [L2 m=4.08 s=4.00 span L342–L350 center=L346]
+  - join: dCenter=2 lex=0.27 bridge=1.53
+  - [L1 m=1.58 s=1.15 span L342–L349 center=L346]
+    - L342 (Jamison (BrassOnes)): "Perception? Perception, you say? I'm so great at those, this is gonna be fancy. Fantastic. It's a whole six."
+    - L349 (Keemin (DM)): "And it's like difficult almost to rouse him as he's like so like you can you can see you can see like the beads of"
+  - [L1 m=0.95 s=1.32 span L346–L350 center=L348]
+    - L346 (Jamison (BrassOnes)): "Oh son of a bitch. Then I'm just gonna start walking down the hall. Henroc, can you not hear me?"
+    - L350 (Keemin (DM)): "like pouring down his face he's just like completely at the mercy of you know his his his prayers and pleas to the wanderer if you stick"
+- covered_range: L342..L350
+
+---
+- [L2 m=4.00 s=3.37 span L1550–L1567 center=L1553]
+  - join: dCenter=13 lex=0.20 bridge=1.21
+  - [L1 m=0.60 s=1.04 span L1550–L1555 center=L1553]
+    - L1550 (Jamison (BrassOnes)): "Do they use like strong oils to try to mask that odor? Is that a thing?"
+    - L1555 (Keemin (DM)): "Pauline chimes in, Well, um, I can confirm that we do not usually stock up peppermint as an air freshener or anything. It's not really something that should have been here, really."
+  - [L1 m=0.79 s=1.12 span L1564–L1567 center=L1566]
+    - L1564 (Jamison (BrassOnes)): "Well, sister, do we need to do a double check on the time of death, since, you know, we were sure about the poison. Is the time of death correct?"
+    - L1567 (Keemin (DM)): "Well, like I said, I'm very certain that it must have been at least 12 hours. Um, it's not stinking up, so the window must have been between... I suppose it's quite cool in here. 72 and 12 hours? That's the best window I can give."
+- covered_range: L1550..L1567
+
+---
+- [L2 m=3.94 s=3.30 span L1326–L1343 center=L1330]
+  - join: dCenter=7 lex=0.15 bridge=1.25
+  - [L1 m=1.05 s=1.04 span L1326–L1334 center=L1330]
+    - L1326 (Louis (Jojo)): "Can I aid her? Because I'm trying to like help her."
+    - L1334 (Keemin (DM)): "In order to know that Snowflake's about to do this, she would have to communicate it to you somehow, in which case there would be a separate role for how quietly you can get that across."
+  - [L1 m=1.83 s=1.02 span L1330–L1343 center=L1337]
+    - L1330 (Louis (Jojo)): "Could I give her aid as I'm like there, just like moving this stuff around and putting his body back into position?"
+    - L1343 (Keemin (DM)): "We can go with Snowflake's roll, that's fine. So, 21 and 23, Snowflake, with like, with like the quickest little swipe, you manage to nab one of the rings on Veil's end. Which is covered in rings, by the way, he has a bunch of them."
+- covered_range: L1326..L1343
+
+---
+- [L2 m=3.83 s=3.50 span L1111–L1129 center=L1119]
+  - join: dCenter=8 lex=0.27 bridge=1.45
+  - [L1 m=1.33 s=1.01 span L1111–L1126 center=L1119]
+    - L1111 (Jamison (BrassOnes)): "So what what can you do?"
+    - L1126 (Keemin (DM)): "Yes, and I currently detect that you are very likely guilty of this crime."
+  - [L1 m=0.70 s=1.03 span L1124–L1129 center=L1127]
+    - L1124 (Jamison (BrassOnes)): "So, like, if you can detect poison and stuff like that, can you detect other things, or...?"
+    - L1129 (Keemin (DM)): "and Tween."
+- covered_range: L1111..L1129
+
+---
+- [L2 m=3.56 s=3.20 span L1565–L1583 center=L1572]
+  - join: dCenter=7 lex=0.04 bridge=1.04
+  - [L1 m=0.65 s=1.06 span L1565–L1578 center=L1572]
+    - L1565 (Evanora (Juls)): "Yes, please enlighten us."
+    - L1578 (Keemin (DM)): "That's a great question, Snowflake. Please roll a d100."
+  - [L1 m=0.70 s=1.10 span L1574–L1583 center=L1579]
+    - L1574 (Evanora (Juls)): "Did they take the magic ring that Evanora detected off him?"
+    - L1583 (Keemin (DM)): "73, you took one of the normal rings, but you don't really know that, Snowflake."
+- covered_range: L1565..L1583
+
+---
+- [L2 m=3.47 s=2.55 span L1569–L1585 center=L1569]
+  - join: dCenter=11 lex=0.33 bridge=1.50
+  - [L1 m=0.70 s=0.00 span L1569–L1569 center=L1569]
+    - L1569 (Evanora (Juls)): "Did they take the ring?"
+  - [L1 m=0.69 s=1.05 span L1575–L1585 center=L1580]
+    - L1575 (Evanora (Juls)): "Or which train did they take?"
+    - L1585 (Keemin (DM)): "Yeah."
+- covered_range: L1569..L1585
+
+---
+- [L2 m=3.42 s=3.20 span L1427–L1435 center=L1429]
+  - join: dCenter=4 lex=0.02 bridge=1.04
+  - [L1 m=1.83 s=1.11 span L1427–L1430 center=L1429]
+    - L1427 (Evanora (Juls)): "I want to try putting in the letters that she sees. Maybe that's the code? Maybe?"
+    - L1430 (Keemin (DM)): "As you inspect the sack, it looks like a completely mundane sack, even though you're certain that it's a bag of holding from your Detect Magic spell. There's no, like, keypad or anything, like, you know, in the green room door to put this."
+  - [L1 m=1.23 s=1.05 span L1431–L1435 center=L1433]
+    - L1431 (Evanora (Juls)): "Can I try saying my name?"
+    - L1435 (Keemin (DM)): "Nothing seems to happen."
+- covered_range: L1427..L1435
+
+---
+- [L2 m=3.31 s=3.59 span L623–L636 center=L626]
+  - join: dCenter=10 lex=0.09 bridge=1.09
+  - [L1 m=0.65 s=1.07 span L623–L628 center=L626]
+    - L623 (Evanora (Juls)): "Or does he have plot armor?"
+    - L628 (Keemin (DM)): "The guards escort you, um, as you, you know, um, have been offered by the guards. This opportunity by Lord Lord Pincushion, amidst all..."
+  - [L1 m=1.50 s=1.43 span L635–L636 center=L636]
+    - L635 (Louis (Jojo)): "Can I see if I can spot anything around, like papers or any reports that the guards may have given her for like, this is what we saw, this is what we think happened, anything?"
+    - L636 (Keemin (DM)): "Yeah, generally like all the different papers have like all these, you know, written report accounts of, you know, Cyril. You see Cyril's name a bunch of places. Any closer read than that you're going to have to try to like grab some of these documents and read them on your own time because right now Corah Malora's attention is on U5 and she will ask you"
+- covered_range: L623..L636
+
+---
+- [L2 m=3.21 s=3.31 span L1095–L1106 center=L1098]
+  - join: dCenter=3 lex=0.06 bridge=1.11
+  - [L1 m=0.71 s=1.13 span L1096–L1099 center=L1098]
+    - L1096 (Jamison (BrassOnes)): "What kind of poison was used to kill him?"
+    - L1099 (Keemin (DM)): "When I use my Detect Poison and Disease, I more so just get a yes or no answer."
+  - [L1 m=1.34 s=1.07 span L1095–L1106 center=L1101]
+    - L1095 (Jamison (BrassOnes)): "Now, they said he was poisoned. Did they say what?"
+    - L1106 (Keemin (DM)): "No, I did not."
+- covered_range: L1095..L1106
+
+---
+- [L2 m=3.04 s=2.16 span L1300–L1315 center=L1303]
+  - join: dCenter=12 lex=0.10 bridge=1.06
+  - [L1 m=1.15 s=1.10 span L1300–L1305 center=L1303]
+    - L1300 (Louis (Jojo)): "Lists are part of my language, but what the fuck?"
+    - L1305 (Keemin (DM)): "No, no, no, no, no."
+  - [L1 m=0.57 s=0.00 span L1315–L1315 center=L1315]
+    - L1315 (Snowflake (Panda)): "Borg, are you sure Mr. Borg knew?"
+- covered_range: L1300..L1315
+
+---
+- [L2 m=3.02 s=1.21 span L1306–L1319 center=L1306]
+  - join: dCenter=13 lex=0.20 bridge=1.21
+  - [L1 m=0.90 s=0.00 span L1306–L1306 center=L1306]
+    - L1306 (Louis (Jojo)): "Can I insight, is she actually a cleric?"
+  - [L1 m=0.93 s=0.00 span L1319–L1319 center=L1319]
+    - L1319 (Louis (Jojo)): "Can I whisper to Snowflake"
+- covered_range: L1306..L1319
+
+---
+- [L2 m=2.76 s=3.17 span L1824–L1846 center=L1835]
+  - join: dCenter=6 lex=0.03 bridge=1.03
+  - [L1 m=0.60 s=1.07 span L1824–L1846 center=L1835]
+    - L1824 (Jamison (BrassOnes)): "But why kill Lord Derfawn Vale before he came to kill somebody else? That would just put everybody on alert."
+    - L1846 (Keemin (DM)): "Any progress updates? You guys, you guys came back."
+  - [L1 m=0.73 s=1.07 span L1837–L1844 center=L1841]
+    - L1837 (Snowflake (Panda)): "and I tell him, so I can end it faster. And I keep thinking and thinking ... The? The!"
+    - L1844 (Keemin (DM)): "Mmm at this point Lordpincushion will come by and kind of just like do the thing where like the teachers going by like the Group discussion to see what's going on it kind of peek in and like twirl his mustache a little bit. Soooooooooooooo"
+- covered_range: L1824..L1846
+
+---
+- [L2 m=2.75 s=2.40 span L782–L787 center=L784]
+  - join: dCenter=1 lex=0.14 bridge=1.28
+  - [L1 m=0.65 s=0.00 span L784–L784 center=L784]
+    - L784 (Evanora (Juls)): "You have a list of all?"
+  - [L1 m=0.57 s=1.11 span L782–L787 center=L785]
+    - L782 (Evanora (Juls)): "Do you have a list?"
+    - L787 (Keemin (DM)): "Listen, I don't want to bring you guys too far behind the curtain, but..."
+- covered_range: L782..L787
+
+---
+- [L2 m=2.68 s=2.49 span L762–L769 center=L762]
+  - join: dCenter=6 lex=0.13 bridge=1.23
+  - [L1 m=0.60 s=0.00 span L762–L762 center=L762]
+    - L762 (Jamison (BrassOnes)): "Are you guys just looking for someone to throw this on? Cause... or do you actually have... have a lead or a"
+  - [L1 m=0.83 s=1.25 span L766–L769 center=L768]
+    - L766 (Snowflake (Panda)): "Do we have any access to recordings?"
+    - L769 (Keemin (DM)): "unfortunately in order to provide you access to"
+- covered_range: L762..L769
+
+---
+- [L2 m=2.58 s=3.84 span L1584–L1592 center=L1588]
+  - join: dCenter=2 lex=0.23 bridge=1.46
+  - [L1 m=0.82 s=1.06 span L1584–L1592 center=L1588]
+    - L1584 (Evanora (Juls)): "So it was two rings that are magical on him, correct? And that was all that was magical on him?"
+    - L1592 (Keemin (DM)): "With a dirty 20, I'll say that you do manage to ascertain with quite high confidence that you have seen him wearing all of these magical accessories before."
+  - [L1 m=1.64 s=1.32 span L1589–L1590 center=L1590]
+    - L1589 (Evanora (Juls)): "Have I, had I seen these rings before? Have, yeah, have I seen these jewelry on him before?"
+    - L1590 (Keemin (DM)): "Uh, man, Lord Derfawn Lord Derfawn Vale does have quite a collection. Uh, roll a history check to see if you can remember what exact magic rings you've seen him with."
+- covered_range: L1584..L1592
+
+---
+- [L2 m=2.55 s=1.46 span L1830–L1836 center=L1830]
+  - join: dCenter=6 lex=0.25 bridge=1.46
+  - [L1 m=0.59 s=0.00 span L1830–L1830 center=L1830]
+    - L1830 (Jamison (BrassOnes)): "Who would he have information about that might be a target?"
+  - [L1 m=0.67 s=0.00 span L1836–L1836 center=L1836]
+    - L1836 (Louis (Jojo)): "Well, who here do we know someone would want to eliminate?"
+- covered_range: L1830..L1836
+
+---
+- [L2 m=2.53 s=3.86 span L1160–L1165 center=L1161]
+  - join: dCenter=3 lex=0.09 bridge=1.17
+  - [L1 m=0.61 s=1.41 span L1160–L1161 center=L1161]
+    - L1160 (Louis (Jojo)): "Do you know if the maids are people that upkeep the room?"
+    - L1161 (Keemin (DM)): "um yes yes they do um upon request and of course um you know before before the guests arrive and after they leave"
+  - [L1 m=0.88 s=1.27 span L1162–L1165 center=L1164]
+    - L1162 (Louis (Jojo)): "Could we talk to the person that managed this room because we noticed and I'm gonna assume Snowflake told us about the dust"
+    - L1165 (Keemin (DM)): "Uh, I'm afraid that's not really part of the required cleanings. It's terribly heavy and it's not really something I can lift on my own."
+- covered_range: L1160..L1165
+
+---
+- [L2 m=2.52 s=2.38 span L1638–L1641 center=L1638]
+  - join: dCenter=2 lex=0.13 bridge=1.25
+  - [L1 m=0.61 s=0.00 span L1638–L1638 center=L1638]
+    - L1638 (Evanora (Juls)): "Are we able to take the bag with us?"
+  - [L1 m=0.77 s=1.13 span L1639–L1641 center=L1640]
+    - L1639 (Jamison (BrassOnes)): "Can we can we bring the sister with us?"
+    - L1641 (Keemin (DM)): "Pauline will, as well as the sister, will say, please don't, you know, take any items away from the area back with you. But you're free to come back anytime you want if you want to look at it more."
+- covered_range: L1638..L1641
+
+---
+- [L2 m=2.52 s=2.39 span L1946–L1959 center=L1950]
+  - join: dCenter=9 lex=0.14 bridge=1.20
+  - [L1 m=0.48 s=1.19 span L1946–L1953 center=L1950]
+    - L1946 (Evanora (Juls)): "Did you see what the poison does?"
+    - L1953 (Keemin (DM)): "as I'll put the Velvetik Fawn description back on the screen."
+  - [L1 m=0.51 s=0.00 span L1959–L1959 center=L1959]
+    - L1959 (Jamison (BrassOnes)): "Wait, Fig, when did you say that you ran into him? How long has that been?"
+- covered_range: L1946..L1959
+
+---
+- [L2 m=2.52 s=3.33 span L614–L626 center=L616]
+  - join: dCenter=6 lex=0.12 bridge=1.21
+  - [L1 m=0.99 s=1.09 span L614–L617 center=L616]
+    - L614 (Snowflake (Panda)): "Can we inspect the kitchen?"
+    - L617 (Keemin (DM)): "That's a great idea, but right now the Fleshing Arena is on lockdown. The only person that you guys can go to is Corah Malora Malora. So it's like the options are very binary here. It's like either you guys stay here and do nothing or you go to Corah Malora Malora. So I think I'm. I'm just gonna keep the session moving."
+  - [L1 m=0.66 s=1.03 span L618–L626 center=L622]
+    - L618 (Snowflake (Panda)): "Let's go to Corah Malora!"
+    - L626 (Keemin (DM)): "We can talk about it after the session. So, so you guys arrive at Corah Malora's room."
+- covered_range: L614..L626
+
+---
+- [L2 m=2.47 s=2.24 span L1658–L1665 center=L1658]
+  - join: dCenter=7 lex=0.13 bridge=1.20
+  - [L1 m=0.59 s=0.00 span L1658–L1658 center=L1658]
+    - L1658 (Jamison (BrassOnes)): "Hey, you say that, weird question. What would happen if, per se, one of them were to be caught in our wing?"
+  - [L1 m=0.66 s=1.04 span L1664–L1665 center=L1665]
+    - L1664 (Jamison (BrassOnes)): "So I'm curious, what would happen if he were to be caught outside of this facility?"
+    - L1665 (Keemin (DM)): "Sister Valmyr kind of sighs. Well, it's quite likely that that would just be a technicality for him because he's an esteemed guest, a judge, and he certainly has paid quite a pretty sum to sponsor the events of the Fleshing Arena. I believe, you know, Lord Lord Pincushion would just have to do quite a bit of more paperwork."
+- covered_range: L1658..L1665
+
+---
+- [L2 m=2.47 s=2.86 span L845–L859 center=L851]
+  - join: dCenter=1 lex=0.33 bridge=1.67
+  - [L1 m=0.71 s=0.00 span L851–L851 center=L851]
+    - L851 (Snowflake (Panda)): "Let's go and talk to the cleric."
+  - [L1 m=1.20 s=1.19 span L845–L859 center=L852]
+    - L845 (Snowflake (Panda)): "Let's go and talk to the clerk."
+    - L859 (Keemin (DM)): "Go through the strange things that you notice in order."
+- covered_range: L845..L859
+
+---
+- [L2 m=2.44 s=3.57 span L1481–L1494 center=L1486]
+  - join: dCenter=5 lex=0.19 bridge=1.36
+  - [L1 m=1.75 s=1.10 span L1481–L1490 center=L1486]
+    - L1481 (Evanora (Juls)): "Is there any documents in this room?"
+    - L1490 (Keemin (DM)): "No, they cannot search the Bag of Holding. They searched Lord Derfawn Lord Derfawn Vale's physical bag that he brought. It contained a couple of spare sets of clothing, some parchment."
+  - [L1 m=1.00 s=1.10 span L1488–L1494 center=L1491]
+    - L1488 (Evanora (Juls)): "So they searched the bag, the bag of holding?"
+    - L1494 (Keemin (DM)): "Yeah, I'll say not much else to glean other than yeah, it suffered some pretty significant damage."
+- covered_range: L1481..L1494
+
+---
+- [L2 m=2.37 s=2.21 span L1449–L1460 center=L1453]
+  - join: dCenter=7 lex=0.03 bridge=1.01
+  - [L1 m=1.68 s=1.20 span L1449–L1456 center=L1453]
+    - L1449 (Evanora (Juls)): "Can I roll a history check to figure out, like, if MAYBE I would know anything? ESPECIALLY cuz I know the guy. Or knew the guy."
+    - L1456 (Keemin (DM)): "You tried a couple different names and, you know, trying to guess a password is pretty hard. I'm going to say that's going to be above, like, what you can roll to just guess it on the spot."
+  - [L1 m=0.71 s=0.00 span L1460–L1460 center=L1460]
+    - L1460 (Jamison (BrassOnes)): "Hey, did you try password?"
+- covered_range: L1449..L1460
+
+---
+- [L2 m=2.34 s=3.63 span L881–L888 center=L884]
+  - join: dCenter=3 lex=0.21 bridge=1.42
+  - [L1 m=0.59 s=1.21 span L881–L887 center=L884]
+    - L881 (Snowflake (Panda)): "and rat blood. Can I taste the blood and see if I can spot the difference if it's animal or human or something that I never tasted before? Thank you. Bye."
+    - L887 (Keemin (DM)): "You can immediately tell that it's not animal blood, but yeah, with the nine you can tell that it's It's definitely not any like"
+  - [L1 m=0.60 s=1.00 span L885–L888 center=L887]
+    - L885 (Snowflake (Panda)): "Let's go. What do I have? and Nature."
+    - L888 (Keemin (DM)): "and more blood, it's definitely from Some kind of a humanoid, that's the point. about as specific as you can get."
+- covered_range: L881..L888
+
+---
+- [L2 m=2.15 s=1.65 span L1991–L1995 center=L1991]
+  - join: dCenter=4 lex=0.33 bridge=1.65
+  - [L1 m=0.46 s=0.00 span L1991–L1991 center=L1991]
+    - L1991 (Louis (Jojo)): "Uh, Fig?"
+  - [L1 m=0.46 s=0.00 span L1995–L1995 center=L1995]
+    - L1995 (Evanora (Juls)): "What's that, Fig?"
+- covered_range: L1991..L1995
+
+---
+- [L2 m=2.13 s=3.70 span L1471–L1479 center=L1475]
+  - join: dCenter=2 lex=0.07 bridge=1.14
+  - [L1 m=1.16 s=1.15 span L1471–L1479 center=L1475]
+    - L1471 (Evanora (Juls)): "Does it look like the wall char?"
+    - L1479 (Keemin (DM)): "Right, right, yeah, yeah, so the food's pretty much intact."
+  - [L1 m=1.20 s=1.40 span L1476–L1477 center=L1477]
+    - L1476 (Snowflake (Panda)): "Can we examine the food to see like if there are any bite marks that doesn't resemble human and might resemble fig?"
+    - L1477 (Keemin (DM)): "Um, as you look at the food, it is very orderly still, um, and I'll say that Jamison and Minx can attest that this is kind of the ballpark amount of food that they think they saw him eat. Doesn't seem touched."
+- covered_range: L1471..L1479
+
+---
+- [L2 m=1.84 s=3.26 span L863–L877 center=L866]
+  - join: dCenter=11 lex=0.25 bridge=1.35
+  - [L1 m=0.55 s=1.91 span L863–L868 center=L866]
+    - L863 (Jamison (BrassOnes)): "Does it taste like it has anything in it?"
+    - L868 (Keemin (DM)): "Does it taste like it has anything in it? It tastes like there's blood in it. No, um..."
+  - [L1 m=1.05 s=0.00 span L877–L877 center=L877]
+    - L877 (Jamison (BrassOnes)): "Does it look like that's enough blood for an animal, or does that..."
+- covered_range: L863..L877
+
+---
+- [L2 m=1.84 s=3.29 span L718–L738 center=L722]
+  - join: dCenter=6 lex=0.04 bridge=1.06
+  - [L1 m=1.51 s=1.13 span L719–L724 center=L722]
+    - L719 (Jamison (BrassOnes)): "and Jamison has the dumbest look on his face. Like, what are you talking about?"
+    - L724 (Keemin (DM)): "At this point, I'll have all of you here roll an insight check."
+  - [L1 m=0.60 s=1.10 span L718–L738 center=L728]
+    - L718 (Jamison (BrassOnes)): "I'm sorry, what?"
+    - L738 (Keemin (DM)): "Okay, Minx, I think you're gonna be the only one who notices something beyond the... quote-unquote"
+- covered_range: L718..L738
+
+---
+- [L2 m=1.81 s=3.72 span L252–L257 center=L253]
+  - join: dCenter=3 lex=0.09 bridge=1.17
+  - [L1 m=0.68 s=1.07 span L252–L253 center=L253]
+    - L252 (Jamison (BrassOnes)): "I mean, I get that part. I get that if he did it, I mean, yeah, y'all are probably gonna kill him, but why does that equal we don't get sponsors when he didn't even participate today?"
+    - L253 (Keemin (DM)): "All I know is, it's escalated to Corah Malora at this point. She's doing her best to try and figure out how the hell we're gonna PR this over."
+  - [L1 m=1.47 s=1.48 span L255–L257 center=L256]
+    - L255 (Louis (Jojo)): "I mean, wasn't the dude sickly? Just say he had a heart attack."
+    - L257 (Keemin (DM)): "No, it was, it was, let me just say that it was very clear that Lord Derfawn Lord Derfawn Vale did not, in fact, die from a heart attack. I can tell you that much."
+- covered_range: L252..L257
+
+---
+- [L2 m=1.78 s=3.55 span L436–L449 center=L443]
+  - join: dCenter=1 lex=0.10 bridge=1.19
+  - [L1 m=0.65 s=1.25 span L436–L449 center=L443]
+    - L436 (Louis (Jojo)): "So that means he's hunting territory for the Snowflake, right? Thank you very much."
+    - L449 (Keemin (DM)): "I would say the other option is if you guys have any..."
+  - [L1 m=1.32 s=1.11 span L441–L446 center=L444]
+    - L441 (Louis (Jojo)): "I say Wplant Cement too much. Listen up, Beardy. This is a microphone. Hello, Bro! This is a microphone, too. I said Proper Placement. Hello, Sir! Hello, Ma'am? Hello, What? Hello. Are you going to give up? Are you going to not? No, I won't. I'm not leaving. Bye!"
+    - L446 (Keemin (DM)): "Well, okay. So, at this point, I'll, you know, just lay it out as the options go for you guys. Basically, it's like either do nothing and, you know, we will let Sen know that Cyril has been executed, or..."
+- covered_range: L436..L449
+
+---
+- [L2 m=1.78 s=2.23 span L108–L121 center=L114]
+  - join: dCenter=7 lex=0.07 bridge=1.09
+  - [L1 m=0.45 s=1.14 span L108–L119 center=L114]
+    - L108 (Snowflake (Panda)): "Got two arcane and medium arcane crystals that might explode tonight. Who knows? Snowflake is unstable."
+    - L119 (Keemin (DM)): "Yep."
+  - [L1 m=0.49 s=0.00 span L121–L121 center=L121]
+    - L121 (Snowflake (Panda)): "Was it two things? I think it was more..."
+- covered_range: L108..L121
+
+---
+- [L2 m=1.69 s=3.29 span L1887–L1899 center=L1890]
+  - join: dCenter=8 lex=0.09 bridge=1.12
+  - [L1 m=0.50 s=1.05 span L1887–L1893 center=L1890]
+    - L1887 (Jamison (BrassOnes)): "Well, who would have access to walk around other than us?"
+    - L1893 (Keemin (DM)): "Wait, wait, wait, wait, but before you guys just start going around looking for whoever, though... Like you said, I've been working around these parts a while, just give me a rundown of, you know, um... What did you guys find? What's kind of the story so far?"
+  - [L1 m=0.50 s=1.11 span L1896–L1899 center=L1898]
+    - L1896 (Jamison (BrassOnes)): "God damn it, that's who it is. Cyril, where are you guys keeping Cyril?"
+    - L1899 (Keemin (DM)): "Uh, I actually don't even know. They didn't tell me. Conflict of interest. That's what Corah Malora said."
+- covered_range: L1887..L1899
+
+---
+- [L2 m=1.61 s=3.39 span L814–L826 center=L815]
+  - join: dCenter=7 lex=0.13 bridge=1.21
+  - [L1 m=0.58 s=1.08 span L814–L815 center=L815]
+    - L814 (Evanora (Juls)): "Hmm, do I recognize any of the names aside?"
+    - L815 (Keemin (DM)): "I recognize honestly most of the names. It's always, you know, just like a big, it's like a whole family reunion every time there's one of these big Fleshing Arena events. Though many of the nobles kind of keep it on the hush hush because it's not viewed super favorably by like the peasantry and the common folk. Like they, it's a big entertainment event at this point. And so like pretty much all the different houses have sent somebody at least to like represent them or like collect some information for them based, kind of scout out any, any potential candidates to sponsor."
+  - [L1 m=0.56 s=1.10 span L818–L826 center=L822]
+    - L818 (Jamison (BrassOnes)): "And did she say poisoning was the cause of death?"
+    - L826 (Keemin (DM)): "And she'll let you guys know that if you go to Lord Derfawn Vale's room, they still have their resident cleric on call who has just, you know, relayed the news because it's all very recent. This only happened two hours ago."
+- covered_range: L814..L826
+
+---
+- [L2 m=1.59 s=3.30 span L1230–L1236 center=L1233]
+  - join: dCenter=1 lex=0.14 bridge=1.27
+  - [L1 m=0.68 s=1.00 span L1230–L1236 center=L1233]
+    - L1230 (Jamison (BrassOnes)): "Well, no offense, ma'am, you're in charge of this wing and you're kind of the one controlling who comes in and out of here, right?"
+    - L1236 (Keemin (DM)): "He gave this to me to hold. He said it contained personal items. It apparently requires a passphrase to open. I do not know it. And the other thing is, well, when we first got here, apparently, again, a mistake on my part. Very unlike me. I'm usually quite on top of things, but we totally forgot to bring a rug. And so he requested one, and so we brought one."
+  - [L1 m=0.66 s=1.03 span L1232–L1235 center=L1234]
+    - L1232 (Jamison (BrassOnes)): "Do you see anybody come in and out of here other than me and Minx?"
+    - L1235 (Keemin (DM)): "Let me give you the best recount of what I remember. And, you know, I am, the Fleshing Arena is a bit understaffed. It's not like I can have, give like 24-hour, be on duty the entire time. I did have to, you know, retire for the night at some point, but quite late at night, as I was getting ready to retire, Lord Derfawn Lord Derfawn Vale sent for me and he gave me this. And she presents the bag of holding."
+- covered_range: L1230..L1236
+
+---
+- [L2 m=1.58 s=3.71 span L1127–L1137 center=L1128]
+  - join: dCenter=7 lex=0.17 bridge=1.28
+  - [L1 m=0.68 s=1.27 span L1127–L1128 center=L1128]
+    - L1127 (Evanora (Juls)): "You know the time of death of him?"
+    - L1128 (Keemin (DM)): "Well, judging by the fact that he was fed a"
+  - [L1 m=0.61 s=1.15 span L1133–L1137 center=L1135]
+    - L1133 (Evanora (Juls)): "Then why don't you ask your god?"
+    - L1137 (Keemin (DM)): "Know your place."
+- covered_range: L1127..L1137
+
+---
+- [L2 m=1.56 s=3.22 span L925–L940 center=L929]
+  - join: dCenter=9 lex=0.11 bridge=1.13
+  - [L1 m=1.56 s=1.02 span L925–L932 center=L929]
+    - L925 (Evanora (Juls)): "Is there, like, a specific color of blood it is? Or, um..."
+    - L932 (Keemin (DM)): "It looks like red, you know, typical blood. Nothing crazy like the blood that some of you guys in the party have. On a slightly unrelated note, I'll say you guys do note that the fact that there's a rat there and there's like a gash there that looks like it must have been caused by some kind of weapon and, you know, weapons aren't normally allowed outside the Fleshing Arena. Forgot to mention this, but Corah Malora would have told you guys that Cyril was thoroughly patted down upon discovery of this whole incident and they found an arrowhead on his person. And they also found a bunch of rats all over him. And so that did kind of give them some amount of evidence that it could have been Cyril."
+  - [L1 m=1.70 s=1.07 span L936–L940 center=L938]
+    - L936 (Snowflake (Panda)): "Can I examine the gash? Does it look like something?"
+    - L940 (Keemin (DM)): "It looks like it could have been done by an arrowhead, but it is pretty. It's a pretty sizable and like slightly like messed up looking looking gash. It's like a pretty, pretty gnarly one to cut through hardwood like that."
+- covered_range: L925..L940
+
+---
+- [L2 m=1.53 s=3.36 span L275–L282 center=L276]
+  - join: dCenter=4 lex=0.06 bridge=1.11
+  - [L1 m=0.63 s=1.20 span L275–L277 center=L276]
+    - L275 (Jamison (BrassOnes)): "Well, that's what's making me ask all the questions is because, yeah, like, I mean, if they supposedly have him under lock and key where nobody can see him, how in the world would he get out to do that?"
+    - L277 (Keemin (DM)): "Yeah, alright."
+  - [L1 m=0.88 s=1.04 span L278–L282 center=L280]
+    - L278 (Evanora (Juls)): "Can I see, while this conversation is happening, can I look over at Fig to see what his reaction towards this is all?"
+    - L282 (Keemin (DM)): "Just be careful what stones you're trying to flip over here, Jamison."
+- covered_range: L275..L282
+
+---
+- [L2 m=1.52 s=3.64 span L1012–L1022 center=L1015]
+  - join: dCenter=7 lex=0.11 bridge=1.17
+  - [L1 m=1.21 s=1.15 span L1012–L1017 center=L1015]
+    - L1012 (Jamison (BrassOnes)): "Do you really think if I'd have poisoned him that I'd be in here looking?"
+    - L1017 (Keemin (DM)): "And it's just as you remember, just smooth, slightly tiled stone."
+  - [L1 m=0.62 s=1.32 span L1021–L1022 center=L1022]
+    - L1021 (Jamison (BrassOnes)): "Was that on the roof? Was that on the ceiling?"
+    - L1022 (Keemin (DM)): "Kind of just like generally in the air."
+- covered_range: L1012..L1022
+
+---
+- [L2 m=1.52 s=3.52 span L1601–L1605 center=L1602]
+  - join: dCenter=2 lex=0.03 bridge=1.05
+  - [L1 m=0.69 s=1.33 span L1601–L1602 center=L1602]
+    - L1601 (Evanora (Juls)): "Hmm, can I unclip the bracelet just to see if it does something?"
+    - L1602 (Keemin (DM)): "Sure, you unclip the bracelet. I'll say that with the detect magic, you do know that you would have to attune to this magic item to figure out what it does beyond like an identify spell or something. It doesn't do anything when you unclip it."
+  - [L1 m=1.05 s=1.14 span L1603–L1605 center=L1604]
+    - L1603 (Evanora (Juls)): "Can I ritually cast Identify?"
+    - L1605 (Keemin (DM)): "Sure!"
+- covered_range: L1601..L1605
+
+---
+- [L2 m=1.48 s=3.48 span L456–L485 center=L467]
+  - join: dCenter=13 lex=0.24 bridge=1.27
+  - [L1 m=1.48 s=1.10 span L456–L478 center=L467]
+    - L456 (Louis (Jojo)): "What's my persuasion?"
+    - L478 (Keemin (DM)): "Yeah, Rural History Check, I'll say you have advantage because this is kind of your area of knowledge."
+  - [L1 m=0.60 s=1.10 span L474–L485 center=L480]
+    - L474 (Louis (Jojo)): "What do you have in persuasion?"
+    - L485 (Keemin (DM)): "Yeah, with the 19, Evanora-"
+- covered_range: L456..L485
+
+---
+- [L2 m=1.47 s=2.35 span L363–L383 center=L363]
+  - join: dCenter=15 lex=0.17 bridge=1.10
+  - [L1 m=0.57 s=0.00 span L363–L363 center=L363]
+    - L363 (Jamison (BrassOnes)): "No, no, no, no, now is the perfect, yeah, you're right, it's not a good time. Are you hearing anything Pinncushion's saying out there?"
+  - [L1 m=0.49 s=1.26 span L372–L383 center=L378]
+    - L372 (Jamison (BrassOnes)): "Do you really think me and Minx have the ability to take out a liaison from another country or whatever the hell he was?"
+    - L383 (Keemin (DM)): "Yeah, so theater of the mind here, you guys aren't actually..."
+- covered_range: L363..L383
+
+---
+- [L2 m=1.42 s=3.52 span L1361–L1371 center=L1364]
+  - join: dCenter=7 lex=0.16 bridge=1.27
+  - [L1 m=0.58 s=1.04 span L1361–L1366 center=L1364]
+    - L1361 (Louis (Jojo)): "Okay, because I have a knowledge of weapons given training, could I attempt a discerned?"
+    - L1366 (Keemin (DM)): "Well, I'll say it's a small enough wound that it couldn't have been anything like an axe or anything like super big, like a greatsword or greataxe or something. It's a pretty small-ish weapon."
+  - [L1 m=0.51 s=1.21 span L1370–L1371 center=L1371]
+    - L1370 (Snowflake (Panda)): "Can you tell us your ideas of what weapon could have been used? And Snowflake kind of like clears up the area."
+    - L1371 (Keemin (DM)): "Oh, of course. That should have been my first instinct. I'm afraid this is... My apologies, I'm not usually..."
+- covered_range: L1361..L1371
+
+---
+- [L2 m=1.29 s=3.40 span L1615–L1636 center=L1620]
+  - join: dCenter=6 lex=0.06 bridge=1.08
+  - [L1 m=0.98 s=1.27 span L1615–L1624 center=L1620]
+    - L1615 (Jamison (BrassOnes)): "Can I tell if that's because she's trying to hide something? Is it because she's, you know, seen a dead body? She doesn't want to be implicated."
+    - L1624 (Keemin (DM)): "Then 18, yeah, Pauline seems very shaken, you're completely on the money with that judgment. I'll say that, you know, there's lots of factors that play into why she's shaken. I'll say you're pretty fairly confident that, you know, guilt doesn't really seem to be one of them. She is like seemingly trying to be as helpful as she can."
+  - [L1 m=0.57 s=1.05 span L1616–L1636 center=L1626]
+    - L1616 (Louis (Jojo)): "or is she a lizard person?"
+    - L1636 (Keemin (DM)): "Okay, so you guys will go and go head back to the MercWolf wing then?"
+- covered_range: L1615..L1636
+
+---
+- [L2 m=1.28 s=3.26 span L1687–L1706 center=L1694]
+  - join: dCenter=11 lex=0.13 bridge=1.13
+  - [L1 m=1.28 s=1.07 span L1687–L1701 center=L1694]
+    - L1687 (Snowflake (Panda)): "We should have brought a cleric in. Can we bring a cleric in and say goodbye to the cleric? Maybe she can help him."
+    - L1701 (Keemin (DM)): "And it seems like Fig is, like, really struggling."
+  - [L1 m=1.89 s=1.06 span L1704–L1706 center=L1705]
+    - L1704 (Louis (Jojo)): "Can I inspect Fig, see if he has a similar injury to what the guy had, Lord Derfawn Vale?"
+    - L1706 (Keemin (DM)): "It's not like a puncture wound, but more like a little slash, and from there you see those same blackened spidery veins."
+- covered_range: L1687..L1706
+
+---
+- [L2 m=1.24 s=3.50 span L1439–L1450 center=L1442]
+  - join: dCenter=4 lex=0.08 bridge=1.14
+  - [L1 m=0.73 s=1.21 span L1439–L1444 center=L1442]
+    - L1439 (Evanora (Juls)): "Does anything happen when I was? Thanks for the letters!"
+    - L1444 (Keemin (DM)): "It does not seem to respond to Peppermint."
+  - [L1 m=0.74 s=1.15 span L1442–L1450 center=L1446]
+    - L1442 (Evanora (Juls)): "What about Peppermint?"
+    - L1450 (Keemin (DM)): "Know anything just about Lord Derfawn Lord Derfawn Vale?"
+- covered_range: L1439..L1450
+
+---
+- [L2 m=1.16 s=3.35 span L495–L503 center=L497]
+  - join: dCenter=5 lex=0.04 bridge=1.06
+  - [L1 m=0.83 s=1.02 span L495–L499 center=L497]
+    - L495 (Evanora (Juls)): "Is there any properties like healing, relaxation, like, is it like aromatherapy? That's what I'm getting at. Like, any..."
+    - L499 (Keemin (DM)): "of like unorthodox holistic healing methods, but you know, no one, no one specifically comes to mind."
+  - [L1 m=0.55 s=1.27 span L501–L503 center=L502]
+    - L501 (Louis (Jojo)): "You know what? I solved the murder."
+    - L503 (Keemin (DM)): "the"
+- covered_range: L495..L503
+
+---
+- [L2 m=1.09 s=2.35 span L1541–L1547 center=L1542]
+  - join: dCenter=5 lex=0.12 bridge=1.21
+  - [L1 m=0.69 s=1.14 span L1541–L1542 center=L1542]
+    - L1541 (Minx (Caterson)): "Uh, hey K-Maker, can you check your message real quick?"
+    - L1542 (Keemin (DM)): "Yep."
+  - [L1 m=0.61 s=0.00 span L1547–L1547 center=L1547]
+    - L1547 (Jamison (BrassOnes)): "Hey, hey sister, one last question for you. You do, you said you deal a lot with dead bodies, right?"
+- covered_range: L1541..L1547
+
+---
+- [L2 m=1.01 s=3.22 span L286–L298 center=L290]
+  - join: dCenter=4 lex=0.07 bridge=1.13
+  - [L1 m=0.59 s=1.08 span L286–L294 center=L290]
+    - L286 (Jamison (BrassOnes)): "I mean are you guys just looking to find someone to pin it on?"
+    - L294 (Keemin (DM)): "You kind of do get the feeling that that might be what's going on here."
+  - [L1 m=0.60 s=1.01 span L290–L298 center=L294]
+    - L290 (Jamison (BrassOnes)): "That's a giant insight. Can I, do I need an insight that, is that it?"
+    - L298 (Keemin (DM)): "Alright, you know what, you know what, I've already said too much. We're going to plan B. Go and make your case to Corah Malora, whatever you want to do. If you want to try to save Cyril's ass, you can give it your best shot. Otherwise, if you're fine with..."
+- covered_range: L286..L298
+
+---
+- [L2 m=0.94 s=3.98 span L1079–L1088 center=L1080]
+  - join: dCenter=7 lex=0.07 bridge=1.09
+  - [L1 m=0.53 s=1.39 span L1079–L1080 center=L1080]
+    - L1079 (Jamison (BrassOnes)): "Does the room still smell like peppermint?"
+    - L1080 (Keemin (DM)): "It does, although the smell isn't quite as intense as you'd expect. Remember."
+  - [L1 m=0.86 s=1.50 span L1085–L1088 center=L1087]
+    - L1085 (Jamison (BrassOnes)): "Is there anything different about the body I notice?"
+    - L1088 (Keemin (DM)): "So the body is..."
+- covered_range: L1079..L1088
+
+---
+- [L2 m=0.94 s=3.51 span L389–L400 center=L393]
+  - join: dCenter=4 lex=0.17 bridge=1.32
+  - [L1 m=0.54 s=1.09 span L389–L397 center=L393]
+    - L389 (Louis (Jojo)): "No, no, we got that. We're just saying we're all gathered over there, so why doesn't he come to us?"
+    - L397 (Keemin (DM)): "Do you do gather the others are you do you tell Henroc to come with?"
+  - [L1 m=0.53 s=1.10 span L393–L400 center=L397]
+    - L393 (Snowflake (Panda)): "In fact, that was a mistake. If you have a question, I'm not Going to build it out right now, but it's just a horrible mess. And thank you for watching. Am I missing anything? I hope it helped. If not, I'll try to catch up soon. Until then, I'll say, bye. Bye."
+    - L400 (Keemin (DM)): "Do you go and gather the others as Henroc directed you, or are you going to try to convince Henroc to come with you?"
+- covered_range: L389..L400
+
+---
+- [L2 m=0.92 s=2.39 span L593–L602 center=L596]
+  - join: dCenter=2 lex=0.06 bridge=1.11
+  - [L1 m=0.54 s=0.00 span L596–L596 center=L596]
+    - L596 (Snowflake (Panda)): "I mean, yeah, why not?"
+  - [L1 m=0.48 s=1.28 span L593–L602 center=L598]
+    - L593 (Evanora (Juls)): "What the hell is this pen rock on?"
+    - L602 (Keemin (DM)): "Yeah, interestingly, for once, this has not been, you know, you guys."
+- covered_range: L593..L602
+
+---
+- [L2 m=0.92 s=4.11 span L1025–L1038 center=L1028]
+  - join: dCenter=9 lex=0.04 bridge=1.01
+  - [L1 m=0.57 s=1.91 span L1025–L1030 center=L1028]
+    - L1025 (Snowflake (Panda)): "Can Snowflake look under the bed?"
+    - L1030 (Keemin (DM)): "move to look under the bed."
+  - [L1 m=0.49 s=1.19 span L1036–L1038 center=L1037]
+    - L1036 (Evanora (Juls)): "While this is happening... What's happening? Can I start ritually casting Detect Magic?"
+    - L1038 (Keemin (DM)): "You can cast detect magic, so we'll check back with you in what, like 10 minutes? Is that how long it takes?"
+- covered_range: L1025..L1038
+
+---
+- [L2 m=0.60 s=3.26 span L1243–L1260 center=L1244]
+  - join: dCenter=12 lex=0.14 bridge=1.13
+  - [L1 m=0.60 s=1.07 span L1243–L1244 center=L1244]
+    - L1243 (Jamison (BrassOnes)): "If you'd be so kind, could I see the bag?"
+    - L1244 (Keemin (DM)): "Oh, and one other thing. Along with the rug, Lord Derfawn Lord Derfawn Vale asked for a fresh change of clothing. That's all I remember though. And here, of course, have a look."
+  - [L1 m=0.88 s=1.05 span L1252–L1260 center=L1256]
+    - L1252 (Snowflake (Panda)): "Fresh change of clothing. How does one arrive to the thing without his own stash of clothing?"
+    - L1260 (Keemin (DM)): "He's clad in what basically looks like a, you know, like a robe that covers up everything, you know, like the one that you kind of wrap around yourself rather than just drape on."
+- covered_range: L1243..L1260
+
+---
+- [L2 m=0.53 s=2.58 span L1398–L1426 center=L1403]
+  - join: dCenter=9 lex=0.14 bridge=1.20
+  - [L1 m=0.53 s=0.00 span L1403–L1403 center=L1403]
+    - L1403 (Jamison (BrassOnes)): "How do we know the extent of what he can and can't do?"
+  - [L1 m=0.67 s=1.38 span L1398–L1426 center=L1412]
+    - L1398 (Jamison (BrassOnes)): "What do you mean, illusion magic? He transformed into a fuckin' cow!"
+    - L1426 (Keemin (DM)): "But Evanora, what are you trying to do?"
+- covered_range: L1398..L1426

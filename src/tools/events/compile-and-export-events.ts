@@ -27,16 +27,16 @@ import fs from "node:fs";
 import path from "node:path";
 import * as readline from "node:readline";
 import YAML from "yaml";
-import { getDb } from "../db.js";
-import { buildTranscript } from "../ledger/transcripts.js";
-import { chat } from "../llm/client.js";
+import { getDb } from "../../db.js";
+import { buildTranscript } from "../../ledger/transcripts.js";
+import { chat } from "../../llm/client.js";
 
 // Scaffold pipeline imports (Task 4.2)
-import { batchScaffold } from "../ledger/scaffoldBatcher.js";
-import { buildExcerpt } from "../ledger/scaffoldExcerpt.js";
-import { labelScaffoldBatch } from "../ledger/scaffoldLabel.js";
-import { applyLabels } from "../ledger/scaffoldJoin.js";
-import type { LabeledScaffoldEvent } from "../ledger/scaffoldBatchTypes.js";
+import { batchScaffold } from "../../ledger/scaffoldBatcher.js";
+import { buildExcerpt } from "../../ledger/scaffoldExcerpt.js";
+import { labelScaffoldBatch } from "../../ledger/scaffoldLabel.js";
+import { applyLabels } from "../../ledger/scaffoldJoin.js";
+import type { LabeledScaffoldEvent } from "../../ledger/scaffoldBatchTypes.js";
 
 const DEFAULT_NARRATIVE_WEIGHT = "primary";
 
@@ -730,8 +730,20 @@ function buildEventVisualization(
   const db = getDb();
 
   const events = db
-    .prepare(`SELECT description, start_index, end_index FROM events WHERE session_id = ? AND is_ooc = 0 ORDER BY start_index ASC`)
-    .all(sessionId) as Array<{ description: string; start_index: number | null; end_index: number | null }>;
+    .prepare(
+      `SELECT description, event_type, participants, is_ooc, start_index, end_index
+       FROM events
+       WHERE session_id = ? AND is_ooc = 0
+       ORDER BY start_index ASC`
+    )
+    .all(sessionId) as Array<{
+      description: string;
+      event_type: string;
+      participants: string | null;
+      is_ooc: number;
+      start_index: number | null;
+      end_index: number | null;
+    }>;
 
   if (events.length === 0) {
     return "No events found for this session.";
@@ -743,8 +755,28 @@ function buildEventVisualization(
   output += `${"═".repeat(80)}\n\n`;
 
   for (const event of events) {
+    let participants: string[] = [];
+    try {
+      participants = JSON.parse(event.participants || "[]") as string[];
+    } catch {
+      participants = [];
+    }
+
+    const participantsLabel = participants.length > 0 ? participants.join(", ") : "Unknown";
+    const eventTypeLabel = event.event_type || "unknown";
+    const spanLabel =
+      event.start_index !== null && event.end_index !== null
+        ? `[${event.start_index}-${event.end_index}]`
+        : "[n/a]";
+    const lineCount =
+      event.start_index !== null && event.end_index !== null
+        ? event.end_index - event.start_index + 1
+        : 0;
+
     output += `\n${"─".repeat(80)}\n`;
     output += `${event.description}\n`;
+    output += `Type: ${eventTypeLabel} | Participants: ${participantsLabel}\n`;
+    output += `Span: ${spanLabel} | Lines: ${lineCount} | Mode: ${event.is_ooc ? "OOC" : "IC"}\n`;
     output += `${"─".repeat(80)}\n\n`;
 
     // Use exact indices if available

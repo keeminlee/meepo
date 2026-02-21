@@ -5,8 +5,8 @@
  * Use this when you've added/changed foundational memories.
  */
 
-import { getDb } from "../db.js";
-import { seedInitialMeepoMemories } from "../ledger/meepo-mind.js";
+import { getDb } from "../../db.js";
+import { seedInitialMeepoMemories } from "../../ledger/meepo-mind.js";
 
 console.log("🧹 Resetting MeepoMind memories...\n");
 

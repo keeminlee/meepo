@@ -1,0 +1,27 @@
+{
+  "kernel": {
+    "kLocal": 8,
+    "hillTau": 8,
+    "hillSteepness": 2.2,
+    "betaLex": 2,
+    "strongMinScore": 1,
+    "weakMinScore": 1
+  },
+  "anneal": {
+    "windowLinks": 8,
+    "hillTau": 8,
+    "hillSteepness": 2.2,
+    "betaLex": 0.8,
+    "lambda": 0.8,
+    "topKContrib": 5
+  },
+  "linkLinks": {
+    "kLocalLinks": 8,
+    "hillTau": 30,
+    "hillSteepness": 2.2,
+    "betaLex": 2,
+    "minBridge": 1,
+    "maxForwardLines": 120
+  },
+  "maxLevel": 3
+}
