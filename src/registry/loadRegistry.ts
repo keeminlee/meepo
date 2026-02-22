@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import yaml from "yaml";
 import { Character, Location, Faction, Misc, Entity, LoadedRegistry, RawRegistryYaml } from "./types.js";
+import { getDefaultCampaignSlug } from "../campaign/defaultCampaign.js";
+import { ensureRegistryScaffold, getRegistryDirForCampaign } from "./scaffold.js";
 
 /**
  * Single normalization function used everywhere.
@@ -20,20 +22,22 @@ function normKey(s: string): string {
 
 /**
  * Load and validate the character registry from multiple YAML files.
- * Loads pcs.yml, npcs.yml, locations.yml, factions.yml from registryPath directory.
- * Also loads ignore tokens from ignore.yml.
- * Hard fails on schema errors; soft warns on advisory issues.
+ * Registry is campaign-scoped: data/registry/<campaign_slug>/.
+ * If campaignSlug is omitted, uses DEFAULT_CAMPAIGN_SLUG env or "default".
+ * If the campaign directory does not exist, creates a minimal scaffold (empty yaml files).
  * @returns LoadedRegistry with fast lookup maps
  */
 export function loadRegistry(opts?: {
-  registryPath?: string;  // directory path, default: data/registry
-  ignorePath?: string;    // ignore file path, default: data/registry/ignore.yml
+  campaignSlug?: string;  // campaign scope; default from env or "default"
+  registryPath?: string;  // override: directory path (skips campaign-scoping)
+  ignorePath?: string;    // override: ignore file path
 }): LoadedRegistry {
-  const registryDir = opts?.registryPath ?? path.join(process.cwd(), "data", "registry");
+  const registryDir = opts?.registryPath
+    ?? getRegistryDirForCampaign(opts?.campaignSlug ?? getDefaultCampaignSlug());
   const ignorePath = opts?.ignorePath ?? path.join(registryDir, "ignore.yml");
-  
+
   if (!fs.existsSync(registryDir)) {
-    throw new Error(`Registry directory not found: ${registryDir}`);
+    ensureRegistryScaffold(registryDir);
   }
 
   // Collect all characters, locations, factions, misc

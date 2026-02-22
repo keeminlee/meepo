@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, TextChannel } from "discord.js";
 import { getActiveMeepo, wakeMeepo, sleepMeepo, transformMeepo } from "../meepo/state.js";
 import { getActivePersonaId, getMindspace, setActivePersonaId } from "../meepo/personaState.js";
+import { getGuildDefaultPersonaId, resolveCampaignSlug, setGuildCampaignSlug, setGuildDefaultPersonaId } from "../campaign/guildConfig.js";
 import { getAvailableForms, getPersona } from "../personas/index.js";
 import { setBotNicknameForPersona } from "../meepo/nickname.js";
 import { autoJoinGeneralVoice } from "../meepo/autoJoinVoice.js";
@@ -194,19 +195,42 @@ export const meepo = {
             .setRequired(false)
         )
     )
-    .addSubcommand((sub) =>
+        .addSubcommand((sub) =>
       sub
         .setName("persona-set")
-        .setDescription("[DM-only] Switch Meepo between companion mode (meta) and in-character (diegetic).")
+        .setDescription("[DM-only] Switch persona (meta, diegetic, rei, xoblob). Campaign needs active session.")
         .addStringOption((opt) =>
           opt
-            .setName("mode")
-            .setDescription("Companion (meta) or in-character (diegetic)")
+            .setName("persona")
+            .setDescription("Persona to switch to")
             .setRequired(true)
             .addChoices(
-              { name: "Meta (companion mode)", value: "meta" },
-              { name: "Diegetic (in-character)", value: "diegetic" }
+              { name: "Meta (companion mode)", value: "meta_meepo" },
+              { name: "Diegetic (in-character Meepo)", value: "diegetic_meepo" },
+              { name: "Rei", value: "rei" },
+              { name: "Xoblob (echo)", value: "xoblob" }
             )
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("guild-config")
+        .setDescription("[DM-only] Set guild default persona or campaign slug.")
+        .addStringOption((opt) =>
+          opt
+            .setName("key")
+            .setDescription("Setting to change")
+            .setRequired(true)
+            .addChoices(
+              { name: "Default persona (on wake)", value: "default-persona" },
+              { name: "Campaign slug (registry folder)", value: "campaign-slug" }
+            )
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName("value")
+            .setDescription("Value (e.g. rei, meta_meepo, pandas-dd-server)")
+            .setRequired(true)
         )
     )
     .addSubcommand((sub) =>
@@ -227,7 +251,7 @@ export const meepo = {
     .addSubcommand((sub) =>
       sub
         .setName("transform")
-        .setDescription("Transform Meepo into a different form.")
+        .setDescription("[Deprecated] Use /meepo persona-set instead. Transform into a form (meepo, xoblob).")
         .addStringOption((opt) =>
           opt
             .setName("character")
@@ -367,7 +391,11 @@ export const meepo = {
         return;
       }
 
-      const registry = loadRegistry();
+      const campaignSlug = resolveCampaignSlug({
+        guildId,
+        guildName: interaction.guild?.name ?? undefined,
+      });
+      const registry = loadRegistry({ campaignSlug });
       const matches = extractRegistryMatches(queryText, registry);
 
       const eventsByMatch = matches.map((match) => {
@@ -501,7 +529,8 @@ export const meepo = {
         personaSeed: persona,
       });
 
-      setActivePersonaId(guildId, "meta_meepo");
+      const defaultPersonaId = getGuildDefaultPersonaId(guildId) ?? "meta_meepo";
+      setActivePersonaId(guildId, defaultPersonaId);
 
       // Log system event (narrative secondary - state change)
       logSystemEvent({
@@ -541,10 +570,10 @@ export const meepo = {
         await interaction.reply({ content: "Only the DM can switch persona.", ephemeral: true });
         return;
       }
-      const mode = interaction.options.getString("mode", true);
-      const personaId = mode === "meta" ? "meta_meepo" : "diegetic_meepo";
+      const personaId = interaction.options.getString("persona", true);
 
-      if (personaId === "diegetic_meepo") {
+      const persona = getPersona(personaId);
+      if (persona.scope === "campaign") {
         const { getActiveSessionId } = await import("../sessions/sessionRuntime.js");
         if (!getActiveSessionId(guildId)) {
           await interaction.reply({
@@ -556,12 +585,49 @@ export const meepo = {
       }
 
       setActivePersonaId(guildId, personaId);
-      const diegetic = getPersona("diegetic_meepo");
-      const ack = personaId === "diegetic_meepo" ? diegetic.switchAckEnter : diegetic.switchAckExit;
+      if (interaction.guild) {
+        await setBotNicknameForPersona(interaction.guild, personaId);
+      }
+      const ack = persona.switchAckEnter ?? persona.switchAckExit ?? (personaId === "meta_meepo" ? "Okay—back to companion mode." : "Okay—going in-character.");
       await interaction.reply({
-        content: ack ?? (personaId === "meta_meepo" ? "Okay—back to companion mode." : "Okay—going in-character."),
+        content: ack,
         ephemeral: true,
       });
+      return;
+    }
+
+    if (sub === "guild-config") {
+      if (!isDm(interaction)) {
+        await interaction.reply({ content: "Only the DM can change guild config.", ephemeral: true });
+        return;
+      }
+      const key = interaction.options.getString("key", true);
+      const value = interaction.options.getString("value", true).trim();
+      if (key === "default-persona") {
+        const valid = ["meta_meepo", "diegetic_meepo", "rei", "xoblob"];
+        if (!valid.includes(value)) {
+          await interaction.reply({
+            content: `Invalid persona. Use one of: ${valid.join(", ")}`,
+            ephemeral: true,
+          });
+          return;
+        }
+        setGuildDefaultPersonaId(guildId, value);
+        await interaction.reply({
+          content: `Default persona set to **${value}**. Future /meepo wake will use this.`,
+          ephemeral: true,
+        });
+        return;
+      }
+      if (key === "campaign-slug") {
+        setGuildCampaignSlug(guildId, value);
+        await interaction.reply({
+          content: `Campaign slug set to **${value}**. Registry folder: \`data/registry/${value}/\`.`,
+          ephemeral: true,
+        });
+        return;
+      }
+      await interaction.reply({ content: "Unknown config key.", ephemeral: true });
       return;
     }
 
@@ -572,6 +638,10 @@ export const meepo = {
       }
       const personaId = getActivePersonaId(guildId);
       const mindspace = getMindspace(guildId, personaId);
+      const campaignSlug = resolveCampaignSlug({
+        guildId,
+        guildName: interaction.guild?.name ?? undefined,
+      });
       const db = getDb();
       const lastUsages = db.prepare(`
         SELECT persona_id, mindspace, used_memories
@@ -589,6 +659,7 @@ export const meepo = {
           "**Debug Persona**\n" +
           "- active_persona_id: " + personaId + "\n" +
           "- mindspace: " + (mindspace ?? "(no session)") + "\n" +
+          "- campaign_slug: " + campaignSlug + "\n" +
           "- last 5 meep_usages:\n" + (refsPreview || "(none)"),
         ephemeral: true,
       });
@@ -688,19 +759,20 @@ export const meepo = {
           await setBotNicknameForPersona(interaction.guild, character);
         }
 
+        const deprecationNote = " *(Use /meepo persona-set to switch personas.)*";
         if (character === "meepo") {
           await interaction.reply({
-            content: "Meepo shimmers... and returns to itself.",
+            content: "Meepo shimmers... and returns to itself." + deprecationNote,
             ephemeral: true,
           });
         } else if (character === "xoblob") {
           await interaction.reply({
-            content: "Meepo curls up... and becomes an echo of Old Xoblob.",
+            content: "Meepo curls up... and becomes an echo of Old Xoblob." + deprecationNote,
             ephemeral: true,
           });
         } else {
           await interaction.reply({
-            content: `Meepo transforms into ${persona.displayName}.`,
+            content: `Meepo transforms into ${persona.displayName}.` + deprecationNote,
             ephemeral: true,
           });
         }

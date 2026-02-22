@@ -1,7 +1,7 @@
 import "dotenv/config";
-import { getDb } from "../db.js";
-import { compileAndExportSession } from "./events/compile-and-export-events.js";
-import { getOfficialSessionLabels } from "../sessions/officialSessions.js";
+import { getDb } from "../../db.js";
+import { compileAndExportSession } from "./compile-and-export-events.js";
+import { getOfficialSessionLabels } from "../../sessions/officialSessions.js";
 
 function parseArgs(): { force: boolean } {
   const args = process.argv.slice(2);

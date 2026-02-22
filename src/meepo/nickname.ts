@@ -6,17 +6,18 @@ const meepoLog = log.withScope("meepo");
 /**
  * Set bot nickname based on active persona
  * @param guild - The Discord guild
- * @param personaId - The persona ID (e.g., "meepo", "xoblob")
+ * @param personaId - The persona ID (e.g., "meta_meepo", "diegetic_meepo", "rei", "xoblob", or form "meepo")
  */
 export async function setBotNicknameForPersona(guild: Guild, personaId: string): Promise<void> {
   try {
     let nickname: string;
-    if (personaId === "xoblob") {
+    if (personaId === "rei") {
+      nickname = "REI";
+    } else if (personaId === "xoblob") {
       nickname = "Xoblob (Echo)";
-    } else if (personaId === "meepo") {
+    } else if (personaId === "meepo" || personaId === "meta_meepo" || personaId === "diegetic_meepo") {
       nickname = "Meepo";
     } else {
-      // Unknown persona, default to Meepo
       nickname = "Meepo";
     }
 

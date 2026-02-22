@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import yaml from "yaml";
-import { loadRegistry, normKey } from "../registry/loadRegistry.js";
+import { loadRegistry, normKey } from "../../registry/loadRegistry.js";
 
 /**
  * Cleanup: Remove aliases that contain the canonical name as a complete word

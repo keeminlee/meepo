@@ -56,6 +56,7 @@ export async function buildMeepoPrompt(opts: {
     const result = await getMeepoMemoriesSection({
       mindspace: opts.mindspace,
       includeLegacy: isCampaign,
+      personaId: opts.personaId,
     });
     meepoMemoriesSection = result.section;
     memoryRefs = result.memoryRefs;

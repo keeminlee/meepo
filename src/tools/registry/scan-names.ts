@@ -3,15 +3,20 @@ import path from "path";
 import Database from "better-sqlite3";
 import yaml from "yaml";
 import { loadRegistry, normKey } from "../../registry/loadRegistry.js";
+import { getRegistryDirForCampaign } from "../../registry/scaffold.js";
+import { resolveCampaignSlug } from "../../campaign/guildConfig.js";
+import { getDefaultCampaignSlug } from "../../campaign/defaultCampaign.js";
 
 /**
- * Phase 1B: Name Scanner
- * 
+ * Phase 1B: Name Scanner (campaign-scoped)
+ *
  * Scans SQLite ledger for proper-name candidates, filters against registry,
- * and outputs decisions.pending.yml for manual review.
- * 
+ * and outputs decisions.pending.yml in the campaign's registry folder.
+ *
  * Usage:
- *   npx tsx src/tools/scan-names.ts --db ./data/test_ingest.sqlite --minCount 3
+ *   npx tsx src/tools/registry/scan-names.ts --campaign faeterra-main
+ *   npx tsx src/tools/registry/scan-names.ts --campaign auto --guild 123456789012345678
+ *   npx tsx src/tools/registry/scan-names.ts  # uses DEFAULT_CAMPAIGN_SLUG or "default"
  */
 
 // Types
@@ -68,19 +73,34 @@ function escapeRegex(s: string): string {
 /**
  * Main scanner.
  */
+function resolveCampaignFromArgs(args: Record<string, string | boolean>): string {
+  const campaignOpt = (args.campaign as string) ?? "auto";
+  const guildId = args.guild as string | undefined;
+  if (campaignOpt !== "auto" && campaignOpt && String(campaignOpt).trim() !== "") {
+    return String(campaignOpt).trim();
+  }
+  if (guildId) {
+    return resolveCampaignSlug({ guildId });
+  }
+  return getDefaultCampaignSlug();
+}
+
 function scanNames(): void {
   const args = parseArgs();
 
-  // Resolve parameters
+  const campaignSlug = resolveCampaignFromArgs(args);
+  console.log(`Campaign: ${campaignSlug}`);
+
+  const registryDir = getRegistryDirForCampaign(campaignSlug);
   const dbPath = (args.db as string) || process.env.DB_PATH || "./data/bot.sqlite";
   const minCount = parseInt((args.minCount as string) || "3", 10);
   const primaryOnly = args.primaryOnly === true || args.primaryOnly === "true";
   const maxExamples = parseInt((args.maxExamples as string) || "3", 10);
-  const pendingPath = (args.pendingOut as string) || path.join(process.cwd(), "data", "registry", "decisions.pending.yml");
+  const pendingPath = (args.pendingOut as string) || path.join(registryDir, "decisions.pending.yml");
   const includeKnown = args.includeKnown === true || args.includeKnown === "true";
 
   console.log(`[scan-names] Loading registry...`);
-  const registry = loadRegistry();
+  const registry = loadRegistry({ campaignSlug });
 
   console.log(`[scan-names] Connecting to ${dbPath}...`);
   if (!fs.existsSync(dbPath)) {

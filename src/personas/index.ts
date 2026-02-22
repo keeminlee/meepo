@@ -1,6 +1,7 @@
 import { META_MEEPO_PERSONA } from "./metaMeepo.js";
 import { DIEGETIC_MEEPO_PERSONA, MEEPO_PERSONA } from "./meepo.js";
 import { XOBLOB_PERSONA } from "./xoblob.js";
+import { REI_PERSONA } from "./rei.js";
 
 export type StyleSpec = {
   name: string;                 // Display name / nickname target
@@ -39,6 +40,7 @@ const PERSONAS: Record<string, Persona> = {
   diegetic_meepo: DIEGETIC_MEEPO_PERSONA,
   meepo: MEEPO_PERSONA, // form_id alias for display/nickname
   xoblob: XOBLOB_PERSONA,
+  rei: REI_PERSONA,
 };
 
 /**
@@ -105,7 +107,7 @@ export function getPersona(personaOrFormId: string): Persona {
 
 /** Persona IDs only (for switching and state). form_id "meepo" is an alias; use diegetic_meepo for campaign. */
 export function getAvailablePersonaIds(): string[] {
-  return ["meta_meepo", "diegetic_meepo", "xoblob"];
+  return ["meta_meepo", "diegetic_meepo", "xoblob", "rei"];
 }
 
 /** Form IDs for display/nickname (cosmetic). */

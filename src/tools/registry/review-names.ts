@@ -3,16 +3,20 @@ import path from "path";
 import yaml from "yaml";
 import * as readline from "readline/promises";
 import { stdin as input, stdout as output } from "process";
-import { loadRegistry, normKey } from "../registry/loadRegistry.js";
+import { loadRegistry, normKey } from "../../registry/loadRegistry.js";
+import { getRegistryDirForCampaign } from "../../registry/scaffold.js";
+import { resolveCampaignSlug } from "../../campaign/guildConfig.js";
+import { getDefaultCampaignSlug } from "../../campaign/defaultCampaign.js";
 
 /**
- * Phase 1B: Name Review Tool
- * 
+ * Phase 1B: Name Review Tool (campaign-scoped)
+ *
  * Interactive CLI for reviewing pending name candidates.
- * Allows adding NPCs, locations, factions, or marking as ignore.
- * 
+ * Writes only to the selected campaign's registry folder.
+ *
  * Usage:
- *   npx tsx src/tools/review-names.ts
+ *   npx tsx src/tools/registry/review-names.ts --campaign faeterra-main
+ *   npx tsx src/tools/registry/review-names.ts --campaign auto --guild 123456789012345678
  */
 
 type PendingCandidate = {
@@ -140,16 +144,50 @@ function savePending(pendingPath: string, data: PendingDecisions): void {
   fs.writeFileSync(pendingPath, yaml.stringify(data));
 }
 
+function parseArgs(): Record<string, string | boolean> {
+  const args: Record<string, string | boolean> = {};
+  for (let i = 2; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg.startsWith("--")) {
+      const key = arg.slice(2);
+      const next = process.argv[i + 1];
+      if (next && !next.startsWith("--")) {
+        args[key] = next;
+        i++;
+      } else {
+        args[key] = true;
+      }
+    }
+  }
+  return args;
+}
+
+function resolveCampaignFromArgs(args: Record<string, string | boolean>): string {
+  const campaignOpt = (args.campaign as string) ?? "auto";
+  const guildId = args.guild as string | undefined;
+  if (campaignOpt !== "auto" && campaignOpt && String(campaignOpt).trim() !== "") {
+    return String(campaignOpt).trim();
+  }
+  if (guildId) {
+    return resolveCampaignSlug({ guildId });
+  }
+  return getDefaultCampaignSlug();
+}
+
 /**
  * Main review loop.
  */
 async function reviewNames(): Promise<void> {
-  const registryDir = path.join(process.cwd(), "data", "registry");
+  const args = parseArgs();
+  const campaignSlug = resolveCampaignFromArgs(args);
+  console.log(`Campaign: ${campaignSlug}`);
+
+  const registryDir = getRegistryDirForCampaign(campaignSlug);
   const pendingPath = path.join(registryDir, "decisions.pending.yml");
-  
+
   if (!fs.existsSync(pendingPath)) {
     console.log(`❌ No pending decisions file found at ${pendingPath}`);
-    console.log(`   Run scan-names.ts first to generate pending candidates.`);
+    console.log(`   Run scan-names.ts first (with same --campaign/--guild) to generate pending candidates.`);
     return;
   }
 
@@ -163,7 +201,7 @@ async function reviewNames(): Promise<void> {
   }
 
   console.log(`[review-names] Loading registry...`);
-  const registry = loadRegistry();
+  const registry = loadRegistry({ campaignSlug });
 
   const rl = readline.createInterface({ input, output });
 
@@ -232,7 +270,7 @@ async function reviewNames(): Promise<void> {
       console.log(`✅ Deleted from pending`);
       continue; // Don't increment index, next candidate shifts down
     } else if (choice === "n" || choice === "l" || choice === "f" || choice === "m" || choice === "p") {
-      // Unified handler for all registry types
+      // Unified handler for all registry types (paths already campaign-scoped via registryDir)
       const miscPath = path.join(registryDir, "misc.yml");
       const typeMap: Record<string, { prefix: string; path: string; arrayKey: string; label: string }> = {
         p: { prefix: "pc", path: pcsPath, arrayKey: "characters", label: "Player Character" },
@@ -427,7 +465,7 @@ async function reviewNames(): Promise<void> {
         savePending(pendingPath, pendingData);
 
         // Reload registry to pick up new entry
-        const updatedRegistry = loadRegistry();
+        const updatedRegistry = loadRegistry({ campaignSlug });
         Object.assign(registry, updatedRegistry);
       }
 

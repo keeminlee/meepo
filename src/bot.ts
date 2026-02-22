@@ -4,6 +4,7 @@ import { log } from "./utils/logger.js";
 import { registerHandlers } from "./commands/index.js";
 import { getActiveMeepo, wakeMeepo, transformMeepo } from "./meepo/state.js";
 import { getActivePersonaId, getMindspace, setActivePersonaId } from "./meepo/personaState.js";
+import { getGuildDefaultPersonaId, resolveCampaignSlug } from "./campaign/guildConfig.js";
 import { autoJoinGeneralVoice } from "./meepo/autoJoinVoice.js";
 import { startAutoSleepChecker } from "./meepo/autoSleep.js";
 import { getActiveSession } from "./sessions/sessions.js";
@@ -249,7 +250,7 @@ client.on("messageCreate", async (message: any) => {
       });
 
       // Persona Overhaul v1: default to Meta Meepo on wake
-      setActivePersonaId(message.guildId, "meta_meepo");
+      setActivePersonaId(message.guildId, getGuildDefaultPersonaId(message.guildId) ?? "meta_meepo");
 
       // Continue processing to respond to the wake message
     }
@@ -429,7 +430,11 @@ client.on("messageCreate", async (message: any) => {
       
       if (memoryEnabled) {
         try {
-          const registry = loadRegistry();
+          const campaignSlug = resolveCampaignSlug({
+            guildId: message.guildId ?? undefined,
+            guildName: message.guild?.name ?? undefined,
+          });
+          const registry = loadRegistry({ campaignSlug });
           const matches = extractRegistryMatches(content, registry);
           
           recallLog.debug(`Registry matches: ${matches.length} [${matches.map(m => m.canonical).join(", ")}]`);

@@ -950,6 +950,21 @@ function applyMigrations(db: Database.Database) {
     `);
   }
 
+  // Migration: Campaign-scoped registry - guild_config (campaign_slug, default_persona_id)
+  const tablesForGuildConfig = db.pragma("table_list") as any[];
+  const hasGuildConfig = tablesForGuildConfig.some((t: any) => t.name === "guild_config");
+  if (!hasGuildConfig) {
+    console.log("Migrating: Creating guild_config table (Campaign-Scoped Registry)");
+    db.exec(`
+      CREATE TABLE guild_config (
+        guild_id TEXT PRIMARY KEY,
+        campaign_slug TEXT NOT NULL,
+        dm_role_id TEXT,
+        default_persona_id TEXT
+      );
+    `);
+  }
+
   // (Future migrations can go here)
 }
 
