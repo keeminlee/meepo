@@ -17,6 +17,7 @@ export type CausalCyclesParams = {
     betaLex: number;
     strongMinScore: number;
     weakMinScore: number;
+    ambientMassBoost?: boolean;
   };
   anneal: {
     windowLinks: number;
@@ -25,6 +26,7 @@ export type CausalCyclesParams = {
     betaLex: number;
     lambda: number;
     topKContrib: number;
+    ambientMassBoost?: boolean;
     includeContextText?: boolean;
   };
   absorb: {
@@ -73,6 +75,7 @@ export async function runCausalCycles(input: {
     kLocal: input.params.kernel.kLocal,
     strongMinScore: input.params.kernel.strongMinScore,
     weakMinScore: input.params.kernel.weakMinScore,
+    ambientMassBoost: input.params.kernel.ambientMassBoost ?? false,
     hillTau: input.params.kernel.hillTau,
     hillSteepness: input.params.kernel.hillSteepness,
     betaLex: input.params.kernel.betaLex,
@@ -123,6 +126,7 @@ export async function runCausalCycles(input: {
     betaLex: input.params.anneal.betaLex,
     lambda: input.params.anneal.lambda,
     topKContrib: input.params.anneal.topKContrib,
+    ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
   });
   anneal0.metrics.cycle = 0;
   anneal0.metrics.phase = "anneal";
@@ -196,6 +200,7 @@ export async function runCausalCycles(input: {
       betaLex: input.params.anneal.betaLex,
       lambda: input.params.anneal.lambda,
       topKContrib: input.params.anneal.topKContrib,
+      ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
       includeContextText: input.params.anneal.includeContextText ?? true,
       contextByLinkId: absorb.contextByLinkId,
     });

@@ -20,6 +20,7 @@ interface CliArgs {
   llMinBridge: number;
   llMaxForwardLines: number;
   llKLocalLinks: number;
+  ambientMassBoost: boolean;
   skipOocRefinement: boolean;
   forceOocReclassify: boolean;
 }
@@ -53,6 +54,7 @@ function parseArgs(): CliArgs {
     llMinBridge: args.llMinBridge ? Number(args.llMinBridge) : 1.0,
     llMaxForwardLines: args.llMaxForwardLines ? Number(args.llMaxForwardLines) : 120,
     llKLocalLinks: args.llKLocalLinks ? Number(args.llKLocalLinks) : 8,
+    ambientMassBoost: Boolean(args.ambientMassBoost),
     skipOocRefinement: Boolean(args.skipOocRefinement),
     forceOocReclassify: Boolean(args.forceOocReclassify),
   };
@@ -109,6 +111,7 @@ async function main() {
     console.error("  --llMinBridge 1.0");
     console.error("  --llMaxForwardLines 120");
     console.error("  --llKLocalLinks 8");
+    console.error("  --ambientMassBoost");
     console.error("");
     console.error("Refinement:");
     console.error("  --skipOocRefinement");
@@ -163,6 +166,7 @@ async function main() {
       betaLex: 2.0,
       strongMinScore: 1.0,
       weakMinScore: 1.0,
+      ambientMassBoost: args.ambientMassBoost,
     },
     anneal: {
       windowLinks: 8,
@@ -171,6 +175,7 @@ async function main() {
       betaLex: 0.8,
       lambda: 0.8,
       topKContrib: 5,
+      ambientMassBoost: args.ambientMassBoost,
     },
     linkLinks: {
       kLocalLinks: args.llKLocalLinks,

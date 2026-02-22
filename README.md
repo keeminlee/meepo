@@ -54,6 +54,7 @@ Start with [docs/README.md](docs/README.md) for the documentation map.
 
 High-use references:
 - [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md)
+- [docs/CAUSAL_CORE_PHYSICS.md](docs/CAUSAL_CORE_PHYSICS.md)
 - [LOGGING_REFERENCE.md](LOGGING_REFERENCE.md)
 - [causal-debug.md](causal-debug.md)
 

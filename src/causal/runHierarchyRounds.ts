@@ -17,6 +17,7 @@ export type HierarchyParams = {
     betaLex: number;
     strongMinScore: number;
     weakMinScore: number;
+    ambientMassBoost?: boolean;
   };
   anneal: {
     windowLinks: number;
@@ -25,6 +26,7 @@ export type HierarchyParams = {
     betaLex: number;
     lambda: number;
     topKContrib: number;
+    ambientMassBoost?: boolean;
   };
   linkLinks: {
     kLocalLinks: number;
@@ -97,6 +99,7 @@ export async function runRounds(input: {
     kLocal: input.params.kernel.kLocal,
     strongMinScore: input.params.kernel.strongMinScore,
     weakMinScore: input.params.kernel.weakMinScore,
+    ambientMassBoost: input.params.kernel.ambientMassBoost ?? false,
     hillTau: input.params.kernel.hillTau,
     hillSteepness: input.params.kernel.hillSteepness,
     betaLex: input.params.kernel.betaLex,
@@ -147,6 +150,7 @@ export async function runRounds(input: {
     betaLex: input.params.anneal.betaLex,
     lambda: input.params.anneal.lambda,
     topKContrib: input.params.anneal.topKContrib,
+    ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
   });
 
   const round1AnnealMetrics: RoundMetrics = {
@@ -228,6 +232,7 @@ export async function runRounds(input: {
       betaLex: input.params.anneal.betaLex,
       lambda: input.params.anneal.lambda,
       topKContrib: input.params.anneal.topKContrib,
+      ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
     });
 
     // Propagate current level's internal strengths into composites
@@ -313,6 +318,7 @@ export async function runRounds(input: {
       betaLex: input.params.anneal.betaLex,
       lambda: input.params.anneal.lambda,
       topKContrib: input.params.anneal.topKContrib,
+      ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
     });
 
     // Propagate current level's internal strengths into composites

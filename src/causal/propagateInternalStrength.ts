@@ -9,6 +9,6 @@ export function propagateInternalStrength(nodes: CausalLink[], childMap: Map<str
     if (!left || !right) continue;
     const leftInternal = left.strength_internal ?? left.strength_bridge ?? left.strength_ce ?? left.score ?? 0;
     const rightInternal = right.strength_internal ?? right.strength_bridge ?? right.strength_ce ?? right.score ?? 0;
-    node.strength_internal = (node.strength_internal ?? node.strength_bridge ?? 0) + leftInternal + rightInternal;
+    node.strength_internal = (node.strength_bridge ?? node.strength_ce ?? node.score ?? 0) + leftInternal + rightInternal;
   }
 }

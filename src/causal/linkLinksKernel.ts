@@ -8,6 +8,8 @@ export type LinkLinkParams = {
   hillSteepness: number;
   betaLex: number;
   minBridge: number;
+  tLinkBase?: number;
+  tLinkK?: number;
   maxForwardLines: number;
 };
 
@@ -19,6 +21,7 @@ export type LinkLinkCandidate = {
   center_distance: number;
   lexical_score: number;
   strength_bridge: number;
+  threshold_link: number;
   chosen: boolean;
 };
 
@@ -78,6 +81,12 @@ function getNodeMass(link: CausalLink): number {
   return link.mass ?? link.link_mass ?? link.mass_base ?? link.cause_mass ?? 0;
 }
 
+function thresholdForLinkMasses(params: LinkLinkParams, massA: number, massB: number): number {
+  const t0 = params.tLinkBase ?? params.minBridge;
+  const k = params.tLinkK ?? 0.15;
+  return t0 + k * Math.log(1 + Math.sqrt(Math.max(0, massA) * Math.max(0, massB)));
+}
+
 function computeNextLevel(left: CausalLink, right: CausalLink): 1 | 2 | 3 {
   const leftLevel = (left.level ?? 1) as 1 | 2 | 3;
   const rightLevel = (right.level ?? 1) as 1 | 2 | 3;
@@ -121,6 +130,7 @@ export function linkLinksKernel(input: {
     leftIndex: number;
     rightIndex: number;
     strength_bridge: number;
+    threshold_link: number;
     center_distance: number;
     lexical_score: number;
   };
@@ -142,11 +152,15 @@ export function linkLinksKernel(input: {
       const distStrength = distanceScoreHill(center_distance, input.params.hillTau, input.params.hillSteepness);
       const lexical_score = scoreTokenOverlap(texts[i], texts[j]);
       const strength_bridge = distStrength * (1 + input.params.betaLex * lexical_score);
-      if (strength_bridge < input.params.minBridge) continue;
+      const leftMass = getNodeMass(nodes[i]);
+      const rightMass = getNodeMass(nodes[j]);
+      const threshold_link = thresholdForLinkMasses(input.params, leftMass, rightMass);
+      if (strength_bridge < threshold_link) continue;
       candidates.push({
         leftIndex: i,
         rightIndex: j,
         strength_bridge,
+        threshold_link,
         center_distance,
         lexical_score,
       });
@@ -182,7 +196,10 @@ export function linkLinksKernel(input: {
     const rightText = getLinkText(right);
     const leftMass = getNodeMass(left);
     const rightMass = getNodeMass(right);
-    const combinedMass = leftMass + rightMass;
+    const leftInternal = ensureStrengthInternal(left);
+    const rightInternal = ensureStrengthInternal(right);
+    const strengthInternal = candidate.strength_bridge + leftInternal + rightInternal;
+    const massBase = leftMass + rightMass + strengthInternal;
 
     const composite: CausalLink = {
       ...left,
@@ -194,15 +211,15 @@ export function linkLinksKernel(input: {
       level: nextLevel,
       members: [left.id, right.id],
       strength_bridge: candidate.strength_bridge,
-      strength_internal: candidate.strength_bridge,
+      strength_internal: strengthInternal,
       join_center_distance: candidate.center_distance,
       join_lexical_score: candidate.lexical_score,
       span_start_index: spanStart,
       span_end_index: spanEnd,
       center_index: center,
-      mass_base: combinedMass,
-      mass: combinedMass,
-      link_mass: combinedMass,
+      mass_base: massBase,
+      mass: massBase,
+      link_mass: massBase,
       mass_boost: 0,
       intent_text: leftText,
       consequence_text: rightText,
@@ -229,6 +246,7 @@ export function linkLinksKernel(input: {
     center_distance: candidate.center_distance,
     lexical_score: candidate.lexical_score,
     strength_bridge: candidate.strength_bridge,
+    threshold_link: candidate.threshold_link,
     chosen: chosenPairs.has(`${nodes[candidate.leftIndex].id}::${nodes[candidate.rightIndex].id}`),
   }));
 
