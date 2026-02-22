@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "../db.js";
+import { setActiveSessionId, clearActiveSessionId } from "./sessionRuntime.js";
 
 export type Session = {
   session_id: string;
@@ -32,6 +33,8 @@ export function startSession(
     "INSERT INTO sessions (session_id, guild_id, label, created_at_ms, started_at_ms, ended_at_ms, started_by_id, started_by_name, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(sessionId, guildId, sessionLabel, now, now, null, startedById, startedByName, sessionSource);
 
+  setActiveSessionId(guildId, sessionId);
+
   return {
     session_id: sessionId,
     guild_id: guildId,
@@ -53,6 +56,9 @@ export function endSession(guildId: string): number {
     .prepare("UPDATE sessions SET ended_at_ms = ? WHERE guild_id = ? AND ended_at_ms IS NULL")
     .run(now, guildId);
 
+  if (info.changes > 0) {
+    clearActiveSessionId(guildId);
+  }
   return info.changes;
 }
 

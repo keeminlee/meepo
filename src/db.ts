@@ -1,4 +1,4 @@
-﻿import fs from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 
@@ -860,13 +860,42 @@ function applyMigrations(db: Database.Database) {
   // Migration: Add source metadata to meepo_mind (Layer 0 - Conversation Memory)
   const mindColumns = db.pragma("table_info(meepo_mind)") as any[];
   const hasMindSourceType = mindColumns.some((col: any) => col.name === "source_type");
-  
+
   if (!hasMindSourceType) {
     console.log("Migrating: Adding source metadata to meepo_mind (Layer 0)");
     db.exec(`
       ALTER TABLE meepo_mind ADD COLUMN source_type TEXT;
       ALTER TABLE meepo_mind ADD COLUMN source_ref TEXT;
     `);
+  }
+
+  // Migration: Persona Overhaul v1 - guild_runtime_state.active_persona_id
+  const grsColumns = db.pragma("table_info(guild_runtime_state)") as any[];
+  const hasActivePersonaId = grsColumns.some((col: any) => col.name === "active_persona_id");
+  if (!hasActivePersonaId) {
+    console.log("Migrating: Adding active_persona_id to guild_runtime_state (Persona Overhaul v1)");
+    db.exec("ALTER TABLE guild_runtime_state ADD COLUMN active_persona_id TEXT");
+    db.prepare("UPDATE guild_runtime_state SET active_persona_id = ? WHERE active_persona_id IS NULL").run("meta_meepo");
+  }
+
+  // Migration: Persona Overhaul v1 - meepo_mind.mindspace
+  const mindColsAfter = db.pragma("table_info(meepo_mind)") as any[];
+  const hasMindspace = mindColsAfter.some((col: any) => col.name === "mindspace");
+  if (!hasMindspace) {
+    console.log("Migrating: Adding mindspace to meepo_mind (Persona Overhaul v1)");
+    db.exec("ALTER TABLE meepo_mind ADD COLUMN mindspace TEXT");
+    db.prepare("UPDATE meepo_mind SET mindspace = ? WHERE mindspace IS NULL").run("campaign:global:legacy");
+  }
+  // Ensure index exists (new installs have column from schema; old installs just got it above)
+  db.exec("CREATE INDEX IF NOT EXISTS idx_meepo_mind_mindspace ON meepo_mind(mindspace, gravity DESC)");
+
+  // Migration: Persona Overhaul v1 - meep_usages.persona_id, mindspace
+  const meepUsageColumns = db.pragma("table_info(meep_usages)") as any[];
+  const hasPersonaId = meepUsageColumns.some((col: any) => col.name === "persona_id");
+  if (!hasPersonaId && meepUsageColumns.length > 0) {
+    console.log("Migrating: Adding persona_id and mindspace to meep_usages (Persona Overhaul v1)");
+    db.exec("ALTER TABLE meep_usages ADD COLUMN persona_id TEXT");
+    db.exec("ALTER TABLE meep_usages ADD COLUMN mindspace TEXT");
   }
 
   // Migration: Create meepo_convo_log table (Layer 0 - Conversation Memory)

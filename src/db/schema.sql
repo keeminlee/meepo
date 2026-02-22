@@ -1,4 +1,4 @@
-﻿-- Day 2 + Day 3
+-- Day 2 + Day 3
 
 CREATE TABLE IF NOT EXISTS npc_instances (
   id TEXT PRIMARY KEY,
@@ -128,11 +128,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_unique_message
 ON ledger_entries(guild_id, channel_id, message_id)
 WHERE source = 'text';
 
--- MeepoMind: Meepo's foundational knowledge base
--- Global for now (no character scoping yet)
+-- MeepoMind: Meepo's foundational knowledge base (unified meta + campaign)
+-- mindspace: meta:<guild_id> for meta memories; campaign:<guild_id>:<session_id> (V0) for diegetic
 -- No decay logic yet; all memories persist indefinitely
 CREATE TABLE IF NOT EXISTS meepo_mind (
   id TEXT PRIMARY KEY,                     -- UUID
+  mindspace TEXT NOT NULL,                -- Scope: meta:<guild_id> | campaign:<guild_id>:<session_id>
   title TEXT NOT NULL,                     -- Memory name (e.g., "The Wanderer's Love")
   content TEXT NOT NULL,                   -- Full memory text
   gravity REAL NOT NULL,                   -- Importance/impact (0.0–1.0)
@@ -143,6 +144,9 @@ CREATE TABLE IF NOT EXISTS meepo_mind (
 
 CREATE INDEX IF NOT EXISTS idx_meepo_mind_gravity
 ON meepo_mind(gravity DESC);
+
+-- idx_meepo_mind_mindspace is created in migration (Persona Overhaul v1) so existing DBs
+-- that lack the mindspace column don't fail when schema runs.
 
 -- Phase 1C: Structured event extraction
 -- events: Extract structured narrative events from session transcripts
@@ -188,7 +192,7 @@ CREATE INDEX IF NOT EXISTS idx_char_event_exposure
 ON character_event_index(exposure_type);
 
 -- meep_usages: Track when and how Meepo responded
--- Supports analysis of response patterns, cost tracking, memory usage
+-- Supports analysis of response patterns, cost tracking, memory usage, persona/mindspace observability
 CREATE TABLE IF NOT EXISTS meep_usages (
   id TEXT PRIMARY KEY,                     -- UUID
   session_id TEXT,                         -- FK to sessions (nullable for non-session triggers)
@@ -198,6 +202,8 @@ CREATE TABLE IF NOT EXISTS meep_usages (
   triggered_at_ms INTEGER NOT NULL,        -- When response was triggered
   response_tokens INTEGER,                 -- LLM tokens in response (null if LLM disabled)
   used_memories TEXT,                      -- JSON array of memory IDs referenced
+  persona_id TEXT,                         -- active_persona_id (meta_meepo, diegetic_meepo, xoblob)
+  mindspace TEXT,                          -- Resolved mindspace for this response
   created_at_ms INTEGER NOT NULL
 );
 
@@ -471,9 +477,10 @@ CREATE TABLE IF NOT EXISTS bronze_transcript (
 CREATE INDEX IF NOT EXISTS idx_bronze_transcript_session
 ON bronze_transcript(session_id);
 
--- Guild Runtime State: minimal session tracking
+-- Guild Runtime State: session + persona (form_id is cosmetic only; persona_id governs prompt + memory + guardrails)
 CREATE TABLE IF NOT EXISTS guild_runtime_state (
   guild_id TEXT PRIMARY KEY,
   active_session_id TEXT,                 -- Current active session (NULL if none)
+  active_persona_id TEXT,                 -- meta_meepo | diegetic_meepo | xoblob (default meta_meepo)
   updated_at_ms INTEGER NOT NULL
 );

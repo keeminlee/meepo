@@ -25,16 +25,20 @@ export function getActiveSessionId(guildId: string): string | null {
 }
 
 /**
- * Set the active session ID for a guild
+ * Set the active session ID for a guild. Preserves active_persona_id.
  */
 export function setActiveSessionId(guildId: string, sessionId: string | null): void {
   const db = getDb();
   const now = Date.now();
+  const row = db
+    .prepare("SELECT active_persona_id FROM guild_runtime_state WHERE guild_id = ? LIMIT 1")
+    .get(guildId) as { active_persona_id: string | null } | undefined;
+  const personaId = row?.active_persona_id ?? "meta_meepo";
 
   db.prepare(`
-    INSERT OR REPLACE INTO guild_runtime_state (guild_id, active_session_id, updated_at_ms)
-    VALUES (?, ?, ?)
-  `).run(guildId, sessionId, now);
+    INSERT OR REPLACE INTO guild_runtime_state (guild_id, active_session_id, active_persona_id, updated_at_ms)
+    VALUES (?, ?, ?, ?)
+  `).run(guildId, sessionId, personaId, now);
 
   if (sessionId) {
     missionsLog.debug(`Active session set: guild=${guildId}, session_id=${sessionId}`);

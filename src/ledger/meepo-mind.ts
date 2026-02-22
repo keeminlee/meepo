@@ -25,24 +25,22 @@ export type { Memory };
 // Seeder: One-time initialization
 // ============================================================================
 
+/** Mindspace for in-world foundational memories (Diegetic Meepo). V0 legacy scope. */
+export const DIEGETIC_LEGACY_MINDSPACE = "campaign:global:legacy";
+
 /**
  * Seed Meepo's foundational memories (idempotent).
- *
- * - Checks existing memories by title
- * - Inserts any missing memories from INITIAL_MEMORIES
- * - Safe to call on every startup (will add new memories from knowledge.ts)
- *
- * Call this once at bot startup.
+ * Inserts into DIEGETIC_LEGACY_MINDSPACE so Diegetic Meepo can see them.
+ * Safe to call on every startup (will add new memories from knowledge.ts).
  */
 export async function seedInitialMeepoMemories(): Promise<void> {
   const db = getDb();
+  const mindspace = DIEGETIC_LEGACY_MINDSPACE;
 
   try {
-    // Get existing memory titles
-    const existingRows = db.prepare("SELECT title FROM meepo_mind").all() as { title: string }[];
+    const existingRows = db.prepare("SELECT title, mindspace FROM meepo_mind WHERE mindspace = ?").all(mindspace) as { title: string }[];
     const existingTitles = new Set(existingRows.map(row => row.title));
 
-    // Find memories that need to be added
     const missingMemories = INITIAL_MEMORIES.filter(mem => !existingTitles.has(mem.title));
 
     if (missingMemories.length === 0) {
@@ -50,18 +48,18 @@ export async function seedInitialMeepoMemories(): Promise<void> {
       return;
     }
 
-    meepoMindLog.info(`Seeding ${missingMemories.length} new memories...`);
+    meepoMindLog.info(`Seeding ${missingMemories.length} new memories to mindspace=${mindspace}...`);
 
     const now = Date.now();
     const insertStmt = db.prepare(`
-      INSERT INTO meepo_mind (id, title, content, gravity, certainty, created_at_ms, last_accessed_at_ms)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO meepo_mind (id, mindspace, title, content, gravity, certainty, created_at_ms, last_accessed_at_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     db.transaction(() => {
       for (const mem of missingMemories) {
         const id = randomUUID();
-        insertStmt.run(id, mem.title, mem.content, mem.gravity, mem.certainty, now, null);
+        insertStmt.run(id, mindspace, mem.title, mem.content, mem.gravity, mem.certainty, now, null);
       }
     })();
 
@@ -77,26 +75,25 @@ export async function seedInitialMeepoMemories(): Promise<void> {
 // ============================================================================
 
 /**
- * Get all Meepo memories, ordered by gravity (descending).
- *
+ * Get Meepo memories for a mindspace, ordered by gravity (descending).
  * Updates last_accessed_at_ms for each retrieved memory.
- *
- * @returns Promise resolving to array of Memory objects
  */
-export async function getAllMeepoMemories(): Promise<Memory[]> {
+export async function getMemoriesByMindspace(mindspace: string): Promise<Memory[]> {
   const db = getDb();
 
   try {
-    const memories = db
-      .prepare("SELECT * FROM meepo_mind ORDER BY gravity DESC")
-      .all() as Memory[];
+    const stmt = db.prepare(`
+      SELECT id, mindspace, title, content, gravity, certainty, created_at_ms, last_accessed_at_ms
+      FROM meepo_mind
+      WHERE mindspace = ?
+      ORDER BY gravity DESC
+    `);
+    const memories = stmt.all(mindspace) as Memory[];
 
-    // Update last_accessed_at_ms for each memory
     const now = Date.now();
     const updateStmt = db.prepare(
       "UPDATE meepo_mind SET last_accessed_at_ms = ? WHERE id = ?"
     );
-
     db.transaction(() => {
       for (const mem of memories) {
         updateStmt.run(now, mem.id);
@@ -110,36 +107,71 @@ export async function getAllMeepoMemories(): Promise<Memory[]> {
   }
 }
 
+/**
+ * Get all Meepo memories (no mindspace filter). For backward compatibility / admin tools.
+ */
+export async function getAllMeepoMemories(): Promise<Memory[]> {
+  const db = getDb();
+  const memories = db
+    .prepare("SELECT id, mindspace, title, content, gravity, certainty, created_at_ms, last_accessed_at_ms FROM meepo_mind ORDER BY gravity DESC")
+    .all() as Memory[];
+  const now = Date.now();
+  const updateStmt = db.prepare("UPDATE meepo_mind SET last_accessed_at_ms = ? WHERE id = ?");
+  db.transaction(() => {
+    for (const mem of memories) {
+      updateStmt.run(now, mem.id);
+    }
+  })();
+  return memories;
+}
+
 // ============================================================================
 // Formatting for Prompt Injection
 // ============================================================================
 
-/**
- * Format all memories as a section for injection into Meepo's system prompt.
- *
- * Returns a formatted string suitable for inclusion in the system prompt.
- * If no memories exist, returns an empty string.
- *
- * Format: Numbered list for robustness in system prompts.
- */
-export async function getMeepoMemoriesSection(): Promise<string> {
-  try {
-    const memories = await getAllMeepoMemories();
+export type MeepoMemoriesSectionResult = {
+  section: string;
+  memoryRefs: string[];
+};
 
-    if (memories.length === 0) {
-      return "";
+/**
+ * Format memories for a mindspace as a section for injection into the system prompt.
+ * Available for both meta and campaign personas; caller passes resolved mindspace.
+ *
+ * @param opts.mindspace - Scope: meta:<guild_id> or campaign:<guild_id>:<session_id>
+ * @param opts.includeLegacy - If true (campaign persona), also include campaign:global:legacy memories
+ */
+export async function getMeepoMemoriesSection(opts: { mindspace: string; includeLegacy?: boolean }): Promise<MeepoMemoriesSectionResult> {
+  try {
+    let memories = await getMemoriesByMindspace(opts.mindspace);
+    const refs: string[] = [...memories.map(m => m.id)];
+
+    if (opts.includeLegacy && opts.mindspace !== DIEGETIC_LEGACY_MINDSPACE) {
+      const legacy = await getMemoriesByMindspace(DIEGETIC_LEGACY_MINDSPACE);
+      const seen = new Set(memories.map(m => m.id));
+      for (const m of legacy) {
+        if (!seen.has(m.id)) {
+          seen.add(m.id);
+          memories = [...memories, m];
+          refs.push(m.id);
+        }
+      }
+      memories.sort((a, b) => b.gravity - a.gravity);
     }
 
-    // Format as numbered list (more robust in system prompts than bullets)
+    if (memories.length === 0) {
+      return { section: "", memoryRefs: [] };
+    }
+
     const lines = memories
       .map((m, idx) => `${idx + 1}) ${m.title}: ${m.content}`)
       .join("\n");
+    const section = `\nMEEPO KNOWLEDGE BASE (Canonical memories Meepo may reference):\n${lines}\n`;
 
-    return `\nMEEPO KNOWLEDGE BASE (Canonical memories Meepo may reference):\n${lines}\n`;
+    return { section, memoryRefs: refs };
   } catch (err: any) {
     meepoMindLog.error(`Formatting failed: ${err.message ?? err}`);
-    // Return empty string instead of throwing; graceful degradation
-    return "";
+    return { section: "", memoryRefs: [] };
   }
 }
 

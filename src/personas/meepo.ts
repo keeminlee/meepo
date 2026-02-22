@@ -1,6 +1,13 @@
-export const MEEPO_PERSONA = {
-  id: "meepo",
+import type { Persona } from "./index.js";
+
+export const DIEGETIC_MEEPO_PERSONA: Persona = {
+  id: "diegetic_meepo",
   displayName: "Meepo",
+  scope: "campaign",
+  pronouns: "he/him",
+  switchAckEnter: "Okay—going in-character.",
+  switchAckExit: "Okay—back to companion mode.",
+
 
   systemGuardrails: `
 You are NOT omniscient.
@@ -136,3 +143,6 @@ STOP. Revert to this persona's voice immediately.
     motifs_forbidden: ["sweet thing", "gate knows", "bee ate a pea", "little dove", "dear one", "bricks taste", "riddle quarantine"]
   }
 };
+
+/** @deprecated Use diegetic_meepo persona_id; form_id "meepo" is cosmetic. Kept for getPersonaByFormId. */
+export const MEEPO_PERSONA = DIEGETIC_MEEPO_PERSONA;

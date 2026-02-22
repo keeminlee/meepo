@@ -12,6 +12,7 @@
  */
 
 import { getActiveMeepo } from "../meepo/state.js";
+import { getActivePersonaId, getMindspace } from "../meepo/personaState.js";
 import { log } from "../utils/logger.js";
 import { getVoiceState } from "./state.js";
 import { isMeepoSpeaking, speakInGuild } from "./speaker.js";
@@ -36,6 +37,7 @@ import { findRelevantBeats, type ScoredBeat } from "../recall/findRelevantBeats.
 import { buildMemoryContext } from "../recall/buildMemoryContext.js";
 import { getTranscriptLines } from "../ledger/transcripts.js";
 import { getDb } from "../db.js";
+import { randomUUID } from "node:crypto";
 
 const voiceReplyLog = log.withScope("voice-reply");
 const DEBUG_VOICE = process.env.DEBUG_VOICE === "true";
@@ -226,14 +228,27 @@ export async function respondToVoiceUtterance({
     const activeSession = getActiveSession(guildId);
     const { tailBlock } = buildConvoTailContext(activeSession?.session_id ?? null);
 
-    // Build system prompt with persona
-    const systemPrompt = await buildMeepoPrompt({
+    const personaId = getActivePersonaId(guildId);
+    const mindspace = getMindspace(guildId, personaId);
+
+    if (mindspace === null) {
+      if (DEBUG_VOICE) voiceReplyLog.debug("Campaign persona with no session, skipping voice reply");
+      return false;
+    }
+
+    const promptResult = await buildMeepoPrompt({
+      personaId,
+      mindspace,
       meepo: active,
       recentContext: recentContext || undefined,
       hasVoiceContext: hasVoice,
       partyMemory,
       convoTail: tailBlock || undefined,
     });
+
+    voiceReplyLog.debug(
+      `persona_id=${promptResult.personaId} mindspace=${promptResult.mindspace ?? "n/a"} memory_refs=${promptResult.memoryRefs.length}`
+    );
 
     // Build user message with sanitized speaker name
     const sanitizedSpeakerName = getSanitizedSpeakerName(guildId, speakerId, speakerName);
@@ -257,10 +272,28 @@ export async function respondToVoiceUtterance({
 
     // Call LLM to generate response (shorter tokens for voice)
     const responseText = await chat({
-      systemPrompt,
+      systemPrompt: promptResult.systemPrompt,
       userMessage,
       maxTokens: 100, // Shorter responses for voice
     });
+
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO meep_usages (id, session_id, message_id, guild_id, channel_id, triggered_at_ms, response_tokens, used_memories, persona_id, mindspace, created_at_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      randomUUID(),
+      activeSession?.session_id ?? null,
+      `voice:${now}`,
+      guildId,
+      channelId,
+      now,
+      null,
+      JSON.stringify(promptResult.memoryRefs),
+      promptResult.personaId,
+      promptResult.mindspace ?? null,
+      Date.now()
+    );
 
     // Layer 0: Log Meepo's response after LLM call
     if (activeSession) {

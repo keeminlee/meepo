@@ -1,6 +1,12 @@
-export const XOBLOB_PERSONA = {
+import type { Persona } from "./index.js";
+
+export const XOBLOB_PERSONA: Persona = {
   id: "xoblob",
   displayName: "Old Xoblob (Entity-13V Echo)",
+  scope: "campaign",
+  pronouns: "he/him",
+  switchAckEnter: null,
+  switchAckExit: null,
 
   systemGuardrails: `
 You are NOT omniscient.

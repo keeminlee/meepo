@@ -7,6 +7,7 @@
 
 export type Memory = {
   id: string;
+  mindspace?: string;   // meta:<guild_id> | campaign:<guild_id>:<session_id>
   title: string;
   content: string;
   gravity: number;      // 0.0–1.0 (importance/impact)

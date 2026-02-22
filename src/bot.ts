@@ -1,8 +1,9 @@
-﻿import "dotenv/config";
+import "dotenv/config";
 import { Client, GatewayIntentBits } from "discord.js";
 import { log } from "./utils/logger.js";
 import { registerHandlers } from "./commands/index.js";
 import { getActiveMeepo, wakeMeepo, transformMeepo } from "./meepo/state.js";
+import { getActivePersonaId, getMindspace, setActivePersonaId } from "./meepo/personaState.js";
 import { autoJoinGeneralVoice } from "./meepo/autoJoinVoice.js";
 import { startAutoSleepChecker } from "./meepo/autoSleep.js";
 import { getActiveSession } from "./sessions/sessions.js";
@@ -24,6 +25,7 @@ import { findRelevantBeats, type ScoredBeat } from "./recall/findRelevantBeats.j
 import { buildMemoryContext } from "./recall/buildMemoryContext.js";
 import { getTranscriptLines } from "./ledger/transcripts.js";
 import { getDb } from "./db.js";
+import { randomUUID } from "node:crypto";
 import { startOverlayServer, overlayEmitPresence } from "./overlay/server.js";
 import { joinVoice } from "./voice/connection.js";
 import { startReceiver } from "./voice/receiver.js";
@@ -245,6 +247,9 @@ client.on("messageCreate", async (message: any) => {
         content: `Auto-wake triggered by text containing "meepo".`,
         tags: "system,action,wake",
       });
+
+      // Persona Overhaul v1: default to Meta Meepo on wake
+      setActivePersonaId(message.guildId, "meta_meepo");
 
       // Continue processing to respond to the wake message
     }
@@ -536,13 +541,40 @@ client.on("messageCreate", async (message: any) => {
       const activeSession = getActiveSession(message.guildId);
       const { tailBlock } = buildConvoTailContext(activeSession?.session_id ?? null);
 
-      const systemPrompt = await buildMeepoPrompt({
+      const personaId = getActivePersonaId(message.guildId);
+      const mindspace = getMindspace(message.guildId, personaId);
+
+      // Campaign persona with no active session: soft refusal (no LLM)
+      if (mindspace === null) {
+        const reply = await message.reply(
+          "I don't feel anchored yet—start a session first."
+        );
+        appendLedgerEntry({
+          guild_id: message.guildId,
+          channel_id: message.channelId,
+          message_id: reply.id,
+          author_id: client.user!.id,
+          author_name: client.user!.username,
+          timestamp_ms: reply.createdTimestamp,
+          content: reply.content,
+          tags: "npc,meepo,spoken",
+        });
+        return;
+      }
+
+      const promptResult = await buildMeepoPrompt({
+        personaId,
+        mindspace,
         meepo: active,
         recentContext,
         hasVoiceContext: hasVoice,
         partyMemory,
         convoTail: tailBlock || undefined,
       });
+
+      textReplyLog.info(
+        `persona_id=${promptResult.personaId} mindspace=${promptResult.mindspace ?? "n/a"} memory_refs=${promptResult.memoryRefs.length}`
+      );
 
       const sanitizedAuthorName = getSanitizedSpeakerName(
         message.guildId,
@@ -569,7 +601,7 @@ client.on("messageCreate", async (message: any) => {
       }
 
       const response = await chat({
-        systemPrompt,
+        systemPrompt: promptResult.systemPrompt,
         userMessage,
       });
 
@@ -589,7 +621,26 @@ client.on("messageCreate", async (message: any) => {
       textReplyLog.info(`💬 Meepo: "${response}"`);
 
       const reply = await message.reply(response);
-      
+
+      // Observability: log usage with persona + mindspace
+      const db = getDb();
+      db.prepare(`
+        INSERT INTO meep_usages (id, session_id, message_id, guild_id, channel_id, triggered_at_ms, response_tokens, used_memories, persona_id, mindspace, created_at_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        randomUUID(),
+        activeSession?.session_id ?? null,
+        message.id,
+        message.guildId,
+        message.channelId,
+        message.createdTimestamp,
+        null,
+        JSON.stringify(promptResult.memoryRefs),
+        promptResult.personaId,
+        promptResult.mindspace ?? null,
+        Date.now()
+      );
+
       // Log bot's own reply
       appendLedgerEntry({
         guild_id: message.guildId,

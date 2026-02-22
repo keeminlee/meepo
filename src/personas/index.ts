@@ -1,4 +1,5 @@
-import { MEEPO_PERSONA } from "./meepo.js";
+import { META_MEEPO_PERSONA } from "./metaMeepo.js";
+import { DIEGETIC_MEEPO_PERSONA, MEEPO_PERSONA } from "./meepo.js";
 import { XOBLOB_PERSONA } from "./xoblob.js";
 
 export type StyleSpec = {
@@ -11,20 +12,32 @@ export type StyleSpec = {
   motifs_forbidden?: string[];  // e.g. for Meepo: ["sweet thing"]
 };
 
+/** Scope: meta = reality-aware / dev companion; campaign = in-world only (V0: session-scoped). */
+export type PersonaScope = "meta" | "campaign";
+
 export type Persona = {
   id: string;
   displayName: string;
+  /** meta = DM companion, campaign = in-world (diegetic). form_id is cosmetic only; persona_id governs prompt + memory + guardrails. */
+  scope: PersonaScope;
+  pronouns?: string;
+  /** When switching TO this persona (e.g. from diegetic → meta). */
+  switchAckEnter?: string | null;
+  /** When switching AWAY from this persona (e.g. meta → diegetic). */
+  switchAckExit?: string | null;
   systemGuardrails: string;
   identity: string;
-  memory?: string; // Optional persona memory seeds
+  memory?: string;
   speechStyle: string;
   personalityTone: string;
-  styleGuard: string; // Strict style rules to prevent persona bleed
-  styleSpec: StyleSpec; // Compact style specification
+  styleGuard: string;
+  styleSpec: StyleSpec;
 };
 
 const PERSONAS: Record<string, Persona> = {
-  meepo: MEEPO_PERSONA,
+  meta_meepo: META_MEEPO_PERSONA,
+  diegetic_meepo: DIEGETIC_MEEPO_PERSONA,
+  meepo: MEEPO_PERSONA, // form_id alias for display/nickname
   xoblob: XOBLOB_PERSONA,
 };
 
@@ -81,14 +94,21 @@ export function compileStyleGuard(spec: StyleSpec): string {
   return parts.join("\n");
 }
 
-export function getPersona(formId: string): Persona {
-  const persona = PERSONAS[formId];
+/** Get persona by persona_id or form_id (form_id is cosmetic; persona_id governs prompt + memory + guardrails). */
+export function getPersona(personaOrFormId: string): Persona {
+  const persona = PERSONAS[personaOrFormId];
   if (!persona) {
-    throw new Error(`Unknown form_id: ${formId}. Valid forms: ${Object.keys(PERSONAS).join(", ")}`);
+    throw new Error(`Unknown persona/form_id: ${personaOrFormId}. Valid: ${Object.keys(PERSONAS).join(", ")}`);
   }
   return persona;
 }
 
+/** Persona IDs only (for switching and state). form_id "meepo" is an alias; use diegetic_meepo for campaign. */
+export function getAvailablePersonaIds(): string[] {
+  return ["meta_meepo", "diegetic_meepo", "xoblob"];
+}
+
+/** Form IDs for display/nickname (cosmetic). */
 export function getAvailableForms(): string[] {
-  return Object.keys(PERSONAS);
+  return ["meepo", "xoblob"];
 }

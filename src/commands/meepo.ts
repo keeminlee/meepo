@@ -1,5 +1,6 @@
-﻿import { SlashCommandBuilder, TextChannel } from "discord.js";
+import { SlashCommandBuilder, TextChannel } from "discord.js";
 import { getActiveMeepo, wakeMeepo, sleepMeepo, transformMeepo } from "../meepo/state.js";
+import { getActivePersonaId, getMindspace, setActivePersonaId } from "../meepo/personaState.js";
 import { getAvailableForms, getPersona } from "../personas/index.js";
 import { setBotNicknameForPersona } from "../meepo/nickname.js";
 import { autoJoinGeneralVoice } from "../meepo/autoJoinVoice.js";
@@ -26,6 +27,11 @@ import { getTodayAtNinePmEtUnixSeconds } from "../utils/timestamps.js";
 import { getNextSessionLabel } from "../sessions/sessionLabels.js";
 
 const meepoLog = log.withScope("meepo");
+
+function isDm(interaction: any): boolean {
+  const DM_ROLE_ID = process.env.DM_ROLE_ID || "";
+  return interaction.member?.roles?.cache?.has(DM_ROLE_ID) ?? false;
+}
 
 function getSessionLabelMap(sessionIds: string[]): Map<string, string | null> {
   const db = getDb();
@@ -187,6 +193,26 @@ export const meepo = {
             .setDescription("Optional persona seed (short).")
             .setRequired(false)
         )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("persona-set")
+        .setDescription("[DM-only] Switch Meepo between companion mode (meta) and in-character (diegetic).")
+        .addStringOption((opt) =>
+          opt
+            .setName("mode")
+            .setDescription("Companion (meta) or in-character (diegetic)")
+            .setRequired(true)
+            .addChoices(
+              { name: "Meta (companion mode)", value: "meta" },
+              { name: "Diegetic (in-character)", value: "diegetic" }
+            )
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("debug-persona")
+        .setDescription("[DM-only] Show active persona, mindspace, and last memory refs.")
     )
     .addSubcommand((sub) =>
       sub
@@ -475,6 +501,8 @@ export const meepo = {
         personaSeed: persona,
       });
 
+      setActivePersonaId(guildId, "meta_meepo");
+
       // Log system event (narrative secondary - state change)
       logSystemEvent({
         guildId,
@@ -503,6 +531,65 @@ export const meepo = {
           "Meepo awakens.\n" +
           "Bound channel: <#" + inst.channel_id + ">\n" +
           (inst.persona_seed ? ("Persona: " + inst.persona_seed) : "Persona: (none)"),
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (sub === "persona-set") {
+      if (!isDm(interaction)) {
+        await interaction.reply({ content: "Only the DM can switch persona.", ephemeral: true });
+        return;
+      }
+      const mode = interaction.options.getString("mode", true);
+      const personaId = mode === "meta" ? "meta_meepo" : "diegetic_meepo";
+
+      if (personaId === "diegetic_meepo") {
+        const { getActiveSessionId } = await import("../sessions/sessionRuntime.js");
+        if (!getActiveSessionId(guildId)) {
+          await interaction.reply({
+            content: "I don't feel anchored yet—start a session first.",
+            ephemeral: true,
+          });
+          return;
+        }
+      }
+
+      setActivePersonaId(guildId, personaId);
+      const diegetic = getPersona("diegetic_meepo");
+      const ack = personaId === "diegetic_meepo" ? diegetic.switchAckEnter : diegetic.switchAckExit;
+      await interaction.reply({
+        content: ack ?? (personaId === "meta_meepo" ? "Okay—back to companion mode." : "Okay—going in-character."),
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (sub === "debug-persona") {
+      if (!isDm(interaction)) {
+        await interaction.reply({ content: "Only the DM can use debug-persona.", ephemeral: true });
+        return;
+      }
+      const personaId = getActivePersonaId(guildId);
+      const mindspace = getMindspace(guildId, personaId);
+      const db = getDb();
+      const lastUsages = db.prepare(`
+        SELECT persona_id, mindspace, used_memories
+        FROM meep_usages
+        WHERE guild_id = ?
+        ORDER BY triggered_at_ms DESC
+        LIMIT 5
+      `).all(guildId) as { persona_id: string | null; mindspace: string | null; used_memories: string | null }[];
+      const refsPreview = lastUsages.map((u, i) => {
+        const refs = u.used_memories ? (JSON.parse(u.used_memories) as string[]) : [];
+        return `#${i + 1} persona=${u.persona_id ?? "n/a"} mindspace=${u.mindspace ?? "n/a"} refs=[${refs.slice(0, 3).join(", ")}${refs.length > 3 ? "…" : ""}]`;
+      }).join("\n");
+      await interaction.reply({
+        content:
+          "**Debug Persona**\n" +
+          "- active_persona_id: " + personaId + "\n" +
+          "- mindspace: " + (mindspace ?? "(no session)") + "\n" +
+          "- last 5 meep_usages:\n" + (refsPreview || "(none)"),
         ephemeral: true,
       });
       return;
@@ -547,14 +634,18 @@ export const meepo = {
         return;
       }
 
-      const persona = getPersona(inst.form_id);
+      const activePersonaId = getActivePersonaId(guildId);
+      const mindspace = getMindspace(guildId, activePersonaId);
+      const persona = getPersona(activePersonaId);
       await interaction.reply({
         content:
           "Meepo status:\n" +
           "- awake: yes\n" +
           "- bound channel: <#" + inst.channel_id + ">\n" +
-          "- current form: " + persona.displayName + " (" + inst.form_id + ")\n" +
-          "- persona: " + (inst.persona_seed ?? "(none)") + "\n" +
+          "- active persona: " + persona.displayName + " (" + activePersonaId + ")\n" +
+          "- mindspace: " + (mindspace ?? "(no session)") + "\n" +
+          "- form (cosmetic): " + inst.form_id + "\n" +
+          "- persona seed: " + (inst.persona_seed ?? "(none)") + "\n" +
           "- created_at_ms: " + inst.created_at_ms,
         ephemeral: true,
       });
@@ -573,11 +664,14 @@ export const meepo = {
       try {
         const persona = getPersona(character); // Validate form exists
         const result = transformMeepo(guildId, character);
-        
+
         if (!result.success) {
           await interaction.reply({ content: result.error ?? "Transform failed.", ephemeral: true });
           return;
         }
+
+        const personaIdForForm = character === "xoblob" ? "xoblob" : "diegetic_meepo";
+        setActivePersonaId(guildId, personaIdForForm);
 
         // Log system event (narrative primary)
         logSystemEvent({
