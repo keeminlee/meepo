@@ -11,6 +11,8 @@ export interface AbsorbInput {
   capBase: number;
   capPerMass: number;
   minCtxStrength: number;
+  ctxThresholdBase?: number;
+  ctxThresholdPerLogMass?: number;
   hillTau: number;
   hillSteepness: number;
   betaLex: number;
@@ -95,7 +97,11 @@ export function absorbSingletons(input: AbsorbInput): AbsorbOutput {
       const distanceScore = distanceScoreHill(distance, input.hillTau, input.hillSteepness);
       const lexical = scoreTokenOverlap(singleton.text, getLinkText(link));
       const strength = distanceScore * (1 + input.betaLex * lexical);
-      if (strength < input.minCtxStrength) continue;
+      const thresholdCtx =
+        typeof input.ctxThresholdBase === "number"
+          ? input.ctxThresholdBase + (input.ctxThresholdPerLogMass ?? 0) * Math.log(1 + Math.max(0, singleton.mass))
+          : input.minCtxStrength;
+      if (strength < thresholdCtx) continue;
 
       candidates.push({ singleton, link, strength, distance, lexical });
     }

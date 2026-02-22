@@ -10,6 +10,7 @@ export interface AnnealInput {
   betaLex: number;
   lambda: number;
   topKContrib: number;
+  ambientMassBoost?: boolean;
   includeContextText?: boolean;
   contextByLinkId?: Map<string, string[]>;
   tierThresholds?: { beat: number; event: number; scene: number };
@@ -82,6 +83,7 @@ export function annealLinks(input: AnnealInput): AnnealOutput {
   const neighborEdges: NeighborEdgeTrace[] = [];
   const massBoosts: number[] = [];
   const massBases: number[] = [];
+  const strengthLlValues: number[] = [];
 
   for (let i = 0; i < links.length; i++) {
     const candidates: Array<NeighborEdgeTrace> = [];
@@ -95,6 +97,7 @@ export function annealLinks(input: AnnealInput): AnnealOutput {
       const strengthLl = distStrength * (1 + input.betaLex * lexical);
       const contrib = strengthLl * massPrev[j];
       totalContrib += contrib;
+      strengthLlValues.push(strengthLl);
       candidates.push({
         from_link_id: links[j].id,
         to_link_id: links[i].id,
@@ -114,7 +117,7 @@ export function annealLinks(input: AnnealInput): AnnealOutput {
     const top = candidates.slice(0, input.topKContrib);
     neighborEdges.push(...top);
 
-    const boost = totalContrib * input.lambda;
+    const boost = input.ambientMassBoost ? totalContrib * input.lambda : 0;
     const base = massPrev[i];
     const nextMass = base + boost;
 
@@ -139,6 +142,7 @@ export function annealLinks(input: AnnealInput): AnnealOutput {
       neighbor_edges: neighborEdges.length,
     },
     stats: {
+      strength_ll: stats(strengthLlValues),
       mass_base: stats(massBases),
       mass_boost: stats(massBoosts),
       mass: stats(links.map((l) => l.mass ?? 0)),

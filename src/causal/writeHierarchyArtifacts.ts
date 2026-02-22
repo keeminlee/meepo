@@ -91,6 +91,7 @@ export function writeHierarchyArtifacts(input: {
           center_distance: c.center_distance,
           lexical_score: c.lexical_score,
           strength_bridge: c.strength_bridge,
+          threshold_link: c.threshold_link,
         }));
       writeTsv(path.join(linkDir, "pairs.tsv"), chosenPairs);
     }

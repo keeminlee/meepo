@@ -7,8 +7,8 @@
  * 
  * Core logic:
  *   Pass 1: Detect all causes in eligible PC lines with mass
- *   Pass 2: For each cause, find local DM effect candidates
- *   Pass 3: Mass-ordered one-to-one allocation (exclusive effects)
+ *   Pass 2: Build forward + backward local PC↔DM candidates
+ *   Pass 3: Global edge-driven one-to-one allocation (exclusive endpoints)
  *   Pass 4: Link↔Link neighborhood mass boosting
  *   Output: CausalLink[] with allocation traces (optional)
  */
@@ -23,7 +23,7 @@ import { isLineEligible } from "./eligibilityMask.js";
 import type { CausalLink, IntentDebugTrace, EligibilityMask } from "./types.js";
 import { isDmSpeaker } from "../ledger/scaffoldSpeaker.js";
 
-export const CAUSAL_KERNEL_VERSION = "ce-mass-v2";
+export const CAUSAL_KERNEL_VERSION = "ce-mass-v3";
 
 export interface KernelInput {
   sessionId: string;
@@ -42,6 +42,7 @@ export interface KernelInput {
   linkWindow?: number;
   linkBoostDamping?: number;
   requireClaimedNeighbors?: boolean;
+  ambientMassBoost?: boolean;
 }
 
 export interface KernelOutput {
@@ -61,6 +62,18 @@ export interface KernelEffect {
 interface ScoredCandidate {
   effectIndex: number;
   effectLineIndex: number;
+  distance: number;
+  distanceScore: number;
+  lexicalScore: number;
+  answerBoost: number;
+  strength_ce: number;
+  effectDetection: EffectDetection;
+}
+
+interface EdgeCandidate {
+  causeIndex: number;
+  effectIndex: number;
+  direction: "forward" | "backward";
   distance: number;
   distanceScore: number;
   lexicalScore: number;
@@ -94,6 +107,13 @@ function scoreTokenOverlap(text1: string, text2: string): number {
 
 function classifyLegacyStrength(mass: number): "strong" | "weak" {
   return mass >= 0.7 ? "strong" : "weak";
+}
+
+function computeLeafMass(text: string, speaker: "pc" | "dm"): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  const base = speaker === "pc" ? 0.22 : 0.18;
+  const lenBoost = Math.min(0.18, words * 0.01);
+  return Number((base + lenBoost).toFixed(4));
 }
 
 /**
@@ -155,11 +175,6 @@ function scoreCandidate(
     strength_ce,
     effectDetection,
   };
-}
-
-function thresholdForCauseMass(mass: number, strongMinScore: number, weakMinScore: number, minPairStrength?: number): number {
-  if (typeof minPairStrength === "number") return minPairStrength;
-  return mass >= 0.7 ? strongMinScore : weakMinScore;
 }
 
 function getLinkText(link: CausalLink): string {
@@ -232,6 +247,7 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
     linkWindow = LINK_WINDOW_DEFAULT,
     linkBoostDamping = LINK_BOOST_DAMPING_DEFAULT,
     requireClaimedNeighbors = true,
+    ambientMassBoost = false,
   } = input;
 
   const links: CausalLink[] = [];
@@ -244,7 +260,17 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
     actor: ActorLike;
     text: string;
     detection: CauseDetection;
+    detectionMass: number;
     mass: number;
+  }> = [];
+
+  const effectPool: Array<{
+    index: number;
+    anchor_index: number;
+    text: string;
+    effect_type: string;
+    mass: number;
+    detection: EffectDetection;
   }> = [];
 
   for (let i = 0; i < transcript.length; i++) {
@@ -264,7 +290,8 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
       actor,
       text: line.content,
       detection,
-      mass: detection.mass,
+      detectionMass: detection.mass,
+      mass: computeLeafMass(line.content, "pc"),
     });
   }
 
@@ -275,129 +302,160 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
     const detection = detectEffect(line.content);
     if (!detection.isEffect) continue;
 
+    const mass = computeLeafMass(line.content, "dm");
+
+    effectPool.push({
+      index: i,
+      anchor_index: line.line_index,
+      text: line.content,
+      effect_type: detection.effect_type,
+      mass,
+      detection,
+    });
+
     effects.push({
       anchor_index: line.line_index,
       text: line.content,
       effect_type: detection.effect_type,
-      mass: detection.mass,
+      mass,
     });
   }
 
-  // Track claimed effects
   const claimedEffects = new Set<number>();
+  const claimedCauses = new Set<number>();
 
-  interface CandidateWithDmDistance {
-    line: TranscriptEntry;
-    arrayIndex: number;
-    dmSpeakerDistance: number;
+  const effectByAnchor = new Map(effectPool.map((effect) => [effect.anchor_index, effect]));
+
+  const edgeByPair = new Map<string, EdgeCandidate>();
+  const addOrUpdateEdge = (edge: EdgeCandidate) => {
+    const key = `${edge.causeIndex}::${edge.effectIndex}`;
+    const existing = edgeByPair.get(key);
+    if (!existing) {
+      edgeByPair.set(key, edge);
+      return;
+    }
+    if (edge.strength_ce > existing.strength_ce) {
+      edgeByPair.set(key, edge);
+      return;
+    }
+    if (edge.strength_ce === existing.strength_ce && edge.distance < existing.distance) {
+      edgeByPair.set(key, edge);
+      return;
+    }
+    if (
+      edge.strength_ce === existing.strength_ce &&
+      edge.distance === existing.distance &&
+      edge.direction === "forward" &&
+      existing.direction === "backward"
+    ) {
+      edgeByPair.set(key, edge);
+    }
+  };
+
+  for (const cause of causes) {
+    const forwardEffects = effectPool
+      .filter((effect) => effect.anchor_index > cause.index)
+      .sort((a, b) => a.anchor_index - b.anchor_index)
+      .slice(0, kLocal);
+
+    for (const effect of forwardEffects) {
+      const distance = Math.max(1, effect.anchor_index - cause.index);
+      const base = scoreCandidate(
+        cause.text,
+        effect.text,
+        distance,
+        hillTau,
+        hillSteepness,
+        betaLex,
+        effect.detection,
+      );
+
+      addOrUpdateEdge({
+        causeIndex: cause.index,
+        effectIndex: effect.anchor_index,
+        direction: "forward",
+        distance,
+        distanceScore: base.distanceScore,
+        lexicalScore: base.lexicalScore,
+        answerBoost: base.answerBoost,
+        strength_ce: base.strength_ce,
+        effectDetection: effect.detection,
+      });
+    }
   }
 
-  // Single pass: causes by descending mass (deterministic ties by line index)
-  const sortedCauses = [...causes].sort((a, b) => {
-    if (b.mass !== a.mass) return b.mass - a.mass;
-    return a.index - b.index;
+  for (const effect of effectPool) {
+    const backwardCauses = causes
+      .filter((cause) => cause.index < effect.anchor_index)
+      .sort((a, b) => b.index - a.index)
+      .slice(0, kLocal);
+
+    for (const cause of backwardCauses) {
+      const distance = Math.max(1, effect.anchor_index - cause.index);
+      const base = scoreCandidate(
+        cause.text,
+        effect.text,
+        distance,
+        hillTau,
+        hillSteepness,
+        betaLex,
+        effect.detection,
+      );
+
+      const rollPromptBoost = effect.detection.effect_type === "roll" ? 0.1 : 0;
+      addOrUpdateEdge({
+        causeIndex: cause.index,
+        effectIndex: effect.anchor_index,
+        direction: "backward",
+        distance,
+        distanceScore: base.distanceScore,
+        lexicalScore: base.lexicalScore,
+        answerBoost: base.answerBoost + rollPromptBoost,
+        strength_ce: base.strength_ce + rollPromptBoost,
+        effectDetection: effect.detection,
+      });
+    }
+  }
+
+  const edges = Array.from(edgeByPair.values()).sort((a, b) => {
+    if (b.strength_ce !== a.strength_ce) return b.strength_ce - a.strength_ce;
+    if (a.distance !== b.distance) return a.distance - b.distance;
+    if (a.causeIndex !== b.causeIndex) return a.causeIndex - b.causeIndex;
+    if (a.effectIndex !== b.effectIndex) return a.effectIndex - b.effectIndex;
+    if (a.direction !== b.direction) return a.direction === "forward" ? -1 : 1;
+    return 0;
   });
 
+  const chosenByCause = new Map<number, EdgeCandidate>();
+  for (const edge of edges) {
+    if (claimedCauses.has(edge.causeIndex)) continue;
+    if (claimedEffects.has(edge.effectIndex)) continue;
+    claimedCauses.add(edge.causeIndex);
+    claimedEffects.add(edge.effectIndex);
+    chosenByCause.set(edge.causeIndex, edge);
+  }
+
+  const candidatesByCause = new Map<number, EdgeCandidate[]>();
+  for (const edge of edges) {
+    const arr = candidatesByCause.get(edge.causeIndex) ?? [];
+    arr.push(edge);
+    candidatesByCause.set(edge.causeIndex, arr);
+  }
+
+  const sortedCauses = [...causes].sort((a, b) => a.index - b.index);
   for (const cause of sortedCauses) {
-    // Find local effect candidates (by DM speaker distance, not absolute line distance)
-    const candidates: CandidateWithDmDistance[] = [];
-    let dmLineCount = 0;
-    
-    for (let i = cause.index + 1; i < transcript.length && dmLineCount < kLocal; i++) {
-      if (!isLineEligible(eligibilityMask, i)) continue;
-      if (!isDmSpeaker(transcript[i].author_name, dmSpeaker)) continue;
-      dmLineCount++;
-      candidates.push({
-        line: transcript[i],
-        arrayIndex: i,
-        dmSpeakerDistance: dmLineCount,
-      });
-    }
+    const chosen = chosenByCause.get(cause.index);
+    const legacyStrength = classifyLegacyStrength(cause.detectionMass);
 
-    if (candidates.length === 0) {
-      const legacyStrength = classifyLegacyStrength(cause.mass);
-      const spanStart = cause.index;
-      const spanEnd = cause.index;
-      links.push({
-        id: randomUUID(),
-        session_id: sessionId,
-        node_kind: "singleton",
-        cause_text: cause.text,
-        cause_type: cause.detection.cause_type,
-        cause_anchor_index: cause.index,
-        cause_mass: cause.mass,
-        effect_text: null,
-        effect_type: "none",
-        effect_anchor_index: null,
-        effect_mass: 0,
-        level: 1,
-        members: undefined,
-        strength_bridge: 0,
-        strength_internal: 0,
-        strength: null,
-        strength_ce: null,
-        link_mass: cause.mass,
-        mass_boost: 0,
-        span_start_index: spanStart,
-        span_end_index: spanEnd,
-        center_index: cause.index,
-        mass: cause.mass,
-        actor: cause.actor.id,
-        intent_text: cause.text,
-        intent_type: cause.detection.cause_type,
-        intent_strength: legacyStrength,
-        intent_anchor_index: cause.index,
-        consequence_text: null,
-        consequence_type: "none",
-        consequence_anchor_index: null,
-        distance: null,
-        score: null,
-        claimed: false,
-        created_at_ms: Date.now(),
-      });
+    if (chosen) {
+      const effect = effectByAnchor.get(chosen.effectIndex);
+      if (!effect) continue;
 
-      if (emitTraces) {
-        traces.push({
-          anchor_index: cause.index,
-          cause_anchor_index: cause.index,
-          strength: legacyStrength,
-          intent_kind: cause.detection.cause_type,
-          cause_kind: cause.detection.cause_type,
-          cause_mass: cause.mass,
-          eligible: true,
-          candidates: [],
-          claim_reason: "no_candidate",
-        });
-      }
-      continue;
-    }
-
-    // Score candidates using DM speaker distance
-    const scored = candidates.map(({ line: cLine, arrayIndex, dmSpeakerDistance }) => {
-      const effectDetection = detectEffect(cLine.content);
-      const base = scoreCandidate(cause.text, cLine.content, dmSpeakerDistance, hillTau, hillSteepness, betaLex, effectDetection);
-      return {
-        ...base,
-        effectIndex: arrayIndex,
-        effectLineIndex: cLine.line_index,
-      };
-    });
-
-    const threshold = thresholdForCauseMass(cause.mass, strongMinScore, weakMinScore, minPairStrength);
-
-    // Find best unclaimed effect (strict one-to-one)
-    const best = scored
-      .filter((s) => !claimedEffects.has(s.effectLineIndex))
-      .sort((a, b) => b.strength_ce - a.strength_ce)[0];
-
-    if (best && best.strength_ce >= threshold) {
-      claimedEffects.add(best.effectLineIndex);
-      const effectLine = transcript[best.effectIndex];
-      const effectMass = best.effectDetection.isEffect ? best.effectDetection.mass : 0;
-      const legacyStrength = classifyLegacyStrength(cause.mass);
-      const linkMass = cause.mass + effectMass;
-      const spanStart = Math.min(cause.index, effectLine.line_index);
-      const spanEnd = Math.max(cause.index, effectLine.line_index);
+      const strengthBridge = chosen.strength_ce;
+      const strengthInternal = strengthBridge;
+      const massBase = cause.mass + effect.mass + strengthInternal;
+      const spanStart = Math.min(cause.index, effect.anchor_index);
+      const spanEnd = Math.max(cause.index, effect.anchor_index);
 
       links.push({
         id: randomUUID(),
@@ -407,37 +465,39 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
         cause_type: cause.detection.cause_type,
         cause_anchor_index: cause.index,
         cause_mass: cause.mass,
-        effect_text: effectLine.content,
-        effect_type: best.effectDetection.isEffect ? best.effectDetection.effect_type : "none",
-        effect_anchor_index: effectLine.line_index,
-        effect_mass: effectMass,
+        effect_text: effect.text,
+        effect_type: effect.effect_type as EffectDetection["effect_type"],
+        effect_anchor_index: effect.anchor_index,
+        effect_mass: effect.mass,
         level: 1,
         members: undefined,
-        strength_bridge: best.strength_ce,
-        strength_internal: best.strength_ce,
-        strength: best.strength_ce,
-        strength_ce: best.strength_ce,
-        link_mass: linkMass,
+        strength_bridge: strengthBridge,
+        strength_internal: strengthInternal,
+        strength: strengthInternal,
+        strength_ce: strengthBridge,
+        mass_base: massBase,
+        link_mass: massBase,
         mass_boost: 0,
         span_start_index: spanStart,
         span_end_index: spanEnd,
-        center_index: (cause.index + effectLine.line_index) / 2,
-        mass: linkMass,
+        center_index: (cause.index + effect.anchor_index) / 2,
+        mass: massBase,
         actor: cause.actor.id,
         intent_text: cause.text,
         intent_type: cause.detection.cause_type,
         intent_strength: legacyStrength,
         intent_anchor_index: cause.index,
-        consequence_text: effectLine.content,
-        consequence_type: best.effectDetection.isEffect ? best.effectDetection.effect_type : "none",
-        consequence_anchor_index: effectLine.line_index,
-        distance: best.distance,
-        score: best.strength_ce,
+        consequence_text: effect.text,
+        consequence_type: effect.effect_type as CausalLink["consequence_type"],
+        consequence_anchor_index: effect.anchor_index,
+        distance: chosen.distance,
+        score: strengthBridge,
         claimed: true,
         created_at_ms: Date.now(),
       });
 
       if (emitTraces) {
+        const scored = candidatesByCause.get(cause.index) ?? [];
         traces.push({
           anchor_index: cause.index,
           cause_anchor_index: cause.index,
@@ -447,9 +507,9 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
           cause_mass: cause.mass,
           eligible: true,
           candidates: scored.map((s) => ({
-            consequence_index: transcript[s.effectIndex].line_index,
-            effect_index: transcript[s.effectIndex].line_index,
-            speaker: transcript[s.effectIndex].author_name,
+            consequence_index: s.effectIndex,
+            effect_index: s.effectIndex,
+            speaker: "dm",
             eligible: true,
             distance: s.distance,
             distance_score: s.distanceScore,
@@ -459,96 +519,102 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
             pronoun_boost: 0,
             final_score: s.strength_ce,
             strength_ce: s.strength_ce,
-            effect_mass: s.effectDetection.isEffect ? s.effectDetection.mass : 0,
+            effect_mass: effectByAnchor.get(s.effectIndex)?.mass ?? 0,
           })),
-          chosen_consequence_index: transcript[best.effectIndex].line_index,
-          chosen_effect_index: transcript[best.effectIndex].line_index,
-          chosen_score: best.strength_ce,
-          chosen_strength: best.strength_ce,
-          claim_reason: "mass_ordered_one_to_one",
+          chosen_consequence_index: chosen.effectIndex,
+          chosen_effect_index: chosen.effectIndex,
+          chosen_score: chosen.strength_ce,
+          chosen_strength: chosen.strength_ce,
+          claim_reason: "edge_greedy_one_to_one",
         });
       }
-    } else {
-      const legacyStrength = classifyLegacyStrength(cause.mass);
-      const spanStart = cause.index;
-      const spanEnd = cause.index;
-      links.push({
-        id: randomUUID(),
-        session_id: sessionId,
-        node_kind: "singleton",
-        cause_text: cause.text,
-        cause_type: cause.detection.cause_type,
-        cause_anchor_index: cause.index,
-        cause_mass: cause.mass,
-        effect_text: null,
-        effect_type: "none",
-        effect_anchor_index: null,
-        effect_mass: 0,
-        level: 1,
-        members: undefined,
-        strength_bridge: 0,
-        strength_internal: 0,
-        strength: null,
-        strength_ce: null,
-        link_mass: cause.mass,
-        mass_boost: 0,
-        span_start_index: spanStart,
-        span_end_index: spanEnd,
-        center_index: cause.index,
-        mass: cause.mass,
-        actor: cause.actor.id,
-        intent_text: cause.text,
-        intent_type: cause.detection.cause_type,
-        intent_strength: legacyStrength,
-        intent_anchor_index: cause.index,
-        consequence_text: null,
-        consequence_type: "none",
-        consequence_anchor_index: null,
-        distance: null,
-        score: null,
-        claimed: false,
-        created_at_ms: Date.now(),
-      });
 
-      if (emitTraces) {
-        traces.push({
-          anchor_index: cause.index,
-          cause_anchor_index: cause.index,
-          strength: legacyStrength,
-          intent_kind: cause.detection.cause_type,
-          cause_kind: cause.detection.cause_type,
-          cause_mass: cause.mass,
+      continue;
+    }
+
+    const massBase = cause.mass;
+    const spanStart = cause.index;
+    const spanEnd = cause.index;
+    links.push({
+      id: randomUUID(),
+      session_id: sessionId,
+      node_kind: "singleton",
+      cause_text: cause.text,
+      cause_type: cause.detection.cause_type,
+      cause_anchor_index: cause.index,
+      cause_mass: cause.mass,
+      effect_text: null,
+      effect_type: "none",
+      effect_anchor_index: null,
+      effect_mass: 0,
+      level: 1,
+      members: undefined,
+      strength_bridge: 0,
+      strength_internal: 0,
+      strength: 0,
+      strength_ce: null,
+      mass_base: massBase,
+      link_mass: massBase,
+      mass_boost: 0,
+      span_start_index: spanStart,
+      span_end_index: spanEnd,
+      center_index: cause.index,
+      mass: massBase,
+      actor: cause.actor.id,
+      intent_text: cause.text,
+      intent_type: cause.detection.cause_type,
+      intent_strength: legacyStrength,
+      intent_anchor_index: cause.index,
+      consequence_text: null,
+      consequence_type: "none",
+      consequence_anchor_index: null,
+      distance: null,
+      score: null,
+      claimed: false,
+      created_at_ms: Date.now(),
+    });
+
+    if (emitTraces) {
+      const scored = candidatesByCause.get(cause.index) ?? [];
+      traces.push({
+        anchor_index: cause.index,
+        cause_anchor_index: cause.index,
+        strength: legacyStrength,
+        intent_kind: cause.detection.cause_type,
+        cause_kind: cause.detection.cause_type,
+        cause_mass: cause.mass,
+        eligible: true,
+        candidates: scored.map((s) => ({
+          consequence_index: s.effectIndex,
+          effect_index: s.effectIndex,
+          speaker: "dm",
           eligible: true,
-          candidates: scored.map((s) => ({
-            consequence_index: transcript[s.effectIndex].line_index,
-            effect_index: transcript[s.effectIndex].line_index,
-            speaker: transcript[s.effectIndex].author_name,
-            eligible: true,
-            distance: s.distance,
-            distance_score: s.distanceScore,
-            lexical_score: s.lexicalScore,
-            answer_boost: s.answerBoost,
-            commentary_penalty: 0,
-            pronoun_boost: 0,
-            final_score: s.strength_ce,
-            strength_ce: s.strength_ce,
-            effect_mass: s.effectDetection.isEffect ? s.effectDetection.mass : 0,
-          })),
-          claim_reason: "score_threshold",
-        });
-      }
+          distance: s.distance,
+          distance_score: s.distanceScore,
+          lexical_score: s.lexicalScore,
+          answer_boost: s.answerBoost,
+          commentary_penalty: 0,
+          pronoun_boost: 0,
+          final_score: s.strength_ce,
+          strength_ce: s.strength_ce,
+          effect_mass: effectByAnchor.get(s.effectIndex)?.mass ?? 0,
+        })),
+        claim_reason: scored.length > 0 ? "mass_ordered_one_to_one" : "no_candidate",
+      });
     }
   }
 
-  boostLinkMasses(
-    links,
-    hillTau,
-    hillSteepness,
-    betaLexLL,
-    linkWindow,
-    linkBoostDamping,
-    requireClaimedNeighbors,
-  );
+  if (ambientMassBoost) {
+    boostLinkMasses(
+      links,
+      hillTau,
+      hillSteepness,
+      betaLexLL,
+      linkWindow,
+      linkBoostDamping,
+      requireClaimedNeighbors,
+    );
+  }
 
   const unclaimedEffects = effects.filter((e) => !claimedEffects.has(e.anchor_index));
 

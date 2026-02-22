@@ -184,6 +184,6 @@ export interface IntentDebugTrace {
   chosen_effect_index?: number;
   chosen_score?: number;
   chosen_strength?: number;
-  claim_reason?: "strong_precedence" | "score_threshold" | "no_candidate" | "mass_ordered_one_to_one";
+  claim_reason?: "strong_precedence" | "score_threshold" | "no_candidate" | "mass_ordered_one_to_one" | "edge_greedy_one_to_one";
 }
 

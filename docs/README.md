@@ -11,6 +11,7 @@ This index is the entry point for project docs. It separates active references f
 
 - [OVERLAY.md](OVERLAY.md) — OBS overlay architecture and setup
 - [MISSIONS_V0.md](MISSIONS_V0.md) — mission economy design and command behavior
+- [CAUSAL_CORE_PHYSICS.md](CAUSAL_CORE_PHYSICS.md) — mass vs strength contract, rounds, and convergence behavior
 - [../LOGGING_REFERENCE.md](../LOGGING_REFERENCE.md) — logging scopes and operations
 - [../causal-debug.md](../causal-debug.md) — practical causal debug workflow
 

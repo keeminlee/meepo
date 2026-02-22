@@ -222,6 +222,7 @@ function recomputeFromRound1Links(input: {
     betaLex: input.params.anneal.betaLex,
     lambda: input.params.anneal.lambda,
     topKContrib: input.params.anneal.topKContrib,
+    ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
   });
 
   allRounds.push({
@@ -296,6 +297,7 @@ function recomputeFromRound1Links(input: {
       betaLex: input.params.anneal.betaLex,
       lambda: input.params.anneal.lambda,
       topKContrib: input.params.anneal.topKContrib,
+      ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
     });
 
     propagateInternalStrength(anneal2.links, prevLevelMap);
@@ -373,6 +375,7 @@ function recomputeFromRound1Links(input: {
       betaLex: input.params.anneal.betaLex,
       lambda: input.params.anneal.lambda,
       topKContrib: input.params.anneal.topKContrib,
+      ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
     });
 
     propagateInternalStrength(anneal3.links, prevLevelMap);
