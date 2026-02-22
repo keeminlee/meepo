@@ -1,5 +1,7 @@
 # Meepo Bot - Current State (February 15, 2026)
 
+For documentation navigation, start at [README.md](README.md).
+
 **Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress + NAL Copilot enhancements  
 **Last Updated:** February 15, 2026
 

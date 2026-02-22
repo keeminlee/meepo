@@ -15,6 +15,18 @@ function getSpan(link: CausalLink): { start: number; end: number } {
   return { start, end };
 }
 
+function fmtCenter(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+
+function fmtKind(node: CausalLink): string {
+  if (node.node_kind) return ` ${node.node_kind}`;
+  if ((node.level ?? 1) >= 2 && Array.isArray(node.members) && node.members.length === 2) return " composite";
+  const hasEffect = typeof (node.effect_anchor_index ?? node.consequence_anchor_index) === "number";
+  return hasEffect && node.claimed ? " link" : " singleton";
+}
+
 type FilterMode = "composites_only" | "all_nodes";
 
 function getNodeMap(nodes: CausalLink[], fullNodeMap?: Map<string, CausalLink>): Map<string, CausalLink> {
@@ -64,13 +76,13 @@ function renderExpandedNode(params: {
   const mass = node.mass ?? node.link_mass ?? node.mass_base ?? 0;
   const strengthInternal = node.strength_internal ?? node.strength_bridge ?? node.strength_ce ?? node.score ?? 0;
   const span = getSpan(node);
-  const center = node.center_index ?? Math.round((span.start + span.end) / 2);
+  const center = node.center_index ?? (span.start + span.end) / 2;
 
-  lines.push(`${indent}- [L${level} m=${mass.toFixed(2)} s=${strengthInternal.toFixed(2)} span L${span.start}–L${span.end} center=L${center}]`);
+  lines.push(`${indent}- [L${level}${fmtKind(node)} m=${mass.toFixed(2)} s=${strengthInternal.toFixed(2)} span L${span.start}–L${span.end} center=L${fmtCenter(center)}]`);
 
   if (isComposite(node) && typeof node.join_center_distance === "number" && typeof node.join_lexical_score === "number") {
     lines.push(
-      `${indent}  - join: dCenter=${node.join_center_distance.toFixed(0)} lex=${node.join_lexical_score.toFixed(2)} bridge=${(node.strength_bridge ?? 0).toFixed(2)}`,
+      `${indent}  - join: dCenter=${fmtCenter(node.join_center_distance)} lex=${node.join_lexical_score.toFixed(2)} bridge=${(node.strength_bridge ?? 0).toFixed(2)}`,
     );
   }
 

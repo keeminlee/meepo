@@ -1,5 +1,6 @@
 import { distanceScoreHill } from "./textFeatures.js";
 import type { CausalLink } from "./types.js";
+import { inferNodeKind } from "./nodeKind.js";
 
 export type LinkLinkParams = {
   kLocalLinks: number;
@@ -45,7 +46,7 @@ function getCenterIndex(link: CausalLink): number {
   if (typeof link.center_index === "number") return link.center_index;
   const cause = link.cause_anchor_index ?? link.intent_anchor_index;
   const effect = link.effect_anchor_index ?? link.consequence_anchor_index;
-  if (typeof effect === "number") return Math.round((cause + effect) / 2);
+  if (typeof effect === "number") return (cause + effect) / 2;
   return cause;
 }
 
@@ -73,11 +74,32 @@ function ensureStrengthInternal(link: CausalLink): number {
   return 0;
 }
 
+function getNodeMass(link: CausalLink): number {
+  return link.mass ?? link.link_mass ?? link.mass_base ?? link.cause_mass ?? 0;
+}
+
+function computeNextLevel(left: CausalLink, right: CausalLink): 1 | 2 | 3 {
+  const leftLevel = (left.level ?? 1) as 1 | 2 | 3;
+  const rightLevel = (right.level ?? 1) as 1 | 2 | 3;
+  const baseLevel = Math.max(leftLevel, rightLevel) as 1 | 2 | 3;
+
+  const leftKind = inferNodeKind(left);
+  const rightKind = inferNodeKind(right);
+  const shouldPromote = leftKind !== "singleton" && rightKind !== "singleton";
+
+  if (!shouldPromote) {
+    return baseLevel;
+  }
+
+  return Math.min(3, baseLevel + 1) as 1 | 2 | 3;
+}
+
 function cloneForNextLevel(link: CausalLink, level: 1 | 2 | 3): CausalLink {
   const strengthInternal = ensureStrengthInternal(link);
   return {
     ...link,
     level,
+    node_kind: inferNodeKind(link),
     strength_internal: strengthInternal,
     strength_bridge: link.strength_bridge ?? link.strength_ce ?? link.score ?? 0,
     span_start_index: getSpanStart(link),
@@ -152,17 +174,21 @@ export function linkLinksKernel(input: {
     const left = nodes[candidate.leftIndex];
     const right = nodes[candidate.rightIndex];
 
-    const nextLevel = ((left.level ?? 1) + 1) as 2 | 3;
+    const nextLevel = computeNextLevel(left, right);
     const spanStart = Math.min(getSpanStart(left), getSpanStart(right));
     const spanEnd = Math.max(getSpanEnd(left), getSpanEnd(right));
-    const center = Math.round((getCenterIndex(left) + getCenterIndex(right)) / 2);
+    const center = (getCenterIndex(left) + getCenterIndex(right)) / 2;
     const leftText = getLinkText(left);
     const rightText = getLinkText(right);
+    const leftMass = getNodeMass(left);
+    const rightMass = getNodeMass(right);
+    const combinedMass = leftMass + rightMass;
 
     const composite: CausalLink = {
       ...left,
       id: `${left.id}+${right.id}`,
       session_id: input.sessionId,
+      node_kind: "composite",
       cause_text: leftText,
       effect_text: rightText,
       level: nextLevel,
@@ -174,9 +200,9 @@ export function linkLinksKernel(input: {
       span_start_index: spanStart,
       span_end_index: spanEnd,
       center_index: center,
-      mass_base: left.mass ?? left.link_mass ?? left.mass_base ?? 0,
-      mass: left.mass ?? left.link_mass ?? left.mass_base ?? 0,
-      link_mass: left.mass ?? left.link_mass ?? left.mass_base ?? 0,
+      mass_base: combinedMass,
+      mass: combinedMass,
+      link_mass: combinedMass,
       mass_boost: 0,
       intent_text: leftText,
       consequence_text: rightText,

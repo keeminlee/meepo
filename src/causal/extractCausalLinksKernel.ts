@@ -171,7 +171,7 @@ function getLinkText(link: CausalLink): string {
 function getCenterIndex(link: CausalLink): number {
   const cause = link.cause_anchor_index ?? link.intent_anchor_index;
   const effect = link.effect_anchor_index ?? link.consequence_anchor_index;
-  if (typeof effect === "number") return Math.round((cause + effect) / 2);
+  if (typeof effect === "number") return (cause + effect) / 2;
   return cause;
 }
 
@@ -321,6 +321,7 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
       links.push({
         id: randomUUID(),
         session_id: sessionId,
+        node_kind: "singleton",
         cause_text: cause.text,
         cause_type: cause.detection.cause_type,
         cause_anchor_index: cause.index,
@@ -401,6 +402,7 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
       links.push({
         id: randomUUID(),
         session_id: sessionId,
+        node_kind: "link",
         cause_text: cause.text,
         cause_type: cause.detection.cause_type,
         cause_anchor_index: cause.index,
@@ -419,7 +421,7 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
         mass_boost: 0,
         span_start_index: spanStart,
         span_end_index: spanEnd,
-        center_index: Math.round((cause.index + effectLine.line_index) / 2),
+        center_index: (cause.index + effectLine.line_index) / 2,
         mass: linkMass,
         actor: cause.actor.id,
         intent_text: cause.text,
@@ -473,6 +475,7 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
       links.push({
         id: randomUUID(),
         session_id: sessionId,
+        node_kind: "singleton",
         cause_text: cause.text,
         cause_type: cause.detection.cause_type,
         cause_anchor_index: cause.index,

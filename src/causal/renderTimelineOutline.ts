@@ -4,13 +4,27 @@ import type { CausalLink } from "./types.js";
 type SpanItem = {
   id: string;
   level: number;
+  kind: string;
   start: number;
   end: number;
   center: number;
   mass: number;
   strength: number;
   parent_id: string | null;
+  absorbed_singleton_anchors: number[];
 };
+
+function fmtCenter(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+
+function inferKind(node: CausalLink): string {
+  if (node.node_kind) return node.node_kind;
+  if ((node.level ?? 1) >= 2 && Array.isArray(node.members) && node.members.length === 2) return "composite";
+  const hasEffect = typeof (node.effect_anchor_index ?? node.consequence_anchor_index) === "number";
+  return hasEffect && node.claimed ? "link" : "singleton";
+}
 
 function getSpan(link: CausalLink): { start: number; end: number } {
   const start = link.span_start_index ?? link.cause_anchor_index ?? link.intent_anchor_index ?? 0;
@@ -49,15 +63,51 @@ export function renderTimelineOutline(input: {
   }
   const renderNodes = Array.from(relevantNodes.values());
 
+  const singletonAnchorsByNodeId = new Map<string, number[]>();
+  const collectSingletonAnchors = (node: CausalLink, visiting: Set<string>): number[] => {
+    const cached = singletonAnchorsByNodeId.get(node.id);
+    if (cached) return cached;
+    if (visiting.has(node.id)) return [];
+    visiting.add(node.id);
+
+    const kind = inferKind(node);
+    if (kind === "singleton") {
+      const anchor = node.cause_anchor_index ?? node.intent_anchor_index ?? node.span_start_index;
+      const anchors = typeof anchor === "number" ? [anchor] : [];
+      singletonAnchorsByNodeId.set(node.id, anchors);
+      visiting.delete(node.id);
+      return anchors;
+    }
+
+    if (!node.members || node.members.length !== 2) {
+      singletonAnchorsByNodeId.set(node.id, []);
+      visiting.delete(node.id);
+      return [];
+    }
+
+    const anchors = new Set<number>();
+    for (const childId of node.members) {
+      const child = nodeById.get(childId);
+      if (!child) continue;
+      for (const value of collectSingletonAnchors(child, visiting)) {
+        anchors.add(value);
+      }
+    }
+
+    const resolved = Array.from(anchors).sort((a, b) => a - b);
+    singletonAnchorsByNodeId.set(node.id, resolved);
+    visiting.delete(node.id);
+    return resolved;
+  };
+
   const parentById = new Map<string, string | null>();
   for (const node of renderNodes) {
-    if ((node.level ?? 1) < 2 || !node.members || node.members.length !== 2) continue;
-    const parentLevel = node.level ?? 1;
+    if (!node.members || node.members.length !== 2) continue;
+    const parentSpan = getSpan(node);
+    const parentLen = parentSpan.end - parentSpan.start;
     for (const memberId of node.members) {
       const child = nodeById.get(memberId);
       if (!child) continue;
-      const childLevel = child.level ?? 1;
-      if (childLevel >= parentLevel) continue;
 
       const currentParentId = parentById.get(memberId);
       if (!currentParentId) {
@@ -71,8 +121,9 @@ export function renderTimelineOutline(input: {
         continue;
       }
 
-      const currentLevel = currentParent.level ?? 1;
-      if (parentLevel < currentLevel) {
+      const currentSpan = getSpan(currentParent);
+      const currentLen = currentSpan.end - currentSpan.start;
+      if (parentLen < currentLen) {
         parentById.set(memberId, node.id);
       }
     }
@@ -83,23 +134,27 @@ export function renderTimelineOutline(input: {
       const level = node.level ?? 1;
       if (level >= 2) return Array.isArray(node.members) && node.members.length === 2;
       const hasEffect = typeof (node.effect_anchor_index ?? node.consequence_anchor_index) === "number";
-      return level === 1 && hasEffect;
+      const isCompositeMember = parentById.has(node.id);
+      return level === 1 && (hasEffect || isCompositeMember);
     })
     .map((node) => {
       const span = getSpan(node);
       const level = node.level ?? 1;
-      const center = node.center_index ?? Math.round((span.start + span.end) / 2);
+      const center = node.center_index ?? (span.start + span.end) / 2;
       const mass = node.mass ?? node.link_mass ?? node.mass_base ?? 0;
       const strength = node.strength_internal ?? node.strength_bridge ?? node.strength_ce ?? node.score ?? 0;
       return {
         id: node.id,
         level,
+        kind: inferKind(node),
         start: span.start,
         end: span.end,
         center,
         mass,
         strength,
         parent_id: parentById.get(node.id) ?? null,
+        absorbed_singleton_anchors:
+          inferKind(node) === "composite" ? collectSingletonAnchors(node, new Set<string>()) : [],
       };
     })
     .sort((a, b) => {
@@ -177,8 +232,12 @@ export function renderTimelineOutline(input: {
     for (const span of opening) {
       const indentDepth = Math.max(countActiveAncestors(span), countHigherActiveLevels(span.level));
       const indent = "  ".repeat(indentDepth);
+      const singletonDebug =
+        span.absorbed_singleton_anchors.length > 0
+          ? ` absorbed_singletons=[${span.absorbed_singleton_anchors.map((line) => `L${line}`).join(", ")}]`
+          : "";
       lines.push(
-        `${indent}- [L${span.level} m=${span.mass.toFixed(2)} s=${span.strength.toFixed(2)} span L${span.start}–L${span.end} center=L${span.center}]`,
+        `${indent}- [L${span.level} ${span.kind} m=${span.mass.toFixed(2)} s=${span.strength.toFixed(2)} span L${span.start}–L${span.end} center=L${fmtCenter(span.center)}${singletonDebug}]`,
       );
       active.push(span);
       activeById.add(span.id);

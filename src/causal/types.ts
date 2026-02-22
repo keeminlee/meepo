@@ -84,6 +84,7 @@ export interface CausalLoop {
 export interface CausalLink {
   id: string;
   session_id: string;
+  node_kind?: "link" | "singleton" | "composite";
   cause_text?: string;
   cause_type?: CauseType;
   cause_anchor_index?: number;
