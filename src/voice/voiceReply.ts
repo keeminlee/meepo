@@ -38,6 +38,8 @@ import { buildMemoryContext } from "../recall/buildMemoryContext.js";
 import { getTranscriptLines } from "../ledger/transcripts.js";
 import { getDb } from "../db.js";
 import { randomUUID } from "node:crypto";
+import { recordMeepoInteraction, trimToSnippet, classifyTrigger } from "../ledger/meepoInteractions.js";
+import { buildTranscript } from "../ledger/transcripts.js";
 
 const voiceReplyLog = log.withScope("voice-reply");
 const DEBUG_VOICE = process.env.DEBUG_VOICE === "true";
@@ -55,19 +57,24 @@ const guildLastVoiceReply = new Map<string, number>();
  * @param utterance The transcribed voice input
  * @returns true if reply was generated and queued, false if preconditions failed
  */
-export async function respondToVoiceUtterance({
-  guildId,
-  channelId,
-  speakerId,
-  speakerName,
-  utterance,
-}: {
-  guildId: string;
-  channelId: string;
-  speakerId: string;
-  speakerName: string;
-  utterance: string;
-}): Promise<boolean> {
+export async function respondToVoiceUtterance(
+  opts: {
+    guildId: string;
+    channelId: string;
+    speakerId: string;
+    speakerName: string;
+    utterance: string;
+    /** When set, text replies (reply_mode=text or replyViaTextOnly) post to this channel (bound text channel). */
+    textChannelId?: string;
+    /** When true, skip TTS and post response as text only (Tier S/A: latched but not addressed). */
+    replyViaTextOnly?: boolean;
+    /** Tier S (direct) or A (mention) for meepo_interactions. */
+    tier?: "S" | "A";
+    /** Trigger type for meepo_interactions. */
+    trigger?: "wake_phrase" | "name_mention" | "mention";
+  }
+): Promise<boolean> {
+  const { guildId, channelId, speakerId, speakerName, utterance, textChannelId, replyViaTextOnly, tier, trigger } = opts;
   // Precondition 1: Meepo must be awake
   const active = getActiveMeepo(guildId);
   if (!active) {
@@ -244,6 +251,9 @@ export async function respondToVoiceUtterance({
       hasVoiceContext: hasVoice,
       partyMemory,
       convoTail: tailBlock || undefined,
+      guildId,
+      sessionId: activeSession?.session_id ?? null,
+      speakerId,
     });
 
     voiceReplyLog.debug(
@@ -295,6 +305,38 @@ export async function respondToVoiceUtterance({
       Date.now()
     );
 
+    // Tier S/A: record interaction for retrieval (voice: use session + line range for snippet resolution)
+    const resolvedTrigger = tier && trigger ? classifyTrigger(utterance, trigger) : trigger;
+    if (tier && resolvedTrigger) {
+      let startLineIndex: number | null = null;
+      let endLineIndex: number | null = null;
+      if (activeSession?.session_id) {
+        try {
+          const transcript = buildTranscript(activeSession.session_id, true);
+          const lastLine = transcript.length - 1;
+          if (lastLine >= 0) {
+            startLineIndex = lastLine;
+            endLineIndex = lastLine;
+          }
+        } catch {
+          // No transcript yet; snippet will fallback
+        }
+      }
+      recordMeepoInteraction({
+        guildId,
+        sessionId: activeSession?.session_id ?? null,
+        personaId: promptResult.personaId,
+        tier,
+        trigger: resolvedTrigger,
+        speakerId,
+        startLineIndex,
+        endLineIndex,
+        meta: {
+          voice_reply_content_snippet: trimToSnippet(responseText),
+        },
+      });
+    }
+
     // Layer 0: Log Meepo's response after LLM call
     if (activeSession) {
       logConvoTurn({
@@ -312,20 +354,22 @@ export async function respondToVoiceUtterance({
       voiceReplyLog.debug(`LLM response: "${responseText.substring(0, 50)}..."`);
     }
 
-    // Check Meepo's reply mode (voice or text)
-    if (active.reply_mode === "text") {
-      // Send text reply instead of voice
+    // Tier S/A: latched but not addressed → reply via text only
+    const sendAsText = replyViaTextOnly ?? active.reply_mode === "text";
+    const targetTextChannelId = textChannelId ?? channelId;
+    if (sendAsText && targetTextChannelId) {
+      // Send text reply to bound (text) channel
       try {
         const client = getDiscordClient();
-        const channel = await client.channels.fetch(channelId) as TextChannel;
-        
+        const channel = await client.channels.fetch(targetTextChannelId) as TextChannel;
+
         if (channel?.isTextBased()) {
           const reply = await channel.send(responseText);
           
           // Log bot's reply to ledger (preserve voice narrative weight even in text mode)
           appendLedgerEntry({
             guild_id: guildId,
-            channel_id: channelId,
+            channel_id: targetTextChannelId,
             message_id: reply.id,
             author_id: client.user!.id,
             author_name: client.user!.username,

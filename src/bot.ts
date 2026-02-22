@@ -13,6 +13,19 @@ import { getSanitizedSpeakerName } from "./ledger/speakerSanitizer.js";
 import { logConvoTurn } from "./ledger/meepoConvo.js";
 import { buildConvoTailContext } from "./recall/buildConvoTailContext.js";
 import { isAddressed } from "./meepo/triggers.js";
+import { isWakePhrase, containsPersonaName } from "./meepo/wakePhrase.js";
+import {
+  setLatch,
+  isLatchActive,
+  incrementLatchTurn,
+  DEFAULT_LATCH_SECONDS,
+  DEFAULT_MAX_LATCH_TURNS,
+} from "./latch/latch.js";
+import { getVoiceState } from "./voice/state.js";
+import { getTtsProvider } from "./voice/tts/provider.js";
+import { speakInGuild } from "./voice/speaker.js";
+import { applyPostTtsFx } from "./voice/audioFx.js";
+import { recordMeepoInteraction, classifyTrigger } from "./ledger/meepoInteractions.js";
 import { chat } from "./llm/client.js";
 import { buildMeepoPrompt, buildUserMessage } from "./llm/prompts.js";
 import { setBotNicknameForPersona } from "./meepo/nickname.js";
@@ -382,21 +395,35 @@ client.on("messageCreate", async (message: any) => {
       }
     }
 
-    // 4) Response gating: Auto-respond in bound channel, require address elsewhere
+    // 4) Tier S/A: LISTENING vs LATCHED — response gating and reply mode (text vs voice)
     const prefix = process.env.BOT_PREFIX ?? "meepo:";
+    const personaId = getActivePersonaId(message.guildId);
+
+    incrementLatchTurn(message.guildId, message.channelId);
 
     const mentionedMeepo = message.mentions?.users?.has(client.user!.id) ?? false;
-    const addressed = mentionedMeepo || isAddressed(content, prefix);
+    const addressed = isWakePhrase(content, personaId, { mentioned: mentionedMeepo, prefix });
+    const nameInLine = containsPersonaName(content, personaId);
     const inBoundChannel = active.channel_id === message.channelId;
+    const latched = isLatchActive(message.guildId, message.channelId);
 
-    const addressContext = mentionedMeepo ? "mention" : "prefix";
-    const decision = addressed || inBoundChannel ? "✓ reply" : "✗ ignore";
+    // LISTENING: in bound channel, only respond when name in line
+    if (inBoundChannel && !latched && !nameInLine) {
+      bootLog.debug(`🎯 TEXT GATE: LISTENING, no name in line → ignore`);
+      return;
+    }
+    // Not in bound channel and not directly addressed → ignore
+    if (!inBoundChannel && !addressed) return;
+
+    if (addressed) {
+      setLatch(message.guildId, message.channelId, DEFAULT_LATCH_SECONDS, DEFAULT_MAX_LATCH_TURNS);
+    }
+
+    const useVoice = latched && nameInLine;
+    const decision = useVoice ? "✓ reply (voice)" : "✓ reply (text)";
     bootLog.debug(
-      `🎯 TEXT GATE: addressed=${addressed} inBound=${inBoundChannel} (${addressContext}) → ${decision}`
+      `🎯 TEXT GATE: addressed=${addressed} nameInLine=${nameInLine} latched=${latched} → ${decision}`
     );
-
-    // Respond if: addressed anywhere, OR in Meepo's bound channel
-    if (!addressed && !inBoundChannel) return;
 
     // 5) Generate response via LLM
     const llmEnabled = process.env.LLM_ENABLED !== "false";
@@ -546,7 +573,6 @@ client.on("messageCreate", async (message: any) => {
       const activeSession = getActiveSession(message.guildId);
       const { tailBlock } = buildConvoTailContext(activeSession?.session_id ?? null);
 
-      const personaId = getActivePersonaId(message.guildId);
       const mindspace = getMindspace(message.guildId, personaId);
 
       // Campaign persona with no active session: soft refusal (no LLM)
@@ -575,6 +601,9 @@ client.on("messageCreate", async (message: any) => {
         hasVoiceContext: hasVoice,
         partyMemory,
         convoTail: tailBlock || undefined,
+        guildId: message.guildId,
+        sessionId: activeSession?.session_id ?? null,
+        speakerId: message.author.id,
       });
 
       textReplyLog.info(
@@ -625,7 +654,46 @@ client.on("messageCreate", async (message: any) => {
 
       textReplyLog.info(`💬 Meepo: "${response}"`);
 
+      if (useVoice) {
+        const voiceState = getVoiceState(message.guildId);
+        if (voiceState) {
+          try {
+            const tts = await getTtsProvider();
+            let audio = await tts.synthesize(response);
+            if (audio.length > 0) {
+              audio = await applyPostTtsFx(audio, "mp3");
+              speakInGuild(message.guildId, audio, { userDisplayName: "[Meepo]" });
+            }
+          } catch (voiceErr: any) {
+            textReplyLog.warn(`Voice reply failed: ${voiceErr.message}`);
+          }
+        }
+      }
+
       const reply = await message.reply(response);
+
+      // Tier S/A: S = within latch (wake or follow-up), A = name mention outside latch
+      const tier = addressed || latched ? "S" : "A";
+      const baseTrigger = addressed
+        ? (mentionedMeepo ? "mention" : "wake_phrase")
+        : latched
+          ? "latched_followup"
+          : "name_mention";
+      const trigger = classifyTrigger(content, baseTrigger);
+      recordMeepoInteraction({
+        guildId: message.guildId,
+        sessionId: activeSession?.session_id ?? null,
+        personaId,
+        tier,
+        trigger,
+        speakerId: message.author.id,
+        meta: {
+          trigger_message_id: message.id,
+          trigger_channel_id: message.channelId,
+          reply_message_id: reply.id,
+          reply_channel_id: message.channelId,
+        },
+      });
 
       // Observability: log usage with persona + mindspace
       const db = getDb();

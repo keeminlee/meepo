@@ -1,9 +1,9 @@
-# Meepo Bot - Current State (February 15, 2026)
+# Meepo Bot - Current State (February 22, 2026)
 
 For documentation navigation, start at [README.md](README.md).
 
-**Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress + NAL Copilot enhancements  
-**Last Updated:** February 15, 2026
+**Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress + Tier S/A interaction memory  
+**Last Updated:** February 22, 2026
 
 ---
 
@@ -147,6 +147,15 @@ Recap      Emotion Beats         LLM Response
 - **Name Normalization:** Regex-based (no LLM), longest-match-first, alias-aware
 - **Live Integration:** Voice transcripts normalized at ingest + storage of both raw + normalized
 
+#### Tier S/A Interaction Memory ✅
+- **Table:** `meepo_interactions` — guild, session, persona, tier (S/A), trigger, speaker, line anchors, meta_json
+- **Tier S:** Within latch window (wake or latched follow-up); **Tier A:** Name mention outside latch
+- **Triggers:** wake_phrase, mention, latched_followup, name_mention, direct_question (?), direct_instruction (remember/note/…)
+- **Snippet resolution:** Text via ledger message_id; voice via transcript (session + start/end line) or meta.voice_reply_content_snippet
+- **Prompt injection:** "LAST TIME YOU SPOKE TO ME" (Tier S quoted snippets) + "RECENT TIMES YOU MENTIONED ME" (Tier A); optional meta.summary for compaction
+- **Retrieval:** Last-direct-convo lock (most recent Tier S with current speaker always included), Tier A cap 2, same-speaker preference
+- **Debug:** `/meepo interactions` — [DM-only] Last 5 Tier S for you; shows resolution (message_id vs transcript), persona, guild
+
 #### Meecap System ✅
 - **Meecap V1 Schema:** Structured post-session segmentation
   - 4-8 scenes (narrative acts)
@@ -161,6 +170,7 @@ Recap      Emotion Beats         LLM Response
 
 #### Commands
 - `/meepo wake|sleep|status|hush|transform|join|leave|stt|say` — Instance management
+- `/meepo interactions` — [DM-only] Debug: last 5 Tier S interactions for you (snippet resolution, persona, guild)
 - `/meepo reply mode:voice|text` — Set response mode (voice TTS or text messages)
 - `/meepo announce [--dry_run] [--timestamp] [--label] [--message]` — [DM-only] Post session reminder to announcement channel
 - `/meepo set-speaker-mask user:@User mask:"Name"` — [DM-only] Set diegetic speaker name

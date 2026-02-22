@@ -22,6 +22,10 @@ import { getTranscriptLinesDetailed, getTranscriptLines } from "../ledger/transc
 import { loadGptcap } from "../ledger/gptcapProvider.js";
 import { findRelevantBeats, type ScoredBeat } from "../recall/findRelevantBeats.js";
 import { buildMemoryContext } from "../recall/buildMemoryContext.js";
+import {
+  findRelevantMeepoInteractions,
+  getInteractionSnippets,
+} from "../ledger/meepoInteractions.js";
 import { getDb } from "../db.js";
 import { log } from "../utils/logger.js";
 import { getTodayAtNinePmEtUnixSeconds } from "../utils/timestamps.js";
@@ -362,6 +366,11 @@ export const meepo = {
         .addBooleanOption((opt) =>
           opt.setName("dry_run").setDescription("Preview without posting (default: false)").setRequired(false)
         )
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("interactions")
+        .setDescription("[DM-only] Debug: list last 5 Tier S interactions for you; snippet resolution, persona, guild.")
     ),
 
   async execute(interaction: any) {
@@ -1250,6 +1259,43 @@ export const meepo = {
           ephemeral: true,
         });
       }
+      return;
+    }
+
+    if (sub === "interactions") {
+      if (!isDm(interaction)) {
+        await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
+        return;
+      }
+      const personaId = getActivePersonaId(guildId) ?? "meepo";
+      const rows = findRelevantMeepoInteractions({
+        guildId,
+        personaId,
+        speakerId: interaction.user.id,
+        limitS: 5,
+        limitA: 0,
+      });
+      const snippets = getInteractionSnippets(rows, guildId);
+      const lines: string[] = [
+        "**Meepo interactions (last 5 Tier S for you)**",
+        `Guild: \`${guildId}\` | Persona: \`${personaId}\``,
+        "",
+      ];
+      if (rows.length === 0) {
+        lines.push("No Tier S interactions found for you in this server.");
+      } else {
+        rows.forEach((row, i) => {
+          const sn = snippets[i];
+          const resolution = sn?.resolution ?? "fallback";
+          const triggerPreview = sn?.triggerContent ? `"${sn.triggerContent.slice(0, 60)}${sn.triggerContent.length > 60 ? "…" : ""}"` : "(no snippet)";
+          const replyPreview = sn?.replyContent ? ` → "${sn.replyContent.slice(0, 40)}…"` : "";
+          lines.push(`**${i + 1}.** Tier ${row.tier} | trigger: \`${row.trigger}\` | resolution: \`${resolution}\``);
+          lines.push(`   Guild: \`${row.guild_id}\` Persona: \`${row.persona_id}\` Speaker: \`${row.speaker_id}\``);
+          lines.push(`   ${triggerPreview}${replyPreview}`);
+          lines.push("");
+        });
+      }
+      await interaction.reply({ content: lines.join("\n"), ephemeral: true });
       return;
     }
 

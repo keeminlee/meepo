@@ -1,4 +1,4 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { getDb } from "../db.js";
 import { getSanitizedSpeakerName } from "./speakerSanitizer.js";
 
@@ -112,6 +112,23 @@ export function appendLedgerEntry(
     }
     throw err;
   }
+}
+
+/**
+ * Get a single ledger entry by message ID (for Tier S/A snippet resolution).
+ */
+export function getLedgerContentByMessage(opts: {
+  guildId: string;
+  channelId: string;
+  messageId: string;
+}): { content: string; author_id: string } | null {
+  const db = getDb();
+  const row = db
+    .prepare(
+      "SELECT content, author_id FROM ledger_entries WHERE guild_id = ? AND channel_id = ? AND message_id = ? LIMIT 1"
+    )
+    .get(opts.guildId, opts.channelId, opts.messageId) as { content: string; author_id: string } | undefined;
+  return row ?? null;
 }
 
 export function getRecentLedgerText(opts: {

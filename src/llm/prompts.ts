@@ -1,6 +1,10 @@
 import type { MeepoInstance } from "../meepo/state.js";
 import { getPersona } from "../personas/index.js";
 import { getMeepoMemoriesSection } from "../ledger/meepo-mind.js";
+import {
+  findRelevantMeepoInteractions,
+  formatMeepoInteractionsSection,
+} from "../ledger/meepoInteractions.js";
 import { log } from "../utils/logger.js";
 
 const llmLog = log.withScope("llm");
@@ -24,6 +28,10 @@ export async function buildMeepoPrompt(opts: {
   partyMemory?: string;
   /** Conversation tail; only injected for campaign scope. */
   convoTail?: string;
+  /** Guild + optional speaker for Tier S/A interaction retrieval. */
+  guildId?: string;
+  sessionId?: string | null;
+  speakerId?: string | null;
 }): Promise<BuildMeepoPromptResult> {
   const persona = getPersona(opts.personaId);
   llmLog.debug(`Using persona: ${persona.displayName} (${opts.personaId}), mindspace=${opts.mindspace ?? "none"}`);
@@ -62,6 +70,19 @@ export async function buildMeepoPrompt(opts: {
     memoryRefs = result.memoryRefs;
   }
 
+  let tierSection = "";
+  if (opts.guildId) {
+    const interactions = findRelevantMeepoInteractions({
+      guildId: opts.guildId,
+      sessionId: opts.sessionId ?? null,
+      personaId: opts.personaId,
+      speakerId: opts.speakerId ?? null,
+      limitS: 3,
+      limitA: 2,
+    });
+    tierSection = formatMeepoInteractionsSection(opts.guildId, interactions);
+  }
+
   const styleGuard = persona.styleGuard || "";
   if (!persona.styleGuard) {
     console.warn(`Warning: Persona ${opts.personaId} missing styleGuard`);
@@ -73,6 +94,7 @@ export async function buildMeepoPrompt(opts: {
     persona.identity +
     memory +
     meepoMemoriesSection +
+    tierSection +
     partyMemory +
     convoTail +
     "\n" +

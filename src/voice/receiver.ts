@@ -10,6 +10,13 @@ import { isMeepoSpeaking } from "./speaker.js";
 import { isAddressedToMeepo } from "./wakeword.js";
 import { respondToVoiceUtterance } from "./voiceReply.js";
 import { getActiveMeepo } from "../meepo/state.js";
+import {
+  setLatch,
+  isLatchActive,
+  incrementLatchTurn,
+  DEFAULT_LATCH_SECONDS,
+  DEFAULT_MAX_LATCH_TURNS,
+} from "../latch/latch.js";
 import { getActiveSession } from "../sessions/sessions.js";
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -273,26 +280,48 @@ async function handleTranscription(
       `📝 Ledger: ${displayName}, text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
     );
 
-    // Task 4.6: Check if addressed to Meepo and generate voice reply if conditions met
+    // Task 4.6 + Tier S/A: Latch keyed by bound channel; addressed → voice, latched but not addressed → text
     const meepo = getActiveMeepo(guildId);
-    const addressedToMeepo = meepo && isAddressedToMeepo(contentNorm, meepo.form_id);
-    
-    const voiceDecision = addressedToMeepo ? "✓ replying" : "✗ ignored";
-    voiceLog.debug(
-      `🎯 VOICE GATE: addressed=${addressedToMeepo} (${displayName}) → ${voiceDecision}: "${result.text}"`
-    );
+    if (!meepo) return;
+
+    const boundChannelId = meepo.channel_id;
+    incrementLatchTurn(guildId, boundChannelId);
+
+    const addressedToMeepo = isAddressedToMeepo(contentNorm, meepo.form_id);
+    const latched = isLatchActive(guildId, boundChannelId);
 
     if (addressedToMeepo) {
-      // Async, non-blocking—reply handler checks all preconditions internally
+      setLatch(guildId, boundChannelId, DEFAULT_LATCH_SECONDS, DEFAULT_MAX_LATCH_TURNS);
+      voiceLog.debug(`🎯 VOICE GATE: addressed → voice reply`);
       respondToVoiceUtterance({
         guildId,
         channelId,
         speakerId: userId,
         speakerName: displayName,
-        utterance: contentNorm, // Use normalized for downstream processing
+        utterance: contentNorm,
+        textChannelId: boundChannelId,
+        tier: "S",
+        trigger: "wake_phrase",
       }).catch((err) => {
         voiceLog.error(`VoiceReply unhandled error:`, { err });
       });
+    } else if (latched) {
+      voiceLog.debug(`🎯 VOICE GATE: latched, not addressed → text reply to bound channel`);
+      respondToVoiceUtterance({
+        guildId,
+        channelId,
+        speakerId: userId,
+        speakerName: displayName,
+        utterance: contentNorm,
+        textChannelId: boundChannelId,
+        replyViaTextOnly: true,
+        tier: "S",
+        trigger: "latched_followup",
+      }).catch((err) => {
+        voiceLog.error(`VoiceReply unhandled error:`, { err });
+      });
+    } else {
+      voiceLog.debug(`🎯 VOICE GATE: not addressed, not latched → ignore`);
     }
   } catch (err) {
     voiceLog.error(`Transcription failed:`, { err });
