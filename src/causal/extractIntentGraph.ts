@@ -34,7 +34,7 @@ function toLinkNode(link: CausalLink): LinkGraphNode {
     actor_id: link.actor,
     cause_anchor_index: causeAnchor,
     effect_anchor_index: effectAnchor,
-    center_index: link.center_index ?? (typeof effectAnchor === "number" ? Math.round((causeAnchor + effectAnchor) / 2) : causeAnchor),
+    center_index: link.center_index ?? (typeof effectAnchor === "number" ? (causeAnchor + effectAnchor) / 2 : causeAnchor),
     claimed: link.claimed,
     cause_type: link.cause_type ?? link.intent_type,
     effect_type: link.effect_type ?? link.consequence_type,

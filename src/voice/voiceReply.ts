@@ -39,6 +39,7 @@ import { getDb } from "../db.js";
 
 const voiceReplyLog = log.withScope("voice-reply");
 const DEBUG_VOICE = process.env.DEBUG_VOICE === "true";
+let warnedMissingRegistryForVoiceMemory = false;
 
 // Per-guild voice reply cooldown (prevents rapid-fire replies)
 const guildLastVoiceReply = new Map<string, number>();
@@ -206,7 +207,17 @@ export async function respondToVoiceUtterance({
           }
         }
       } catch (recallErr: any) {
-        voiceReplyLog.warn(`Memory retrieval failed (voice): ${recallErr.message ?? recallErr}`);
+        const message = recallErr?.message ?? String(recallErr);
+        if (message.includes("Registry directory not found")) {
+          if (!warnedMissingRegistryForVoiceMemory) {
+            warnedMissingRegistryForVoiceMemory = true;
+            voiceReplyLog.warn(
+              `Memory retrieval disabled (voice): registry not found on this device. Continuing without party memory.`
+            );
+          }
+        } else {
+          voiceReplyLog.warn(`Memory retrieval failed (voice): ${message}`);
+        }
         // Continue without memory context on error
       }
     }

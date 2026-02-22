@@ -1,5 +1,23 @@
 import { loadRegistry } from "./loadRegistry.js";
 import type { LoadedRegistry } from "./types.js";
+import { log } from "../utils/logger.js";
+
+const registryLog = log.withScope("registry");
+let warnedMissingRegistry = false;
+
+function tryLoadRegistry(): LoadedRegistry | null {
+  try {
+    return loadRegistry();
+  } catch (err: any) {
+    if (!warnedMissingRegistry) {
+      warnedMissingRegistry = true;
+      registryLog.warn(
+        `Registry normalization disabled: ${err?.message ?? err}. Continuing without name normalization.`
+      );
+    }
+    return null;
+  }
+}
 
 /**
  * Phase 1C: Name Normalization
@@ -17,7 +35,10 @@ import type { LoadedRegistry } from "./types.js";
  * @returns Normalized text with canonical names
  */
 export function normalizeText(text: string, registry?: LoadedRegistry): string {
-  const reg = registry ?? loadRegistry();
+  const reg = registry ?? tryLoadRegistry();
+  if (!reg) {
+    return text;
+  }
   
   // Build list of all name variants (canonical + aliases) with their canonical forms
   type NameEntry = {
@@ -101,6 +122,9 @@ export function normalizeText(text: string, registry?: LoadedRegistry): string {
  * because registry is loaded once.
  */
 export function normalizeTexts(texts: string[]): string[] {
-  const registry = loadRegistry();
+  const registry = tryLoadRegistry();
+  if (!registry) {
+    return texts;
+  }
   return texts.map(t => normalizeText(t, registry));
 }

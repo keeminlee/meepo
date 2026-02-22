@@ -20,10 +20,42 @@ import { writeFile, unlink } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { log } from "../utils/logger.js";
 
 const audioFxLog = log.withScope("audio-fx");
 const DEBUG_FX = process.env.DEBUG_VOICE === "true";
+const require = createRequire(import.meta.url);
+let ffmpegCommandCache: string | null = null;
+
+function resolveFfmpegCommand(): string {
+  if (ffmpegCommandCache) {
+    return ffmpegCommandCache;
+  }
+
+  const envOverride =
+    process.env.FFMPEG_PATH?.trim() || process.env.FFMPEG_BIN?.trim() || null;
+  if (envOverride) {
+    ffmpegCommandCache = envOverride;
+    return ffmpegCommandCache;
+  }
+
+  try {
+    const ffmpegStatic = require("ffmpeg-static");
+    const staticPath =
+      typeof ffmpegStatic === "string"
+        ? ffmpegStatic
+        : ffmpegStatic?.path;
+    if (typeof staticPath === "string" && staticPath.length > 0) {
+      ffmpegCommandCache = staticPath;
+      return ffmpegCommandCache;
+    }
+  } catch {
+  }
+
+  ffmpegCommandCache = "ffmpeg";
+  return ffmpegCommandCache;
+}
 
 /**
  * Apply post-TTS audio effects using FFmpeg.
@@ -133,6 +165,8 @@ async function runFfmpeg(
   outputPath: string,
   filterChain: string
 ): Promise<Buffer> {
+  const ffmpegCommand = resolveFfmpegCommand();
+
   return new Promise((resolve, reject) => {
     const args = [
       "-i", inputPath,
@@ -143,7 +177,7 @@ async function runFfmpeg(
       outputPath,
     ];
 
-    const ffmpeg = spawn("ffmpeg", args, {
+    const ffmpeg = spawn(ffmpegCommand, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 

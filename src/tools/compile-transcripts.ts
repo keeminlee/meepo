@@ -28,7 +28,7 @@ import {
 // ── Config ──────────────────────────────────────────────────────────────────
 
 /** Max gap between consecutive same-speaker voice entries to fuse (ms). */
-const VOICE_FUSE_GAP_MS = 2000;
+const VOICE_FUSE_GAP_MS = 6000;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

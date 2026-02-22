@@ -43,7 +43,7 @@ function getLinkText(link: CausalLink, contextByLinkId?: Map<string, string[]>, 
 function getCenterIndex(link: CausalLink): number {
   const cause = link.cause_anchor_index ?? link.intent_anchor_index;
   const effect = link.effect_anchor_index ?? link.consequence_anchor_index;
-  if (typeof effect === "number") return Math.round((cause + effect) / 2);
+  if (typeof effect === "number") return (cause + effect) / 2;
   return cause;
 }
 
