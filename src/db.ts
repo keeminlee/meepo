@@ -965,6 +965,40 @@ function applyMigrations(db: Database.Database) {
     `);
   }
 
+  // Migration: Latch turn count (Tier S/A: expire by N turns)
+  const latchCols = db.pragma("table_info(latches)") as any[];
+  const hasTurnCount = latchCols.some((c: any) => c.name === "turn_count");
+  if (!hasTurnCount) {
+    console.log("Migrating: Adding turn_count and max_turns to latches (Tier S/A)");
+    db.exec("ALTER TABLE latches ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0");
+    db.exec("ALTER TABLE latches ADD COLUMN max_turns INTEGER");
+  }
+
+  // Migration: meepo_interactions (Tier S/A retrieval anchors)
+  const tablesForMeepoInteractions = db.pragma("table_list") as any[];
+  const hasMeepoInteractions = tablesForMeepoInteractions.some((t: any) => t.name === "meepo_interactions");
+  if (!hasMeepoInteractions) {
+    console.log("Migrating: Creating meepo_interactions table (Tier S/A)");
+    db.exec(`
+      CREATE TABLE meepo_interactions (
+        id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        session_id TEXT,
+        persona_id TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        trigger TEXT NOT NULL,
+        speaker_id TEXT NOT NULL,
+        start_line_index INTEGER,
+        end_line_index INTEGER,
+        created_at_ms INTEGER NOT NULL,
+        meta_json TEXT
+      );
+      CREATE INDEX idx_meepo_interactions_guild_persona ON meepo_interactions(guild_id, persona_id);
+      CREATE INDEX idx_meepo_interactions_session ON meepo_interactions(session_id);
+      CREATE INDEX idx_meepo_interactions_created ON meepo_interactions(created_at_ms DESC);
+    `);
+  }
+
   // (Future migrations can go here)
 }
 
