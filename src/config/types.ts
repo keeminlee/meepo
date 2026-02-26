@@ -3,6 +3,7 @@ export type LogFormat = "pretty" | "json";
 
 export type SttProvider = "openai" | "noop" | "debug";
 export type TtsProvider = "openai" | "noop";
+export type BargeInMode = "immediate" | "micro_confirm";
 
 export type MeepoMode = "canon" | "ambient" | "lab" | "dormant";
 
@@ -56,6 +57,9 @@ export interface Config {
     silenceThresholdDb: number;
     endSilenceMs: number;
     replyCooldownMs: number;
+    bargeInMode: BargeInMode;
+    microConfirmMs: number;
+    microConfirmFrames: number;
     debug: boolean;
   };
 
@@ -65,6 +69,9 @@ export interface Config {
     model: string;
     language: string;
     prompt?: string;
+    minAudioMs: number;
+    minActiveRatio: number;
+    noSpeechProbMax: number;
   };
 
   tts: {

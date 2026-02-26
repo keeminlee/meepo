@@ -9,7 +9,7 @@ import type { SttProvider } from "./provider.js";
  * - Avoiding coupling architecture development to Whisper debugging
  */
 export class NoopSttProvider implements SttProvider {
-  async transcribePcm(pcm: Buffer, sampleRate: number): Promise<{ text: string; confidence?: number }> {
+  async transcribePcm(pcm: Buffer, sampleRate: number): Promise<{ text: string; confidence?: number; meta?: { noSpeechProb?: number; avgLogprob?: number } }> {
     // Return empty text - receiver will discard these silently
     // This proves the pipeline works without spamming fake transcriptions
     return { text: "" };

@@ -22,6 +22,7 @@ import { log } from "../utils/logger.js";
 import { getVoiceState } from "./state.js";
 import { overlayEmitSpeaking } from "../overlay/server.js";
 import { cfg } from "../config/env.js";
+import { voicePlaybackController } from "./voicePlaybackController.js";
 
 const voiceLog = log.withScope("voice");
 
@@ -32,6 +33,7 @@ type GuildSpeaker = {
   player: AudioPlayer;
   playbackQueue: Promise<void>; // Promise chain for sequential playback
   meepoSpeakRefCount: number; // Refcount for overlay speaking (handles multi-chunk TTS)
+  queueGeneration: number;
 };
 
 // Per-guild speaker instances
@@ -76,8 +78,32 @@ function getOrCreatePlayer(guildId: string): AudioPlayer | null {
       player,
       playbackQueue: Promise.resolve(),
       meepoSpeakRefCount: 0,
+      queueGeneration: 0,
     };
     guildSpeakers.set(guildId, speaker);
+
+    voicePlaybackController.registerAbortHandler(guildId, (reason) => {
+      const activeSpeaker = guildSpeakers.get(guildId);
+      if (!activeSpeaker) {
+        return;
+      }
+
+      activeSpeaker.queueGeneration += 1;
+      activeSpeaker.player.stop(true);
+      if (activeSpeaker.meepoSpeakRefCount > 0) {
+        overlayEmitSpeaking("meepo", false, {
+          immediate: true,
+          reason: "interrupted",
+        });
+      }
+      activeSpeaker.meepoSpeakRefCount = 0;
+      meepoSpeakingGuilds.delete(guildId);
+      voicePlaybackController.setIsSpeaking(guildId, false);
+
+      if (cfg.voice.debug) {
+        voiceLog.debug(`Playback aborted (${reason})`);
+      }
+    });
 
     if (cfg.voice.debug) {
       voiceLog.debug(`Created audio player`);
@@ -119,72 +145,87 @@ export function speakInGuild(
   let speaker = guildSpeakers.get(guildId);
   if (!speaker) return; // Should not happen; getOrCreatePlayer would have created it
 
+  const enqueueGeneration = speaker.queueGeneration;
+
   // Queue playback via promise chaining
   const newQueue = speaker.playbackQueue
     .then(async () => {
-      // Mark Meepo as speaking (for feedback loop protection + overlay)
-      meepoSpeakingGuilds.add(guildId);
-      
-      // Increment refcount and emit overlay speaking if first playback
-      speaker.meepoSpeakRefCount++;
-      if (speaker.meepoSpeakRefCount === 1) {
-        overlayEmitSpeaking("meepo", true);
+      if (enqueueGeneration !== speaker.queueGeneration) {
+        return;
       }
 
-      // Create readable stream from buffer
-      const stream = Readable.from([mp3Buffer]);
+      await voicePlaybackController.speak(guildId, async ({ signal, isCurrent }) => {
+        if (!isCurrent() || enqueueGeneration !== speaker.queueGeneration || signal.aborted) {
+          return;
+        }
 
-      // Create audio resource (prism-media auto-detects MP3, transcodes to Opus)
-      const resource = createAudioResource(stream, {
-        inlineVolume: true,
-      });
+        meepoSpeakingGuilds.add(guildId);
+        voicePlaybackController.setIsSpeaking(guildId, true);
 
-      if (cfg.voice.debug) {
-        const metaStr = meta?.userDisplayName
-          ? ` (${meta.userDisplayName})`
-          : "";
-        voiceLog.debug(
-          `Playing ${mp3Buffer.length} bytes${metaStr}`
-        );
-      }
+        speaker.meepoSpeakRefCount++;
+        if (speaker.meepoSpeakRefCount === 1) {
+          overlayEmitSpeaking("meepo", true);
+        }
 
-      // Play resource
-      player.play(resource);
+        const stream = Readable.from([mp3Buffer]);
+        const resource = createAudioResource(stream, {
+          inlineVolume: true,
+        });
 
-      // Wait for playback to finish
-      return new Promise<void>((resolve) => {
-        const finishHandler = () => {
-          player.off(AudioPlayerStatus.Idle, finishHandler);
-          player.off("error", errorHandler);
-          
-          // Decrement refcount and emit false if last playback ends
-          speaker.meepoSpeakRefCount--;
-          if (speaker.meepoSpeakRefCount === 0) {
-            overlayEmitSpeaking("meepo", false);
-          }
-          
-          // Mark Meepo as done speaking
-          meepoSpeakingGuilds.delete(guildId);
-          resolve();
-        };
+        if (cfg.voice.debug) {
+          const metaStr = meta?.userDisplayName
+            ? ` (${meta.userDisplayName})`
+            : "";
+          voiceLog.debug(
+            `Playing ${mp3Buffer.length} bytes${metaStr}`
+          );
+        }
 
-        const errorHandler = () => {
-          player.off(AudioPlayerStatus.Idle, finishHandler);
-          player.off("error", errorHandler);
-          
-          // Decrement refcount and emit false even on error
-          speaker.meepoSpeakRefCount--;
-          if (speaker.meepoSpeakRefCount === 0) {
-            overlayEmitSpeaking("meepo", false);
-          }
-          
-          // Mark Meepo as done speaking (even on error)
-          meepoSpeakingGuilds.delete(guildId);
-          resolve(); // Resolve anyway to keep queue moving
-        };
+        player.play(resource);
 
-        player.once(AudioPlayerStatus.Idle, finishHandler);
-        player.once("error", errorHandler);
+        await new Promise<void>((resolve) => {
+          let settled = false;
+
+          const finishPlayback = (reason?: string) => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+
+            player.off(AudioPlayerStatus.Idle, finishHandler);
+            player.off("error", errorHandler);
+            signal.removeEventListener("abort", abortHandler);
+
+            speaker.meepoSpeakRefCount = Math.max(0, speaker.meepoSpeakRefCount - 1);
+            if (speaker.meepoSpeakRefCount === 0) {
+              overlayEmitSpeaking("meepo", false, reason ? { reason } : undefined);
+            }
+
+            if (speaker.meepoSpeakRefCount === 0) {
+              meepoSpeakingGuilds.delete(guildId);
+              voicePlaybackController.setIsSpeaking(guildId, false);
+            }
+
+            resolve();
+          };
+
+          const finishHandler = () => {
+            finishPlayback();
+          };
+
+          const errorHandler = () => {
+            finishPlayback();
+          };
+
+          const abortHandler = () => {
+            player.stop(true);
+            finishPlayback("interrupted");
+          };
+
+          player.once(AudioPlayerStatus.Idle, finishHandler);
+          player.once("error", errorHandler);
+          signal.addEventListener("abort", abortHandler, { once: true });
+        });
       });
     })
     .catch((err) => {
@@ -202,12 +243,16 @@ export function speakInGuild(
 export function cleanupSpeaker(guildId: string): void {
   const speaker = guildSpeakers.get(guildId);
   if (speaker) {
+    voicePlaybackController.abort(guildId, "cleanup_speaker");
     speaker.player.stop(true);
     // Reset refcount and emit false if we were speaking
     if (speaker.meepoSpeakRefCount > 0) {
-      overlayEmitSpeaking("meepo", false);
+      overlayEmitSpeaking("meepo", false, { immediate: true });
       speaker.meepoSpeakRefCount = 0;
     }
+    voicePlaybackController.unregisterAbortHandler(guildId);
+    voicePlaybackController.resetGuild(guildId);
+    meepoSpeakingGuilds.delete(guildId);
     guildSpeakers.delete(guildId);
     if (cfg.voice.debug) {
       voiceLog.debug(`Cleaned up speaker`);
@@ -220,5 +265,5 @@ export function cleanupSpeaker(guildId: string): void {
  * (Used by receiver to prevent feedback loop via STT)
  */
 export function isMeepoSpeaking(guildId: string): boolean {
-  return meepoSpeakingGuilds.has(guildId);
+  return meepoSpeakingGuilds.has(guildId) || voicePlaybackController.getIsSpeaking(guildId);
 }

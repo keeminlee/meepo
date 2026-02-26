@@ -158,11 +158,12 @@ export async function startOverlayServer() {
     setupWebSocket();
 
     // Listen for speaking state changes and broadcast
-    onSpeakingStateChange((id: string, speaking: boolean) => {
+    onSpeakingStateChange((id: string, speaking: boolean, meta?: { reason?: string }) => {
       broadcastToClients({
         type: 'speaking',
         id,
         speaking,
+        reason: meta?.reason,
         t: Date.now(),
       });
     });
@@ -188,8 +189,15 @@ export async function startOverlayServer() {
  * Emit speaking event for a token
  * Should be called from receiver (DM/PCs) and speaker (Meepo)
  */
-export function overlayEmitSpeaking(id: string, speaking: boolean) {
-  setSpeaking(id, speaking);
+export function overlayEmitSpeaking(
+  id: string,
+  speaking: boolean,
+  options?: {
+    immediate?: boolean;
+    reason?: string;
+  }
+) {
+  setSpeaking(id, speaking, options);
 }
 
 /**

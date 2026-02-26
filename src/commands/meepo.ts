@@ -14,6 +14,7 @@ import { startReceiver, stopReceiver } from "../voice/receiver.js";
 import { getSttProviderInfo } from "../voice/stt/provider.js";
 import { getTtsProvider } from "../voice/tts/provider.js";
 import { speakInGuild } from "../voice/speaker.js";
+import { voicePlaybackController } from "../voice/voicePlaybackController.js";
 import { applyPostTtsFx } from "../voice/audioFx.js";
 import { loadRegistry } from "../registry/loadRegistry.js";
 import { extractRegistryMatches } from "../registry/extractRegistryMatches.js";
@@ -294,6 +295,11 @@ export const meepo = {
       sub
         .setName("leave")
         .setDescription("Leave voice channel.")
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("hush")
+        .setDescription("Stop Meepo voice playback immediately.")
     )
     .addSubcommand((sub) =>
       sub
@@ -1063,6 +1069,31 @@ export const meepo = {
 
       await interaction.reply({
         content: `*poof!* Meepo leaves <#${channelId}>. Bye bye! Meep!`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (sub === "hush") {
+      const currentState = getVoiceState(guildId);
+      if (!currentState) {
+        await interaction.reply({
+          content: "Meep? Meepo isn't in voice right now!",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      voicePlaybackController.abort(guildId, "explicit_hush_command", {
+        channelId: currentState.channelId,
+        authorId: interaction.user.id,
+        authorName: interaction.user.username,
+        source: "command",
+        logSystemEvent: true,
+      });
+
+      await interaction.reply({
+        content: "Shh! Meepo goes quiet.",
         ephemeral: true,
       });
       return;

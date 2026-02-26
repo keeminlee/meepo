@@ -25,6 +25,7 @@ import {
 import { getVoiceState } from "./voice/state.js";
 import { getTtsProvider } from "./voice/tts/provider.js";
 import { speakInGuild } from "./voice/speaker.js";
+import { voicePlaybackController } from "./voice/voicePlaybackController.js";
 import { applyPostTtsFx } from "./voice/audioFx.js";
 import { recordMeepoInteraction, classifyTrigger } from "./ledger/meepoInteractions.js";
 import { chat } from "./llm/client.js";
@@ -51,6 +52,20 @@ const bootLog = log.withScope("boot");
 const overlayLog = log.withScope("overlay");
 const textReplyLog = log.withScope("text-reply");
 const recallLog = log.withScope("recall");
+
+const TEXT_STOP_PHRASES = new Set<string>([
+  "meepo stop",
+  "meepo shush",
+  "stop meepo",
+]);
+
+function normalizeStopPhrase(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function isTextStopPhrase(text: string): boolean {
+  return TEXT_STOP_PHRASES.has(normalizeStopPhrase(text));
+}
 
 printConfigSnapshot(cfg);
 
@@ -113,7 +128,11 @@ client.once("ready", async () => {
       } catch (err: any) {
         bootLog.warn(`Failed to auto-join voice on restore: ${err.message ?? err}`);
       }
+    } else {
+      bootLog.info(`Startup restore skipped: no active Meepo state for guild ${guildId}.`);
     }
+  } else {
+    bootLog.info(`Startup restore skipped: GUILD_ID not configured.`);
   }
 
   // Start auto-sleep checker for inactive Meepo instances
@@ -202,6 +221,19 @@ client.on("messageCreate", async (message: any) => {
 
     const content = (message.content ?? "").toString();
     if (!content.trim()) return;
+
+    const activeVoiceState = getVoiceState(message.guildId);
+    if (activeVoiceState && isTextStopPhrase(content)) {
+      voicePlaybackController.abort(message.guildId, "explicit_text_stop", {
+        channelId: activeVoiceState.channelId,
+        authorId: message.author.id,
+        authorName: message.member?.displayName ?? message.author.username ?? message.author.id,
+        phrase: content,
+        source: "text",
+        logSystemEvent: true,
+      });
+      return;
+    }
 
     const campaignSlug = resolveCampaignSlug({
       guildId: message.guildId ?? undefined,

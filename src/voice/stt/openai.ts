@@ -13,6 +13,7 @@ import { SttProvider } from "./provider.js";
 import { pcmToWav } from "./wav.js";
 import { toFile } from "openai/uploads";
 import { cfg } from "../../config/env.js";
+import type { SttTranscriptionMeta } from "./provider.js";
 
 const sttLog = log.withScope("stt");
 
@@ -98,7 +99,7 @@ export class OpenAiSttProvider implements SttProvider {
   async transcribePcm(
     pcm: Buffer,
     sampleRate: number
-  ): Promise<{ text: string; confidence?: number }> {
+  ): Promise<{ text: string; confidence?: number; meta?: SttTranscriptionMeta }> {
     // Task 3.5: Retry once on transient errors (429/5xx/network)
     let lastError: any;
 
@@ -142,10 +143,23 @@ export class OpenAiSttProvider implements SttProvider {
           text = "";
         }
 
+        const responseWithMeta = response as {
+          no_speech_prob?: number;
+          avg_logprob?: number;
+        };
+        const meta: SttTranscriptionMeta = {};
+        if (typeof responseWithMeta.no_speech_prob === "number") {
+          meta.noSpeechProb = responseWithMeta.no_speech_prob;
+        }
+        if (typeof responseWithMeta.avg_logprob === "number") {
+          meta.avgLogprob = responseWithMeta.avg_logprob;
+        }
+
         return {
           text,
           // OpenAI transcription API doesn't return confidence scores
           confidence: undefined,
+          meta: Object.keys(meta).length > 0 ? meta : undefined,
         };
       } catch (err: any) {
         lastError = err;

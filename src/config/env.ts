@@ -1,6 +1,6 @@
 import "dotenv/config";
 import path from "node:path";
-import type { Config, LogFormat, LogLevel, MeepoMode, SttProvider, TtsProvider } from "./types.js";
+import type { BargeInMode, Config, LogFormat, LogLevel, MeepoMode, SttProvider, TtsProvider } from "./types.js";
 import { redactConfigSnapshot } from "./redact.js";
 
 function req(name: string): string {
@@ -144,6 +144,9 @@ export function loadConfig(): Config {
       silenceThresholdDb: optInt("VOICE_SILENCE_THRESHOLD_DB", -40),
       endSilenceMs: optInt("VOICE_END_SILENCE_MS", 700),
       replyCooldownMs: optInt("VOICE_REPLY_COOLDOWN_MS", 5000),
+      bargeInMode: enumOf<BargeInMode>("BARGE_IN_MODE", ["immediate", "micro_confirm"] as const, "immediate"),
+      microConfirmMs: optInt("MICRO_CONFIRM_MS", 60),
+      microConfirmFrames: optInt("MICRO_CONFIRM_FRAMES", 2),
       debug: voiceDebug,
     },
 
@@ -153,6 +156,9 @@ export function loadConfig(): Config {
       model: opt("STT_OPENAI_MODEL") ?? "gpt-4o-mini-transcribe",
       language: opt("STT_LANGUAGE") ?? "en",
       prompt: opt("STT_PROMPT"),
+      minAudioMs: optInt("STT_MIN_AUDIO_MS", 300),
+      minActiveRatio: optFloat("STT_MIN_ACTIVE_RATIO", 0.35),
+      noSpeechProbMax: optFloat("STT_NO_SPEECH_PROB_MAX", 0.6),
     },
 
     tts: {
@@ -221,12 +227,18 @@ export function printConfigSnapshot(cfg: Config): void {
     VOICE_SILENCE_THRESHOLD_DB: cfg.voice.silenceThresholdDb,
     VOICE_END_SILENCE_MS: cfg.voice.endSilenceMs,
     VOICE_REPLY_COOLDOWN_MS: cfg.voice.replyCooldownMs,
+    BARGE_IN_MODE: cfg.voice.bargeInMode,
+    MICRO_CONFIRM_MS: cfg.voice.microConfirmMs,
+    MICRO_CONFIRM_FRAMES: cfg.voice.microConfirmFrames,
     DEBUG_VOICE: cfg.voice.debug,
     STT_PROVIDER: cfg.stt.provider,
     STT_SAVE_AUDIO: cfg.stt.saveAudio,
     STT_OPENAI_MODEL: cfg.stt.model,
     STT_LANGUAGE: cfg.stt.language,
     STT_PROMPT: cfg.stt.prompt,
+    STT_MIN_AUDIO_MS: cfg.stt.minAudioMs,
+    STT_MIN_ACTIVE_RATIO: cfg.stt.minActiveRatio,
+    STT_NO_SPEECH_PROB_MAX: cfg.stt.noSpeechProbMax,
     TTS_PROVIDER: cfg.tts.provider,
     TTS_ENABLED: cfg.tts.enabled,
     TTS_CHUNK_SIZE_CHARS: cfg.tts.chunkSizeChars,
@@ -246,7 +258,6 @@ export function printConfigSnapshot(cfg: Config): void {
     LOG_LEVEL: cfg.logging.level,
     LOG_SCOPES: cfg.logging.scopes?.join(",") ?? "",
     LOG_FORMAT: cfg.logging.format,
-    DEBUG_LATCH: cfg.logging.debugLatch,
   });
 
   console.log("=== MEEPO CONFIG SNAPSHOT ===");

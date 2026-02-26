@@ -9,6 +9,17 @@ import { NoopSttProvider } from "./noop.js";
 import { DebugSttProvider } from "./debug.js";
 import { cfg } from "../../config/env.js";
 
+export type SttTranscriptionMeta = {
+  noSpeechProb?: number;
+  avgLogprob?: number;
+};
+
+export type SttTranscriptionResult = {
+  text: string;
+  confidence?: number;
+  meta?: SttTranscriptionMeta;
+};
+
 export interface SttProvider {
   /**
    * Transcribe PCM audio to text.
@@ -19,10 +30,7 @@ export interface SttProvider {
   transcribePcm(
     pcm: Buffer,
     sampleRate: number
-  ): Promise<{
-    text: string;
-    confidence?: number;
-  }>;
+  ): Promise<SttTranscriptionResult>;
 }
 
 /**

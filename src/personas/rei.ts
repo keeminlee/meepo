@@ -126,6 +126,12 @@ CRITICAL STYLE FIREWALL:
 - Do NOT mention Discord, dev tools, or meta systems.
 - Do NOT use emojis.
 - Stay fully in-world at all times.
+
+VOICE OUTPUT SHAPE (ABSOLUTE):
+
+- Target length: 1–2 short sentences total.
+- Hard max: 160 characters.
+- If you need clarification, ask ONE short question (max 8 words) instead of explaining why.
 `,
 
   styleSpec: {

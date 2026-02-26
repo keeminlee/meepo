@@ -3,9 +3,9 @@ import { getVoiceState } from "./state.js";
 import { pipeline } from "node:stream";
 import prism from "prism-media";
 import { getSttProvider } from "./stt/provider.js";
+import type { SttTranscriptionMeta } from "./stt/provider.js";
 import { normalizeText } from "../registry/normalizeText.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
-import { isMeepoSpeaking } from "./speaker.js";
 import { isLatchAnchor, hasMeepoInLine } from "./wakeword.js";
 import { respondToVoiceUtterance } from "./voiceReply.js";
 import { getActiveMeepo } from "../meepo/state.js";
@@ -25,6 +25,7 @@ import { pcmToWav } from "./stt/wav.js";
 import { log } from "../utils/logger.js";
 import { overlayEmitSpeaking } from "../overlay/server.js";
 import { cfg } from "../config/env.js";
+import { voicePlaybackController } from "./voicePlaybackController.js";
 
 /**
  * Phase 2 Task 1-2: Speaking detection + PCM capture pipeline
@@ -47,9 +48,7 @@ const BYTES_PER_SEC = RATE * CHANNELS * BYTES_PER_SAMPLE; // 192000
 const END_SILENCE_MS = cfg.voice.endSilenceMs;
 
 // Conservative gating (err on allowing speech through)
-const MIN_AUDIO_MS = 250;        // require at least 250ms worth of PCM bytes
 const USER_COOLDOWN_MS = 300;    // prevent rapid retriggers
-const LONG_AUDIO_MS = 1200;      // long utterances bypass the "activity" gate + cooldown
 
 // Audio silence threshold for overlay speaking detection
 const AUDIO_SILENCE_THRESHOLD_MS = 150; // emit speaking=false after 150ms with no packets
@@ -58,7 +57,11 @@ const AUDIO_SILENCE_THRESHOLD_MS = 150; // emit speaking=false after 150ms with 
 const FRAME_MS = 20;
 const FRAME_BYTES = Math.round(BYTES_PER_SEC * (FRAME_MS / 1000)); // 3840 bytes for 20ms
 const FRAME_RMS_THRESH = 700;    // permissive
-const MIN_ACTIVE_MS = 200;       // require ~200ms of active audio (10 frames)
+const MIN_MEANINGFUL_TOKENS = 3;
+const MIN_SINGLE_MEANINGFUL_TOKEN_LEN = 4;
+const AVG_LOGPROB_MIN = -1.0;
+const FILLER_TOKENS = new Set<string>(["um", "uh", "hmm", "erm", "mmm"]);
+const TOKEN_COUNT_BYPASS_KEYWORDS = new Set<string>(["meepo", "stop", "shush"]);
 
 // Memory safety: max PCM buffer size (20 seconds @ 48kHz stereo 16-bit = ~4MB)
 const MAX_PCM_BYTES = 60 * BYTES_PER_SEC; // 3,840,000 bytes
@@ -66,6 +69,12 @@ const MAX_PCM_BYTES = 60 * BYTES_PER_SEC; // 3,840,000 bytes
 // Explicit STT noise phrases to drop before ledger/reply handling.
 const BLOCKED_STT_PHRASES = new Set<string>([
   "thank you for watching",
+]);
+
+const STOP_STT_PHRASES = new Set<string>([
+  "meepo stop",
+  "meepo shush",
+  "stop meepo",
 ]);
 
 function normalizeSttPhrase(text: string): string {
@@ -78,6 +87,21 @@ function normalizeSttPhrase(text: string): string {
 
 function isBlockedSttTranscript(text: string): boolean {
   return BLOCKED_STT_PHRASES.has(normalizeSttPhrase(text));
+}
+
+function isExplicitStopPhrase(text: string): boolean {
+  const normalized = normalizeSttPhrase(text);
+  if (STOP_STT_PHRASES.has(normalized)) {
+    return true;
+  }
+
+  for (const stopPhrase of STOP_STT_PHRASES) {
+    if (normalized.includes(stopPhrase)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 // Singleton STT provider (lazy-initialized)
@@ -112,6 +136,7 @@ type PcmCapture = {
   pcmChunks: Buffer[];
   totalBytes: number;
   startedAt: number;
+  isBargeIn: boolean;
 
   // Activity tracking (for click/noise filtering)
   remainder: Buffer;     // leftover bytes < FRAME_BYTES between chunks
@@ -128,6 +153,113 @@ const pcmCaptures = new Map<string, Map<string, PcmCapture>>();
 
 // Map<guildId, Map<userId, lastAcceptedEndMs>>
 const userCooldowns = new Map<string, Map<string, number>>();
+
+export type ClipGateInput = {
+  audioMs: number;
+  activeMs: number;
+  text?: string;
+  meta?: SttTranscriptionMeta;
+  flags?: {
+    isBargeIn?: boolean;
+    checkTextGates?: boolean;
+  };
+};
+
+export type ClipGateResult = {
+  accepted: boolean;
+  reasons: string[];
+  ratio: number;
+};
+
+function pickSnippet(text?: string): string {
+  if (!text) return "";
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
+}
+
+function extractMeaningfulTokens(normalizedText: string): string[] {
+  return normalizedText
+    .split(" ")
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .filter((token) => !FILLER_TOKENS.has(token));
+}
+
+function hasTokenBypassKeyword(normalizedText: string): boolean {
+  const tokens = normalizedText.split(" ").map((token) => token.trim()).filter(Boolean);
+  return tokens.some((token) => TOKEN_COUNT_BYPASS_KEYWORDS.has(token));
+}
+
+export function evaluateClipGate(input: ClipGateInput): ClipGateResult {
+  const reasons: string[] = [];
+  const ratio = input.audioMs > 0 ? input.activeMs / input.audioMs : 0;
+
+  if (input.audioMs < cfg.stt.minAudioMs) {
+    reasons.push(`audio_too_short:${input.audioMs}<${cfg.stt.minAudioMs}`);
+    return {
+      accepted: false,
+      reasons,
+      ratio,
+    };
+  }
+
+  if (ratio < cfg.stt.minActiveRatio) {
+    reasons.push(`active_ratio_low:${ratio.toFixed(2)}<${cfg.stt.minActiveRatio}`);
+  }
+
+  if (typeof input.meta?.noSpeechProb === "number" && input.meta.noSpeechProb > cfg.stt.noSpeechProbMax) {
+    reasons.push(`no_speech_prob_high:${input.meta.noSpeechProb.toFixed(2)}>${cfg.stt.noSpeechProbMax}`);
+  }
+
+  if (typeof input.meta?.avgLogprob === "number" && input.meta.avgLogprob < AVG_LOGPROB_MIN) {
+    reasons.push(`avg_logprob_low:${input.meta.avgLogprob.toFixed(2)}<${AVG_LOGPROB_MIN}`);
+  }
+
+  const shouldCheckTextGates = input.flags?.checkTextGates ?? true;
+  const rawText = (input.text ?? "").trim();
+
+  if (shouldCheckTextGates && rawText) {
+    const normalizedText = normalizeSttPhrase(rawText);
+    const meaningfulTokens = extractMeaningfulTokens(normalizedText);
+
+    if (meaningfulTokens.length === 0) {
+      reasons.push("filler_only");
+    } else {
+      const bypassTokenCountGate = hasTokenBypassKeyword(normalizedText);
+      if (!bypassTokenCountGate) {
+        const hasLongMeaningfulToken = meaningfulTokens.some(
+          (token) => token.length >= MIN_SINGLE_MEANINGFUL_TOKEN_LEN
+        );
+        if (meaningfulTokens.length < MIN_MEANINGFUL_TOKENS && !hasLongMeaningfulToken) {
+          reasons.push("text_not_meaningful_enough");
+        }
+      }
+    }
+  }
+
+  return {
+    accepted: reasons.length === 0,
+    reasons,
+    ratio,
+  };
+}
+
+function logGateRejection(input: {
+  guildId: string;
+  userId: string;
+  reasons: string[];
+  audioMs: number;
+  activeMs: number;
+  ratio: number;
+  text?: string;
+  meta?: SttTranscriptionMeta;
+  isBargeIn?: boolean;
+}): void {
+  voiceLog.info(
+    `🚫 STT_REJECT guild=${input.guildId} user=${input.userId} reasons=${input.reasons.join("|")} audioMs=${input.audioMs} activeMs=${input.activeMs} ratio=${input.ratio.toFixed(2)} noSpeechProb=${input.meta?.noSpeechProb ?? "n/a"} avgLogprob=${input.meta?.avgLogprob ?? "n/a"} bargeIn=${input.isBargeIn ? 1 : 0} text="${pickSnippet(input.text)}"`
+  );
+}
 
 /**
  * Save audio chunk to disk if STT_SAVE_AUDIO=true
@@ -258,18 +390,124 @@ async function handleTranscription(
     // Transcribe
     const result = await sttProvider.transcribePcm(pcmToTranscribe, RATE);
 
+    const audioMs = cap.totalBytes > 0 ? Math.round((cap.totalBytes / BYTES_PER_SEC) * 1000) : 0;
+    const activeMs = cap.activeFrames * FRAME_MS;
+
     // Discard empty transcriptions silently
     if (!result.text || result.text.trim() === "") {
       return;
     }
 
-    if (isBlockedSttTranscript(result.text)) {
-      voiceLog.info(`🔕 Discarded blocked STT phrase: "${result.text}"`);
-      return;
+    await processTranscribedVoiceText({
+      guildId,
+      channelId,
+      userId,
+      displayName,
+      text: result.text,
+      confidence: result.confidence ?? null,
+      sttMeta: result.meta,
+      cap,
+      audioMs,
+      activeMs,
+      isBargeIn: cap.isBargeIn,
+      audioPath,
+    });
+  } catch (err) {
+    voiceLog.error(`Transcription failed:`, { err });
+  }
+}
+
+export async function processTranscribedVoiceText(opts: {
+  guildId: string;
+  channelId: string;
+  userId: string;
+  displayName: string;
+  text: string;
+  confidence: number | null;
+  sttMeta?: SttTranscriptionMeta;
+  cap: Pick<PcmCapture, "startedAt">;
+  audioMs: number;
+  activeMs: number;
+  isBargeIn?: boolean;
+  audioPath: string | null;
+}): Promise<ClipGateResult> {
+  const {
+    guildId,
+    channelId,
+    userId,
+    displayName,
+    text,
+    confidence,
+    sttMeta,
+    cap,
+    audioMs,
+    activeMs,
+    isBargeIn,
+    audioPath,
+  } = opts;
+
+  try {
+    if (!text || text.trim() === "") {
+      return {
+        accepted: false,
+        reasons: ["empty_text"],
+        ratio: audioMs > 0 ? activeMs / audioMs : 0,
+      };
+    }
+
+    const clipGate = evaluateClipGate({
+      audioMs,
+      activeMs,
+      text,
+      meta: sttMeta,
+      flags: {
+        isBargeIn,
+        checkTextGates: true,
+      },
+    });
+
+    if (!clipGate.accepted) {
+      logGateRejection({
+        guildId,
+        userId,
+        reasons: clipGate.reasons,
+        audioMs,
+        activeMs,
+        ratio: clipGate.ratio,
+        text,
+        meta: sttMeta,
+        isBargeIn,
+      });
+      return clipGate;
+    }
+
+    if (isExplicitStopPhrase(text)) {
+      voicePlaybackController.abort(guildId, "explicit_stop_phrase", {
+        channelId,
+        authorId: userId,
+        authorName: displayName,
+        phrase: text,
+        source: "voice",
+        logSystemEvent: true,
+      });
+      return {
+        accepted: false,
+        reasons: ["explicit_stop_phrase"],
+        ratio: clipGate.ratio,
+      };
+    }
+
+    if (isBlockedSttTranscript(text)) {
+      voiceLog.info(`🔕 Discarded blocked STT phrase: "${text}"`);
+      return {
+        accepted: false,
+        reasons: ["blocked_phrase"],
+        ratio: clipGate.ratio,
+      };
     }
 
     // Phase 1C: Normalize with registry (for content_norm field)
-    const contentNorm = normalizeText(result.text);
+    const contentNorm = normalizeText(text);
 
     // Generate unique message ID with random suffix to prevent millisecond collisions
     const randomSuffix = randomBytes(4).toString("hex");
@@ -286,7 +524,7 @@ async function handleTranscription(
       author_id: userId,
       author_name: displayName, // Use member.displayName instead of fallback
       timestamp_ms: Date.now(),
-      content: result.text,      // Raw STT (truth)
+      content: text,      // Raw STT (truth)
       content_norm: contentNorm, // Registry-normalized (Phase 1C)
       tags: "human",
       source: "voice",
@@ -294,13 +532,13 @@ async function handleTranscription(
       speaker_id: userId,
       t_start_ms: cap.startedAt,
       t_end_ms: Date.now(),
-      confidence: result.confidence ?? null,
+      confidence,
       audio_chunk_path: audioPath ?? null,
       session_id: activeSession?.session_id ?? null,
     });
 
     voiceLog.info(
-      `📝 Ledger: ${displayName}, text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
+      `📝 Ledger: ${displayName}, text="${text}"${confidence ? `, confidence=${confidence.toFixed(2)}` : ""}`
     );
 
     // Tier S/A: Per-user latch. S = voice reply, A = text reply.
@@ -374,8 +612,15 @@ async function handleTranscription(
     } else {
       voiceLog.debug(`🎯 VOICE GATE: not latched, no Meepo → ignore`);
     }
+
+    return clipGate;
   } catch (err) {
-    voiceLog.error(`Transcription failed:`, { err });
+    voiceLog.error(`Transcribed text handling failed:`, { err });
+    return {
+      accepted: false,
+      reasons: ["handler_error"],
+      ratio: audioMs > 0 ? activeMs / audioMs : 0,
+    };
   }
 }
 
@@ -417,6 +662,13 @@ export function startReceiver(guildId: string): void {
       return;
     }
 
+    const bargeInTriggered = voicePlaybackController.onUserSpeechStart(guildId, {
+      channelId,
+      authorId: userId,
+      source: "voice",
+      logSystemEvent: true,
+    });
+
     // Fetch fresh member data for display name
     let displayName = `User_${userId.slice(0, 8)}`;
     try {
@@ -443,6 +695,7 @@ export function startReceiver(guildId: string): void {
       pcmChunks: [],
       totalBytes: 0,
       startedAt,
+      isBargeIn: bargeInTriggered,
       remainder: Buffer.alloc(0),
       activeFrames: 0,
       totalFrames: 0,
@@ -506,48 +759,33 @@ export function startReceiver(guildId: string): void {
       const wallClockMs = now - cap.startedAt;
       const audioMs = cap.totalBytes > 0 ? Math.round((cap.totalBytes / BYTES_PER_SEC) * 1000) : 0;
       const activeMs = cap.activeFrames * FRAME_MS;
+      const baseGate = evaluateClipGate({
+        audioMs,
+        activeMs,
+        flags: {
+          isBargeIn: cap.isBargeIn,
+          checkTextGates: false,
+        },
+      });
 
-      let shouldAccept = true;
-      let gateReason = "";
+      let shouldAccept = baseGate.accepted;
+      const gateReasons = [...baseGate.reasons];
 
-      // Gate 1: min audio bytes-derived duration
-      if (audioMs < MIN_AUDIO_MS) {
-        shouldAccept = false;
-        gateReason = `too short (audioMs=${audioMs} < ${MIN_AUDIO_MS})`;
-      }
-
-      // Gate 2: activity gate (filters long-silence click padding)
-      // Long audio bypasses this entirely (conservative)
-      if (shouldAccept && audioMs < LONG_AUDIO_MS) {
-        if (activeMs < MIN_ACTIVE_MS) {
-          shouldAccept = false;
-          gateReason = `too quiet (activeMs=${activeMs} < ${MIN_ACTIVE_MS}, peak=${cap.peak})`;
-        }
-      }
-
-      // Gate 3: per-user cooldown (unless long audio)
-      if (shouldAccept && audioMs < LONG_AUDIO_MS) {
+      // Gate 3: per-user cooldown
+      if (shouldAccept) {
         const cooldowns = userCooldowns.get(guildId);
         if (cooldowns) {
           const lastAccepted = cooldowns.get(userId) ?? 0;
           const since = now - lastAccepted;
           if (since < USER_COOLDOWN_MS) {
             shouldAccept = false;
-            gateReason = `cooldown (${since}ms < ${USER_COOLDOWN_MS}ms)`;
+            gateReasons.push(`cooldown:${since}ms<${USER_COOLDOWN_MS}ms`);
           }
         }
       }
 
       try {
         if (shouldAccept) {
-          // Task 4.5: Feedback loop protection - skip STT if Meepo is currently speaking
-          if (isMeepoSpeaking(guildId)) {
-            voiceLog.info(
-              `🔕 Gated (meepo-speaking): ${cap.displayName} (${userId})`
-            );
-            return;
-          }
-
           userCooldowns.get(guildId)?.set(userId, now);
           voiceLog.info(
             `🔇 Speaking ended: ${cap.displayName} (${userId}), wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
@@ -562,9 +800,15 @@ export function startReceiver(guildId: string): void {
             });
           guildSttChain.set(guildId, newChain);
         } else {
-          voiceLog.debug(
-            `🚫 Gated: userId=${userId}, reason=${gateReason}, wallClockMs=${wallClockMs}, pcmBytes=${cap.totalBytes}, audioMs=${audioMs}, activeMs=${activeMs}, peak=${cap.peak}`
-          );
+          logGateRejection({
+            guildId,
+            userId,
+            reasons: gateReasons,
+            audioMs,
+            activeMs,
+            ratio: baseGate.ratio,
+            isBargeIn: cap.isBargeIn,
+          });
         }
 
         if (err) {
