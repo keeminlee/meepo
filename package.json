@@ -6,8 +6,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "test:smoke": "vitest run src/tests/smoke/test-megameecap-fixture.ts src/tests/smoke/test-silver-seq-fixture.ts src/tests/voice/test-voice-interrupt.ts",
     "test": "vitest run",
-    "ci:verify": "npm run typecheck && npm run lint && npm run test && npm run stopline:no-getdb-runtime && npm run stopline:no-raw-env && npm run stopline:repo-hygiene",
+    "ci:verify": "npm run typecheck && npm run lint && npm run test:smoke && npm run test && npm run stopline:no-getdb-runtime && npm run stopline:no-raw-env && npm run stopline:repo-hygiene",
     "dev:deploy": "tsx src/commands/deploy-dev.ts",
     "dev:bot": "tsx src/bot.ts",
     "doctor": "tsx src/tools/doctor.ts",

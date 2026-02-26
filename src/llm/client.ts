@@ -20,6 +20,7 @@ export async function chat(opts: {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  responseFormat?: "text" | "json_object";
 }): Promise<string> {
   const client = getOpenAIClient();
   
@@ -33,6 +34,9 @@ export async function chat(opts: {
       model,
       temperature,
       max_tokens: maxTokens,
+      ...(opts.responseFormat === "json_object"
+        ? { response_format: { type: "json_object" as const } }
+        : {}),
       messages: [
         { role: "system", content: opts.systemPrompt },
         { role: "user", content: opts.userMessage },

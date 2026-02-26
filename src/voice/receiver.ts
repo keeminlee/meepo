@@ -543,12 +543,12 @@ export async function processTranscribedVoiceText(opts: {
 
     // Tier S/A: Per-user latch. S = voice reply, A = text reply.
     const meepo = getActiveMeepo(guildId);
-    if (!meepo) return;
+    if (!meepo) return clipGate;
 
     const guildMode = getGuildMode(guildId);
     if (guildMode === "dormant") {
       voiceLog.debug(`🎯 VOICE GATE: guild mode dormant → ignore`);
-      return;
+      return clipGate;
     }
 
     const boundChannelId = meepo.channel_id;

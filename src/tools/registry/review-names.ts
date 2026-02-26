@@ -7,6 +7,12 @@ import { loadRegistry, normKey } from "../../registry/loadRegistry.js";
 import { getRegistryDirForCampaign } from "../../registry/scaffold.js";
 import { resolveCampaignSlug } from "../../campaign/guildConfig.js";
 import { getDefaultCampaignSlug } from "../../campaign/defaultCampaign.js";
+import {
+  addAliasIfMissing,
+  addIgnoreToken,
+  createRegistryEntry,
+  removePendingAtIndex,
+} from "../../registry/reviewNamesCore.js";
 
 /**
  * Phase 1B: Name Review Tool (campaign-scoped)
@@ -39,33 +45,6 @@ type PendingDecisions = {
   };
   pending: PendingCandidate[];
 };
-
-/**
- * Convert string to snake_case for ID generation.
- */
-function toSnakeCase(s: string): string {
-  return s
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-z0-9_]/g, "");
-}
-
-/**
- * Generate unique ID by checking existing registry and appending _2, _3, etc if needed.
- */
-function generateUniqueId(prefix: string, baseName: string, registry: any): string {
-  const base = `${prefix}_${toSnakeCase(baseName)}`;
-  let candidate = base;
-  let counter = 2;
-  
-  while (registry.byId.has(candidate)) {
-    candidate = `${base}_${counter}`;
-    counter++;
-  }
-  
-  return candidate;
-}
 
 /**
  * Append entry to a YAML file with proper formatting and newline separators.
@@ -131,10 +110,10 @@ function appendToIgnore(ignorePath: string, key: string): void {
   if (!data.tokens) {
     data.tokens = [];
   }
-  
-  // Avoid duplicates
-  if (!data.tokens.includes(key)) {
-    data.tokens.push(key);
+
+  const result = addIgnoreToken(data.tokens, key);
+  if (result.changed) {
+    data.tokens = result.tokens;
     fs.writeFileSync(ignorePath, yaml.stringify(data));
   }
 }
@@ -185,9 +164,9 @@ async function reviewNames(): Promise<void> {
   const campaignSlug = resolveCampaignFromArgs(args);
   console.log(`Campaign: ${campaignSlug}`);
   if (guildId) {
-    console.log(`Guild scope: ${guildId}`);
+    console.log(`Guild scope override: ${guildId}`);
   } else {
-    console.log("Guild scope: (not specified)");
+    console.log("Guild scope: campaign-wide");
   }
 
   const registryDir = getRegistryDirForCampaign(campaignSlug);
@@ -195,7 +174,7 @@ async function reviewNames(): Promise<void> {
 
   if (!fs.existsSync(pendingPath)) {
     console.log(`❌ No pending decisions file found at ${pendingPath}`);
-    console.log(`   Run scan-names.ts first (with same --campaign/--guild) to generate pending candidates.`);
+    console.log(`   Run scan-names.ts first (with the same --campaign) to generate pending candidates.`);
     return;
   }
 
@@ -206,18 +185,17 @@ async function reviewNames(): Promise<void> {
   const sourceCampaign = pendingData?.source?.campaignSlug;
   if (sourceCampaign && sourceCampaign !== campaignSlug) {
     throw new Error(
-      `Pending file campaign mismatch: pending has ${sourceCampaign}, but active campaign is ${campaignSlug}. Run review with matching --campaign/--guild.`,
+      `Pending file campaign mismatch: pending has ${sourceCampaign}, but active campaign is ${campaignSlug}. Run review with matching --campaign.`,
     );
   }
 
   const sourceGuild = pendingData?.source?.guildId ?? null;
   if (sourceGuild && guildId && sourceGuild !== guildId) {
-    throw new Error(
-      `Pending file guild mismatch: pending has guild ${sourceGuild}, but CLI --guild is ${guildId}.`,
+    console.log(
+      `⚠️  Pending file guild metadata (${sourceGuild}) differs from CLI --guild (${guildId}). Continuing because campaign scope is authoritative.`,
     );
-  }
-  if (!sourceGuild) {
-    console.log("⚠️  Pending file has no guild scope metadata (likely from older scan).");
+  } else if (!sourceGuild) {
+    console.log("ℹ️  Pending file has no guild metadata (campaign-scoped scan).\n");
   }
 
   if (!pendingData.pending || pendingData.pending.length === 0) {
@@ -284,13 +262,13 @@ async function reviewNames(): Promise<void> {
     } else if (choice === "i") {
       console.log(`🚫 Adding "${candidate.key}" to ignore list...`);
       appendToIgnore(ignorePath, candidate.key);
-      pendingData.pending.splice(index, 1);
+      pendingData.pending = removePendingAtIndex(pendingData.pending, index);
       savePending(pendingPath, pendingData);
       console.log(`✅ Added to ignore.yml`);
       continue; // Don't increment index, next candidate shifts down
     } else if (choice === "d") {
       console.log(`🗑️  Deleting "${candidate.display}" from pending...`);
-      pendingData.pending.splice(index, 1);
+      pendingData.pending = removePendingAtIndex(pendingData.pending, index);
       savePending(pendingPath, pendingData);
       console.log(`✅ Deleted from pending`);
       continue; // Don't increment index, next candidate shifts down
@@ -325,7 +303,7 @@ async function reviewNames(): Promise<void> {
       }
 
       const itemsInType = currentTypeData[selected.arrayKey] || [];
-      let existingEntryInType = null;
+      let existingEntryInType: any | null = null;
 
       // Check if canonical_name already exists in this type
       for (const item of itemsInType) {
@@ -423,18 +401,10 @@ async function reviewNames(): Promise<void> {
       // Process the entry
       if (existingEntryInType) {
         // Canonical name already exists in this type, add current name as alias
-        const currentKey = normKey(candidate.display);
+        const aliasResult = addAliasIfMissing(existingEntryInType, candidate.display);
 
-        if (!existingEntryInType.aliases) {
-          existingEntryInType.aliases = [];
-        }
-
-        const aliasExists =
-          existingEntryInType.aliases.some((a: string) => normKey(a) === currentKey) ||
-          normKey(existingEntryInType.canonical_name) === currentKey;
-
-        if (!aliasExists) {
-          existingEntryInType.aliases.push(candidate.display);
+        if (aliasResult.changed) {
+          existingEntryInType = aliasResult.entry;
 
           // Update the YAML file
           const idx = itemsInType.findIndex((item: any) => item.id === existingEntryInType.id);
@@ -450,16 +420,16 @@ async function reviewNames(): Promise<void> {
         }
 
         // Remove from pending
-        pendingData.pending.splice(index, 1);
+        pendingData.pending = removePendingAtIndex(pendingData.pending, index);
         savePending(pendingPath, pendingData);
       } else {
         // Create new entry
-        const id = generateUniqueId(selected.prefix, canonicalName, registry);
-
-        const entry: any = {
-          id,
-          canonical_name: canonicalName,
-        };
+        const entry: any = createRegistryEntry({
+          prefix: selected.prefix,
+          canonicalName,
+          candidateDisplay: candidate.display,
+          existingIds: new Set(registry.byId.keys()),
+        });
 
         // For PCs, ask for discord_user_id
         if (choice === "p") {
@@ -469,15 +439,7 @@ async function reviewNames(): Promise<void> {
           }
         }
 
-        // Add original name as alias if different from canonical name
-        const originalKey = normKey(candidate.display);
-        if (originalKey !== canonicalKey) {
-          entry.aliases = [candidate.display];
-        }
-
-        entry.notes = "";
-
-        console.log(`➕ Adding ${selected.label}: ${canonicalName} (${id})`);
+        console.log(`➕ Adding ${selected.label}: ${canonicalName} (${entry.id})`);
         if (entry.aliases) {
           console.log(`   Alias: ${entry.aliases.join(", ")}`);
         }
@@ -486,7 +448,7 @@ async function reviewNames(): Promise<void> {
         console.log(`✅ Added to ${path.basename(selected.path)}`);
 
         // Remove from pending
-        pendingData.pending.splice(index, 1);
+        pendingData.pending = removePendingAtIndex(pendingData.pending, index);
         savePending(pendingPath, pendingData);
 
         // Reload registry to pick up new entry

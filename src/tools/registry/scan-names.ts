@@ -7,6 +7,8 @@ import { getRegistryDirForCampaign } from "../../registry/scaffold.js";
 import { resolveCampaignSlug } from "../../campaign/guildConfig.js";
 import { getDefaultCampaignSlug } from "../../campaign/defaultCampaign.js";
 import { getEnv } from "../../config/rawEnv.js";
+import { resolveCampaignDbPath } from "../../dataPaths.js";
+import { pickTranscriptRows, scanNamesCore, type PendingCandidate } from "../../registry/scanNamesCore.js";
 
 /**
  * Phase 1B: Name Scanner (campaign-scoped)
@@ -20,15 +22,6 @@ import { getEnv } from "../../config/rawEnv.js";
  *   npx tsx src/tools/registry/scan-names.ts  # uses DEFAULT_CAMPAIGN_SLUG or "default"
  */
 
-// Types
-type PendingCandidate = {
-  key: string; // normalized
-  display: string; // most common surface form
-  count: number;
-  primaryCount: number;
-  examples: string[];
-};
-
 type PendingDecisions = {
   version: number;
   generated_at: string;
@@ -38,12 +31,11 @@ type PendingDecisions = {
     campaignSlug: string;
     primaryOnly: boolean;
     minCount: number;
+    sessionCount: number;
+    transcriptSource: "ledger_entries" | "bronze_transcript";
   };
   pending: PendingCandidate[];
 };
-
-// Constants
-const NAME_PHRASE_RE = /\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*\b/g;
 
 /**
  * Parse command-line arguments (dependency-free).
@@ -67,13 +59,6 @@ function parseArgs(): Record<string, string | boolean> {
 }
 
 /**
- * Escape regex special characters.
- */
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
  * Main scanner.
  */
 function resolveCampaignFromArgs(args: Record<string, string | boolean>): string {
@@ -92,24 +77,19 @@ function scanNames(): void {
   const args = parseArgs();
 
   const guildId = (args.guild as string | undefined)?.trim() || null;
-  const allowAllGuilds = args.allGuilds === true || args.allGuilds === "true";
   const campaignSlug = resolveCampaignFromArgs(args);
   console.log(`Campaign: ${campaignSlug}`);
 
-  if (!guildId && !allowAllGuilds) {
-    throw new Error(
-      "Refusing cross-guild scan by default. Pass --guild <guild_id> (recommended), or --allGuilds true to intentionally scan all guilds.",
-    );
-  }
   if (guildId) {
-    console.log(`Guild scope: ${guildId}`);
+    console.log(`Guild scope override: ${guildId}`);
   } else {
-    console.log("Guild scope: ALL (explicit)");
+    console.log("Guild scope: campaign-wide");
   }
 
   const registryDir = getRegistryDirForCampaign(campaignSlug);
   const dbPath =
     (args.db as string) ||
+    resolveCampaignDbPath(campaignSlug) ||
     getEnv("DATA_DB_PATH") ||
     getEnv("DB_PATH") ||
     "./data/bot.sqlite";
@@ -129,209 +109,92 @@ function scanNames(): void {
 
   const db = new Database(dbPath, { readonly: true });
 
-  // Build query
-  let query = "SELECT content, source, narrative_weight FROM ledger_entries WHERE content IS NOT NULL AND TRIM(content) != ''";
-  const queryParams: unknown[] = [];
+  const sessionWhereParts = [
+    "s.label IS NOT NULL",
+    "TRIM(s.label) <> ''",
+    "LOWER(TRIM(s.label)) NOT LIKE '%test%'",
+    "LOWER(TRIM(s.label)) NOT LIKE '%chat%'",
+  ];
+  const sessionParams: unknown[] = [];
   if (guildId) {
-    query += " AND guild_id = ?";
-    queryParams.push(guildId);
-  }
-  if (primaryOnly) {
-    query += " AND narrative_weight IN ('primary', 'elevated')";
+    sessionWhereParts.push("s.guild_id = ?");
+    sessionParams.push(guildId);
   }
 
-  console.log(`[scan-names] Executing query...`);
-  const rows = db.prepare(query).all(...queryParams) as Array<{
+  const sessionWhere = sessionWhereParts.join(" AND ");
+  const sessionRows = db
+    .prepare(
+      `SELECT s.session_id, s.label
+       FROM sessions s
+       WHERE ${sessionWhere}`,
+    )
+    .all(...sessionParams) as Array<{ session_id: string; label: string | null }>;
+
+  if (sessionRows.length === 0) {
+    console.log("[scan-names] No labeled non-test/non-chat sessions found for this scope.");
+  } else {
+    console.log(`[scan-names] Session scope size: ${sessionRows.length}`);
+  }
+
+  const ledgerWhereParts = [
+    "le.content IS NOT NULL",
+    "TRIM(le.content) <> ''",
+    ...sessionWhereParts,
+  ];
+  const ledgerParams: unknown[] = [...sessionParams];
+  if (primaryOnly) {
+    ledgerWhereParts.push("le.narrative_weight IN ('primary', 'elevated')");
+  }
+
+  console.log("[scan-names] Executing session-scoped ledger query...");
+  const ledgerRows = db.prepare(
+    `SELECT le.content, le.source, le.narrative_weight
+     FROM ledger_entries le
+     JOIN sessions s ON s.session_id = le.session_id
+     WHERE ${ledgerWhereParts.join(" AND ")}`,
+  ).all(...ledgerParams) as Array<{
     content: string;
     source: string;
     narrative_weight: string;
   }>;
 
-  console.log(`[scan-names] Scanned ${rows.length} rows, extracting candidates...`);
-
-  // Frequency maps
-  const candidates = new Map<string, PendingCandidate>();
-  const knownHits = new Map<string, { count: number; primaryCount: number }>();
-
-  // Build regex patterns for known names (for separate diagnostic pass)
-  const knownNamePatterns = new Map<string, RegExp>();
-  for (const char of registry.characters) {
-    // Add canonical name
-    const canNorm = normKey(char.canonical_name);
-    if (canNorm && !knownNamePatterns.has(canNorm)) {
-      knownNamePatterns.set(
-        canNorm,
-        new RegExp(`\\b${escapeRegex(canNorm)}\\b`, "i")
-      );
-    }
-
-    // Add aliases
-    for (const alias of char.aliases) {
-      const alNorm = normKey(alias);
-      if (alNorm && !knownNamePatterns.has(alNorm)) {
-        knownNamePatterns.set(
-          alNorm,
-          new RegExp(`\\b${escapeRegex(alNorm)}\\b`, "i")
-        );
-      }
-    }
-  }
-
-  // Process each row
-  let processedCount = 0;
-  for (const row of rows) {
-    processedCount++;
-    const content = row.content.trim();
-    const isPrimary = row.narrative_weight === "primary" || row.narrative_weight === "elevated";
-
-    // Extract phrases
-    const phrases = content.match(NAME_PHRASE_RE) || [];
-
-    for (const phrase of phrases) {
-      const phraseTrimmed = phrase.trim();
-      const phraseNorm = normKey(phraseTrimmed);
-
-      // Skip empty normalizations
-      if (!phraseNorm) continue;
-
-      // Skip if in ignore list
-      if (registry.ignore.has(phraseNorm)) continue;
-
-      // Skip if already in registry (don't count in phrase extraction;
-      // will count separately in known-hit pass below)
-      if (registry.byName.has(phraseNorm)) continue;
-
-      // Filter: skip if any word is a known canonical name
-      const words = phraseNorm.split(/\s+/);
-      if (words.some((w) => registry.byName.has(w))) continue;
-
-      // Filter: "The X" pattern (1-2 words after "The")
-      if (phraseTrimmed.startsWith("The ")) {
-        const restWords = phraseTrimmed.slice(4).split(/\s+/).length;
-        if (restWords <= 2) continue;
-      }
-
-      // Filter: contains digits or weird punctuation after norm
-      if (phraseNorm.match(/\d/) || phraseNorm.match(/[^a-z0-9\s]/i)) {
-        continue;
-      }
-
-      // Filter: only ignored tokens
-      const tokens = phraseNorm.split(/\s+/);
-      const allIgnored = tokens.every((t) => registry.ignore.has(t));
-      if (allIgnored) continue;
-
-      // Add / update candidate
-      if (!candidates.has(phraseNorm)) {
-        candidates.set(phraseNorm, {
-          key: phraseNorm,
-          display: phraseTrimmed,
-          count: 0,
-          primaryCount: 0,
-          examples: [],
-        });
-      }
-
-      const cand = candidates.get(phraseNorm)!;
-      cand.count++;
-      if (isPrimary) cand.primaryCount++;
-
-      // Track display form (keep most common raw form)
-      if (!cand.display || cand.examples.length === 0) {
-        cand.display = phraseTrimmed;
-      }
-
-      // Add example
-      if (cand.examples.length < maxExamples) {
-        cand.examples.push(content);
-      }
-    }
-  }
-
-  // Separate pass: count known hits with word-boundary matching
-  // (independent of phrase extraction, more permissive)
-  if (includeKnown) {
-    db.close();
-    const db2 = new Database(dbPath, { readonly: true });
-    const rows2 = db2.prepare(query).all(...queryParams) as Array<{
+  let bronzeRows: Array<{ content: string; source: string; narrative_weight: string }> = [];
+  if (ledgerRows.length === 0) {
+    console.log("[scan-names] No qualifying ledger rows found; falling back to bronze_transcript...");
+    bronzeRows = db.prepare(
+      `SELECT bt.content, bt.source_type as source, 'primary' as narrative_weight
+       FROM bronze_transcript bt
+       JOIN sessions s ON s.session_id = bt.session_id
+       WHERE bt.content IS NOT NULL
+         AND TRIM(bt.content) <> ''
+         AND ${sessionWhere}`,
+    ).all(...sessionParams) as Array<{
       content: string;
       source: string;
       narrative_weight: string;
     }>;
-
-    for (const row of rows2) {
-      const content = row.content.toLowerCase();
-      const isPrimary = row.narrative_weight === "primary" || row.narrative_weight === "elevated";
-
-      // Check each known name pattern
-      for (const [nameKey, pattern] of knownNamePatterns) {
-        if (pattern.test(content)) {
-          if (!knownHits.has(nameKey)) {
-            knownHits.set(nameKey, { count: 0, primaryCount: 0 });
-          }
-          const hit = knownHits.get(nameKey)!;
-          hit.count++;
-          if (isPrimary) hit.primaryCount++;
-        }
-      }
-    }
-    db2.close();
-  } else {
-    db.close();
   }
 
-  // Filter by minCount and sort
-  const filtered = Array.from(candidates.values())
-    .filter((c) => c.count >= minCount)
-    .sort((a, b) => {
-      if (b.count !== a.count) return b.count - a.count;
-      if (b.primaryCount !== a.primaryCount) return b.primaryCount - a.primaryCount;
-      return a.key.localeCompare(b.key);
-    });
+  const transcriptSelection = pickTranscriptRows(ledgerRows, bronzeRows);
+  const rows = transcriptSelection.rows;
+  const transcriptSource = transcriptSelection.source;
+
+  console.log(`[scan-names] Scanned ${rows.length} rows from ${transcriptSource}, extracting candidates...`);
+
+  const scanResult = scanNamesCore({
+    rows,
+    registry,
+    minCount,
+    maxExamples,
+    includeKnown,
+  });
+
+  db.close();
+
+  const filtered = scanResult.pending;
 
   console.log(`[scan-names] Found ${filtered.length} candidates (minCount=${minCount})`);
-
-  // Build known hits list (optional diagnostic)
-  const knownHitsList: Array<{ canonical_name: string; count: number; primaryCount: number }> = [];
-  if (includeKnown) {
-    const seenCharIds = new Set<string>();
-    const hitsByCharId = new Map<string, { canonical_name: string; count: number; primaryCount: number }>();
-
-    for (const [key, hits] of knownHits) {
-      const entity = registry.byName.get(key);
-      if (entity && !seenCharIds.has(entity.id)) {
-        let totalCount = 0;
-        let totalPrimary = 0;
-        
-        totalCount += hits.count;
-        totalPrimary += hits.primaryCount;
-        
-        for (const [otherKey, otherHits] of knownHits) {
-          if (otherKey !== key) {
-            const otherEntity = registry.byName.get(otherKey);
-            if (otherEntity && otherEntity.id === entity.id) {
-              totalCount += otherHits.count;
-              totalPrimary += otherHits.primaryCount;
-            }
-          }
-        }
-        
-        hitsByCharId.set(entity.id, {
-          canonical_name: entity.canonical_name,
-          count: totalCount,
-          primaryCount: totalPrimary,
-        });
-        seenCharIds.add(entity.id);
-      }
-    }
-
-    knownHitsList.push(...hitsByCharId.values());
-    knownHitsList.sort((a, b) => {
-      if (b.count !== a.count) return b.count - a.count;
-      if (b.primaryCount !== a.primaryCount) return b.primaryCount - a.primaryCount;
-      return a.canonical_name.localeCompare(b.canonical_name);
-    });
-  }
+  const knownHitsList = scanResult.knownHits;
 
   // Console output (unchanged)
   console.log("\n=== TOP UNKNOWN NAMES ===\n");
@@ -367,6 +230,8 @@ function scanNames(): void {
       campaignSlug,
       primaryOnly,
       minCount,
+      sessionCount: sessionRows.length,
+      transcriptSource,
     },
     pending: filtered,
   };

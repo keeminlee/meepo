@@ -30,6 +30,7 @@ import YAML from "yaml";
 import { getDb } from "../../db.js";
 import { buildTranscript } from "../../ledger/transcripts.js";
 import { chat } from "../../llm/client.js";
+import { parseJsonArrayFromLlm } from "../../llm/parseJsonFromLlm.js";
 import { getEnv } from "../../config/rawEnv.js";
 
 const defaultLlmModel = getEnv("LLM_MODEL", "gpt-4o-mini") ?? "gpt-4o-mini";
@@ -40,6 +41,10 @@ import { buildExcerpt } from "../../ledger/scaffoldExcerpt.js";
 import { labelScaffoldBatch } from "../../ledger/scaffoldLabel.js";
 import { applyLabels } from "../../ledger/scaffoldJoin.js";
 import type { LabeledScaffoldEvent } from "../../ledger/scaffoldBatchTypes.js";
+import { compileEventsFromTranscript } from "../../events/compileEvents/compileEventsFromTranscript.js";
+import { validateEventSpans } from "../../events/compileEvents/validateEventSpans.js";
+import { shapeEventsArtifact } from "../../events/compileEvents/shapeEventsArtifact.js";
+import type { CompiledEvent } from "../../events/compileEvents/types.js";
 
 const DEFAULT_NARRATIVE_WEIGHT = "primary";
 
@@ -101,72 +106,11 @@ function loadSessionTranscript(sessionId: string): {
 }
 
 // Type for extracted events
-interface ExtractedEvent {
-  start_index: number;
-  end_index: number;
-  title: string;
-  event_type: 'action' | 'dialogue' | 'discovery' | 'emotional' | 'conflict' | 'plan' | 'transition' | 'recap' | 'ooc_logistics';
-  is_ooc?: boolean;
-}
+type ExtractedEvent = CompiledEvent;
 
 // Validate events and collect issues (non-blocking)
 function validateEvents(events: ExtractedEvent[], totalEntries: number): { isValid: boolean; issues: string[] } {
-  const issues: string[] = [];
-
-  if (events.length === 0) {
-    issues.push("No events extracted from transcript");
-    return { isValid: false, issues };
-  }
-
-  // Check for out-of-bounds indices
-  for (let i = 0; i < events.length; i++) {
-    if (events[i].start_index < 0 || events[i].start_index >= totalEntries) {
-      issues.push(
-        `Event ${i} "${events[i].title}": start_index ${events[i].start_index} out of bounds [0, ${totalEntries - 1}]`
-      );
-    }
-    if (events[i].end_index < 0 || events[i].end_index >= totalEntries) {
-      issues.push(
-        `Event ${i} "${events[i].title}": end_index ${events[i].end_index} out of bounds [0, ${totalEntries - 1}]`
-      );
-    }
-  }
-
-  if (issues.length > 0) {
-    return { isValid: false, issues };
-  }
-
-  // Check ascending order
-  for (let i = 1; i < events.length; i++) {
-    if (events[i].start_index <= events[i - 1].start_index) {
-      issues.push(
-        `Events ${i - 1} and ${i} not in ascending order: event ${i} starts at ${events[i].start_index} after event ${i - 1} starts at ${events[i - 1].start_index}`
-      );
-    }
-  }
-
-  // Check for overlaps
-  for (let i = 0; i < events.length - 1; i++) {
-    if (events[i].end_index >= events[i + 1].start_index) {
-      issues.push(
-        `Events ${i} and ${i + 1} overlap: event ${i} (${events[i].start_index}-${events[i].end_index}) overlaps with event ${i + 1} (${events[i + 1].start_index}-${events[i + 1].end_index})`
-      );
-    }
-  }
-
-  // Check for gaps (warning only, not blocking)
-  for (let i = 0; i < events.length - 1; i++) {
-    const gap = events[i + 1].start_index - events[i].end_index - 1;
-    if (gap > 0) {
-      issues.push(
-        `⚠️  Gap: ${gap} message(s) between event ${i} (ends at ${events[i].end_index}) and event ${i + 1} (starts at ${events[i + 1].start_index})`
-      );
-    }
-  }
-
-  const isValid = !issues.some((issue) => !issue.startsWith("⚠️"));
-
-  return { isValid, issues };
+  return validateEventSpans(events, totalEntries);
 }
 
 // Call LLM to extract events
@@ -221,17 +165,18 @@ NOTE:
 - "ooc_logistics" events MUST have is_ooc = true.
 - "recap" events usually have is_ooc = false unless clearly meta.
 
-------------------------------------------------------------
 Output Format
 ------------------------------------------------------------
 
-Return a JSON array of events in this format:
+Return a JSON object with an "events" array in this format:
 
-[
+{
+  "events": [
   { "start_index": 0, "end_index": 4, "title": "DM recap and table setup", "event_type": "recap", "is_ooc": false },
   { "start_index": 5, "end_index": 12, "title": "Party enters the tavern", "event_type": "transition", "is_ooc": false },
   { "start_index": 13, "end_index": 20, "title": "Cara challenges Evanora's decision", "event_type": "conflict", "is_ooc": false }
-]
+  ]
+}
 
 ------------------------------------------------------------
 Requirements
@@ -243,7 +188,7 @@ Requirements
 - Each event must represent a distinct narrative beat
 - Titles should be brief and descriptive
 - Choose EXACTLY ONE event_type per event
-- Return ONLY the JSON array, no other text`;
+- Return ONLY valid JSON, no markdown fences or commentary`;
 
   const userMessage = `Extract narrative events from this D&D session transcript (${totalMessages} messages total).\n\n${transcript}`;
 
@@ -253,10 +198,11 @@ Requirements
     model: defaultLlmModel,
     temperature: 0.2,
     maxTokens: 16000,
+    responseFormat: "json_object",
   });
 
   try {
-    const events = JSON.parse(response) as ExtractedEvent[];
+    const events = parseJsonArrayFromLlm(response, ["events", "items", "data"]) as ExtractedEvent[];
     return events;
   } catch (err) {
     throw new Error(`Failed to parse LLM response as JSON: ${response}\n\nError: ${err}`);
@@ -516,31 +462,19 @@ function exportEventsToJSON(
 
   const outputPath = path.join(eventsDir, `events_${sessionLabel}.json`);
 
-  const eventData = events.map((event) => {
-    const startEntry = entries[event.start_index];
-    const timestamp_ms = startEntry ? startEntry.timestamp : Date.now();
-
-    const participants = new Set<string>();
-    for (let i = event.start_index; i <= event.end_index && i < entries.length; i++) {
-      participants.add(entries[i].author);
-    }
-
-    return {
-      id: `<generated-at-upsert>`,
-      session_id: sessionId,
-      event_type: event.event_type,
-      participants: Array.from(participants),
-      description: event.title,
-      confidence: 0.85,
-      start_index: event.start_index,
-      end_index: event.end_index,
-      timestamp_ms,
-      created_at_ms: `<generated-at-upsert>`,
-      is_ooc: event.is_ooc ? 1 : 0,
-    };
+  const artifact = shapeEventsArtifact({
+    sessionId,
+    sessionLabel,
+    events,
+    lines: entries.map((entry, index) => ({
+      index,
+      author: entry.author,
+      content: entry.content,
+      timestamp: entry.timestamp,
+    })),
   });
 
-  fs.writeFileSync(outputPath, JSON.stringify({ events: eventData }, null, 2), "utf-8");
+  fs.writeFileSync(outputPath, JSON.stringify(artifact, null, 2), "utf-8");
   console.log(`✓ Event rows preview exported to ${outputPath}`);
 }
 
@@ -869,8 +803,19 @@ export async function compileAndExportSession(sessionLabel: string, force: boole
       if (useLegacyExtraction) {
         // Legacy: Monolithic LLM extraction (single call for entire session)
         console.log("\n[LEGACY] Calling LLM to extract events (monolithic)...");
-        const extracted = await extractEvents(transcript, entries.length);
-        events = extracted;
+        const compiled = await compileEventsFromTranscript({
+          lines: entries.map((entry) => ({
+            index: entry.index,
+            author: entry.author,
+            content: entry.content,
+            timestamp: entry.timestamp,
+          })),
+          llm: {
+            extractEvents: async ({ transcript: segmentTranscript, totalMessages }) =>
+              extractEvents(segmentTranscript, totalMessages),
+          },
+        });
+        events = compiled.events;
         needsUpsert = true;
         console.log(`✓ Extracted ${events.length} events`);
       } else {

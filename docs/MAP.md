@@ -209,6 +209,43 @@ Where to debug:
 - Script header docs + flags in each tool file
 - `src/causal/INDEX.md` for silver-lane runs
 
+## 9. Silver-Seq Lane
+
+Deterministic transcript segmentation lane for sequential summarization and online event compilation.
+
+Entrypoints:
+- `src/tools/silver/run-silver-seq.ts`
+- `src/tools/silver/sweep-silver-seq.ts`
+
+Core modules:
+- `src/silver/seq/segmentTranscript.ts`
+- `src/silver/seq/classifyLineKind.ts`
+- `src/silver/seq/metrics.ts`
+
+Outputs:
+- `data/artifacts/silver_seq/<session>/<run_id>/params.json`
+- `data/artifacts/silver_seq/<session>/<run_id>/transcript_hash.json`
+- `data/artifacts/silver_seq/<session>/<run_id>/eligible_mask.json`
+- `data/artifacts/silver_seq/<session>/<run_id>/segments.json`
+- `data/artifacts/silver_seq/<session>/<run_id>/metrics.json`
+
+## 10. Online Events Lane
+
+Online analogue to ingest event compilation with shared pure compile core.
+
+Entrypoints:
+- Legacy compatibility: `src/tools/events/compile-and-export-events.ts`
+- Canonical live lane: `src/tools/events/compile-and-export-events-live.ts`
+
+Shared core:
+- `src/events/compileEvents/compileEventsFromTranscript.ts`
+- `src/events/compileEvents/validateEventSpans.ts`
+- `src/events/compileEvents/shapeEventsArtifact.ts`
+- `src/events/compileEvents/types.ts`
+
+Artifact location:
+- Campaign-scoped events export under `data/campaigns/<campaign>/exports/events/`
+
 ## 8. Docs Index and Deprecation Rules
 
 - Operational snapshot: `docs/CURRENT_STATE.md`

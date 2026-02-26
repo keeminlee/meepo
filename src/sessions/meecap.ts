@@ -201,6 +201,32 @@ export async function generateMeecapStub(args: {
   }
 }
 
+export async function generateNarrativeMeecapFromTranscript(args: {
+  sessionId: string;
+  transcript: string;
+  entryCount: number;
+  model?: string;
+}): Promise<{ narrative: string; validationErrors: string[] }> {
+  const prompts = buildNarrativeMeecapPrompts({
+    sessionId: args.sessionId,
+    transcript: args.transcript,
+    entryCount: args.entryCount,
+  });
+
+  const modelOutput = await chat({
+    systemPrompt: prompts.systemPrompt,
+    userMessage: prompts.userMessage,
+    model: args.model,
+    maxTokens: 16000,
+  });
+
+  const validationErrors = validateMeecapNarrative(modelOutput);
+  return {
+    narrative: modelOutput.trim(),
+    validationErrors,
+  };
+}
+
 /**
  * Generate narrative prose Meecap (story-like retelling).
  * 
