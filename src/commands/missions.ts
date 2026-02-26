@@ -3,7 +3,7 @@
  * V0 Mission system integrated with meep economy
  */
 
-import { SlashCommandBuilder, TextChannel } from "discord.js";
+import { SlashCommandBuilder, TextChannel, GuildMember } from "discord.js";
 import { log } from "../utils/logger.js";
 import { getActiveMeepo } from "../meepo/state.js";
 import { getDiscordClient } from "../bot.js";
@@ -11,14 +11,10 @@ import { getMeepBalance } from "../meeps/meeps.js";
 import { creditMeep, MEEP_MAX_BALANCE } from "../meeps/engine.js";
 import { getMissionById, listMissions } from "../missions/loadMissions.js";
 import { getActiveSessionId } from "../sessions/sessionRuntime.js";
-import { getDb } from "../db.js";
+import { isElevated } from "../security/isElevated.js";
+import type { CommandCtx } from "./index.js";
 
 const missionsLog = log.withScope("missions");
-
-function isDm(interaction: any): boolean {
-  const DM_ROLE_ID = process.env.DM_ROLE_ID || "";
-  return interaction.member?.roles?.cache?.has(DM_ROLE_ID) ?? false;
-}
 
 function resolvePcFromUser(user: any): { canonical_name: string; discord_user_id: string } | null {
   try {
@@ -32,10 +28,10 @@ function resolvePcFromUser(user: any): { canonical_name: string; discord_user_id
   }
 }
 
-async function handleClaim(interaction: any, guildId: string): Promise<void> {
-  if (!isDm(interaction)) {
+async function handleClaim(interaction: any, guildId: string, db: any): Promise<void> {
+  if (!isElevated(interaction.member as GuildMember | null)) {
     await interaction.reply({
-      content: "Only the DM can record mission claims, meep!",
+      content: "Not authorized.",
       ephemeral: true,
     });
     return;
@@ -64,8 +60,7 @@ async function handleClaim(interaction: any, guildId: string): Promise<void> {
   }
 
   const targetPC = resolvePcFromUser(target);
-  const db = getDb();
-  
+
   const existing = db
     .prepare(
       `SELECT id FROM mission_claims
@@ -146,12 +141,12 @@ async function handleClaim(interaction: any, guildId: string): Promise<void> {
   await interaction.reply({ content: response, ephemeral: true });
 }
 
-async function handleStatus(interaction: any, guildId: string): Promise<void> {
+async function handleStatus(interaction: any, guildId: string, db: any): Promise<void> {
   const target = interaction.options.getUser("target");
 
-  if (target && target.id !== interaction.user.id && !isDm(interaction)) {
+  if (target && target.id !== interaction.user.id && !isElevated(interaction.member as GuildMember | null)) {
     await interaction.reply({
-      content: "You can only check your own mission status, meep!",
+      content: "Not authorized.",
       ephemeral: true,
     });
     return;
@@ -165,7 +160,6 @@ async function handleStatus(interaction: any, guildId: string): Promise<void> {
     return;
   }
 
-  const db = getDb();
   const claims = db
     .prepare(
       `SELECT mission_id, status FROM mission_claims
@@ -240,16 +234,22 @@ export const missions = {
     )
     .addSubcommand((sub) => sub.setName("list").setDescription("List all available missions")),
 
-  async execute(interaction: any): Promise<void> {
+  async execute(interaction: any, ctx: CommandCtx | null): Promise<void> {
     const subcommand = interaction.options.getSubcommand();
     const guildId = interaction.guildId;
+    const db = ctx?.db;
+
+    if (!guildId || !db) {
+      await interaction.reply({ content: "Missions only work in a server.", ephemeral: true });
+      return;
+    }
 
     switch (subcommand) {
       case "claim":
-        await handleClaim(interaction, guildId);
+        await handleClaim(interaction, guildId, db);
         break;
       case "status":
-        await handleStatus(interaction, guildId);
+        await handleStatus(interaction, guildId, db);
         break;
       case "list":
         await handleList(interaction, guildId);

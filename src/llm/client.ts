@@ -1,10 +1,11 @@
 import OpenAI from "openai";
+import { cfg } from "../config/env.js";
 
 let openaiClient: OpenAI | null = null;
 
 export function getOpenAIClient(): OpenAI {
   if (!openaiClient) {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = cfg.openai.apiKey;
     if (!apiKey) {
       throw new Error("OPENAI_API_KEY not configured in .env");
     }
@@ -23,9 +24,9 @@ export async function chat(opts: {
   const client = getOpenAIClient();
   
   // Read from env with fallbacks to hardcoded defaults
-  const model = opts.model ?? process.env.LLM_MODEL ?? "gpt-4o-mini";
-  const temperature = opts.temperature ?? Number(process.env.LLM_TEMPERATURE ?? "0.3");
-  const maxTokens = opts.maxTokens ?? Number(process.env.LLM_MAX_TOKENS ?? "200");
+  const model = opts.model ?? cfg.llm.model;
+  const temperature = opts.temperature ?? cfg.llm.temperature;
+  const maxTokens = opts.maxTokens ?? cfg.llm.maxTokens;
 
   try {
     const response = await client.chat.completions.create({

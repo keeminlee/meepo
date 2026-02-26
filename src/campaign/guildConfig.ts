@@ -3,7 +3,7 @@
  * New guilds get a row on first resolution; campaign_slug defaults to slugify(guildName).
  */
 
-import { getDb } from "../db.js";
+import { getControlDb } from "../db.js";
 import { slugify } from "../utils/slugify.js";
 import { getDefaultCampaignSlug } from "./defaultCampaign.js";
 import { log } from "../utils/logger.js";
@@ -21,7 +21,7 @@ export type GuildConfigRow = {
  * Get guild config if it exists.
  */
 export function getGuildConfig(guildId: string): GuildConfigRow | null {
-  const db = getDb();
+  const db = getControlDb();
   const row = db
     .prepare(
       "SELECT guild_id, campaign_slug, dm_role_id, default_persona_id FROM guild_config WHERE guild_id = ? LIMIT 1"
@@ -38,7 +38,7 @@ export function ensureGuildConfig(guildId: string, guildName?: string | null): G
   let row = getGuildConfig(guildId);
   if (row) return row;
 
-  const db = getDb();
+  const db = getControlDb();
   const slug = guildName ? slugify(guildName) : getDefaultCampaignSlug();
   db.prepare(
     `INSERT INTO guild_config (guild_id, campaign_slug, dm_role_id, default_persona_id)
@@ -80,7 +80,7 @@ export function resolveCampaignSlug(opts: {
  * Set campaign slug for a guild (override). Creates guild_config if needed.
  */
 export function setGuildCampaignSlug(guildId: string, campaignSlug: string): void {
-  const db = getDb();
+  const db = getControlDb();
   ensureGuildConfig(guildId, null);
   db.prepare("UPDATE guild_config SET campaign_slug = ? WHERE guild_id = ?").run(campaignSlug, guildId);
   campaignLog.info(`Set campaign_slug=${campaignSlug} for guild=${guildId}`);
@@ -90,7 +90,7 @@ export function setGuildCampaignSlug(guildId: string, campaignSlug: string): voi
  * Set default persona for a guild (e.g. rei for Panda server). Creates guild_config if needed.
  */
 export function setGuildDefaultPersonaId(guildId: string, personaId: string | null): void {
-  const db = getDb();
+  const db = getControlDb();
   ensureGuildConfig(guildId, null);
   db.prepare("UPDATE guild_config SET default_persona_id = ? WHERE guild_id = ?").run(personaId, guildId);
   campaignLog.info(`Set default_persona_id=${personaId ?? "null"} for guild=${guildId}`);

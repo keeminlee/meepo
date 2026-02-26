@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { log } from "../utils/logger.js";
+import { getEnv, getEnvBool } from "../config/rawEnv.js";
 
 const ledgerLog = log.withScope("ledger");
 
@@ -14,8 +15,8 @@ const ledgerLog = log.withScope("ledger");
  * - Logs warning if invalid
  */
 
-const GPTCAPS_ENABLED = process.env.MEEPO_GPTCAPS_ENABLED === "true";
-const GPTCAPS_DIR = process.env.MEEPO_GPTCAPS_DIR || "./data/GPTcaps";
+const GPTCAPS_ENABLED = getEnvBool("MEEPO_GPTCAPS_ENABLED", false);
+const GPTCAPS_DIR = getEnv("MEEPO_GPTCAPS_DIR", "./data/GPTcaps") ?? "./data/GPTcaps";
 
 export interface GptcapBeat {
   text: string;

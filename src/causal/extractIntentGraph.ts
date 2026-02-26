@@ -3,7 +3,7 @@ import { buildDmNameSet, detectDmSpeaker, isDmSpeaker } from "../ledger/scaffold
 import type { RegimeChunk, RegimeMasks } from "./pruneRegimes.js";
 import { buildEligibilityMask } from "./eligibilityMask.js";
 import { CAUSAL_KERNEL_VERSION, extractCausalLinksKernel } from "./extractCausalLinksKernel.js";
-import { persistCausalLinks } from "./persistCausalLinks.js";
+import { persistCausalLinks } from "../tools/causal/persistCausalLinks.js";
 import type { CausalLink } from "./types.js";
 import { distanceScoreHill } from "./textFeatures.js";
 import type { CandidateEdge, ConsequenceNode, GraphParams, IntentNode, LinkGraphEdge, LinkGraphNode } from "./intentGraphTypes.js";

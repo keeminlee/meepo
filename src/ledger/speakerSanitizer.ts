@@ -1,4 +1,5 @@
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
+import { resolveCampaignSlug } from "../campaign/guildConfig.js";
 import { loadRegistry } from "../registry/loadRegistry.js";
 
 /**
@@ -21,7 +22,8 @@ export function getSanitizedSpeakerName(
   authorId: string,
   authorName: string
 ): string {
-  const db = getDb();
+  const campaignSlug = resolveCampaignSlug({ guildId });
+  const db = getDbForCampaign(campaignSlug);
 
   // 1. Check speaker_masks table (highest priority)
   const maskRow = db

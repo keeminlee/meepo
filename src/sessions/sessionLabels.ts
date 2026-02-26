@@ -4,7 +4,8 @@
  * Query DB for latest "real" session label, filtering out test/chat sessions.
  */
 
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
+import { getDefaultCampaignSlug } from "../campaign/defaultCampaign.js";
 import { log } from "../utils/logger.js";
 
 const labelsLog = log.withScope("session-labels");
@@ -14,14 +15,14 @@ const labelsLog = log.withScope("session-labels");
  *
  * Filters:
  * - Only sessions with label that is NOT NULL and NOT empty (after trim)
- * - Excludes labels containing "test" (case-insensitive)
- * - Excludes labels containing "chat" (case-insensitive)
+ * - Includes only canonical sessions (kind='canon')
+ * - Excludes lab-mode sessions (mode_at_start='lab')
  * - Only considers "live" sessions (skips ingest-media for now, can config if needed)
  *
  * @returns session label (trimmed) or null if none found
  */
 export function getLatestRealSessionLabel(): string | null {
-  const db = getDb();
+  const db = getDbForCampaign(getDefaultCampaignSlug());
 
   const row = db
     .prepare(
@@ -29,8 +30,8 @@ export function getLatestRealSessionLabel(): string | null {
        WHERE source = 'live'
          AND label IS NOT NULL
          AND TRIM(label) != ''
-         AND LOWER(label) NOT LIKE '%test%'
-         AND LOWER(label) NOT LIKE '%chat%'
+         AND kind = 'canon'
+         AND mode_at_start <> 'lab'
        ORDER BY created_at_ms DESC
        LIMIT 1`
     )

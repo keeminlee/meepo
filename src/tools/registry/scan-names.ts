@@ -6,6 +6,7 @@ import { loadRegistry, normKey } from "../../registry/loadRegistry.js";
 import { getRegistryDirForCampaign } from "../../registry/scaffold.js";
 import { resolveCampaignSlug } from "../../campaign/guildConfig.js";
 import { getDefaultCampaignSlug } from "../../campaign/defaultCampaign.js";
+import { getEnv } from "../../config/rawEnv.js";
 
 /**
  * Phase 1B: Name Scanner (campaign-scoped)
@@ -33,6 +34,8 @@ type PendingDecisions = {
   generated_at: string;
   source: {
     db: string;
+    guildId: string | null;
+    campaignSlug: string;
     primaryOnly: boolean;
     minCount: number;
   };
@@ -88,11 +91,28 @@ function resolveCampaignFromArgs(args: Record<string, string | boolean>): string
 function scanNames(): void {
   const args = parseArgs();
 
+  const guildId = (args.guild as string | undefined)?.trim() || null;
+  const allowAllGuilds = args.allGuilds === true || args.allGuilds === "true";
   const campaignSlug = resolveCampaignFromArgs(args);
   console.log(`Campaign: ${campaignSlug}`);
 
+  if (!guildId && !allowAllGuilds) {
+    throw new Error(
+      "Refusing cross-guild scan by default. Pass --guild <guild_id> (recommended), or --allGuilds true to intentionally scan all guilds.",
+    );
+  }
+  if (guildId) {
+    console.log(`Guild scope: ${guildId}`);
+  } else {
+    console.log("Guild scope: ALL (explicit)");
+  }
+
   const registryDir = getRegistryDirForCampaign(campaignSlug);
-  const dbPath = (args.db as string) || process.env.DB_PATH || "./data/bot.sqlite";
+  const dbPath =
+    (args.db as string) ||
+    getEnv("DATA_DB_PATH") ||
+    getEnv("DB_PATH") ||
+    "./data/bot.sqlite";
   const minCount = parseInt((args.minCount as string) || "3", 10);
   const primaryOnly = args.primaryOnly === true || args.primaryOnly === "true";
   const maxExamples = parseInt((args.maxExamples as string) || "3", 10);
@@ -111,12 +131,17 @@ function scanNames(): void {
 
   // Build query
   let query = "SELECT content, source, narrative_weight FROM ledger_entries WHERE content IS NOT NULL AND TRIM(content) != ''";
+  const queryParams: unknown[] = [];
+  if (guildId) {
+    query += " AND guild_id = ?";
+    queryParams.push(guildId);
+  }
   if (primaryOnly) {
     query += " AND narrative_weight IN ('primary', 'elevated')";
   }
 
   console.log(`[scan-names] Executing query...`);
-  const rows = db.prepare(query).all() as Array<{
+  const rows = db.prepare(query).all(...queryParams) as Array<{
     content: string;
     source: string;
     narrative_weight: string;
@@ -228,7 +253,7 @@ function scanNames(): void {
   if (includeKnown) {
     db.close();
     const db2 = new Database(dbPath, { readonly: true });
-    const rows2 = db2.prepare(query).all() as Array<{
+    const rows2 = db2.prepare(query).all(...queryParams) as Array<{
       content: string;
       source: string;
       narrative_weight: string;
@@ -338,6 +363,8 @@ function scanNames(): void {
     generated_at: new Date().toISOString(),
     source: {
       db: dbPath,
+      guildId,
+      campaignSlug,
       primaryOnly,
       minCount,
     },

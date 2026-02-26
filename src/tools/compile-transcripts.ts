@@ -24,6 +24,8 @@ import {
   getOfficialSessionByLabel,
   type OfficialSessionRow,
 } from "../sessions/officialSessions.js";
+import { resolveCampaignTranscriptsDir } from "../dataPaths.js";
+import { getDefaultCampaignSlug } from "../campaign/defaultCampaign.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -190,11 +192,12 @@ function hasBronzeTranscript(sessionId: string): boolean {
 // ── Core: Write human-readable file ─────────────────────────────────────────
 
 function saveTranscriptFile(
+  campaignSlug: string,
   label: string,
   session: OfficialSessionRow,
   lines: BronzeLine[]
 ): string {
-  const outDir = path.resolve("data", "transcripts");
+  const outDir = resolveCampaignTranscriptsDir(campaignSlug, { forWrite: true, ensureExists: true });
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
   const filename = `transcript_${label}.txt`;
@@ -220,6 +223,7 @@ function saveTranscriptFile(
 // ── Core: Compile one session ─────────────────────────────────────────────────
 
 export function compileTranscript(
+  campaignSlug: string,
   session: OfficialSessionRow,
   force: boolean = false
 ): { linesWritten: number; skipped: boolean } {
@@ -243,7 +247,7 @@ export function compileTranscript(
     : 0;
 
   upsertBronzeTranscript(session_id, lines);
-  const filepath = saveTranscriptFile(label, session, lines);
+  const filepath = saveTranscriptFile(campaignSlug, label, session, lines);
 
   const fuseNote = isLive && fusedCount > 0
     ? ` (${rawEntries.length} raw → ${lines.length} lines, ${fusedCount} voice entries fused)`
@@ -259,11 +263,13 @@ function parseArgs(): {
   mode: "all" | "session" | null;
   sessionLabel: string | null;
   force: boolean;
+  campaign: string;
 } {
   const args = process.argv.slice(2);
   let mode: "all" | "session" | null = null;
   let sessionLabel: string | null = null;
   let force = false;
+  let campaign = getDefaultCampaignSlug();
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--all") {
@@ -274,14 +280,17 @@ function parseArgs(): {
       i++;
     } else if (args[i] === "--force") {
       force = true;
+    } else if (args[i] === "--campaign" && args[i + 1]) {
+      campaign = args[i + 1].trim() || getDefaultCampaignSlug();
+      i++;
     }
   }
 
-  return { mode, sessionLabel, force };
+  return { mode, sessionLabel, force, campaign };
 }
 
 async function main(): Promise<void> {
-  const { mode, sessionLabel, force } = parseArgs();
+  const { mode, sessionLabel, force, campaign } = parseArgs();
 
   if (!mode) {
     console.error(
@@ -307,7 +316,7 @@ async function main(): Promise<void> {
     }
 
     console.log(`\nCompiling transcript for ${session.label} (${session.source})...`);
-    const result = compileTranscript(session, force);
+    const result = compileTranscript(campaign, session, force);
 
     if (result.skipped) {
       console.log(`  ⏭  ${session.label}: already compiled (use --force to recompile).`);
@@ -331,7 +340,7 @@ async function main(): Promise<void> {
   for (const label of labels) {
     const session = getOfficialSessionByLabel(db, label)!;
     try {
-      const result = compileTranscript(session, force);
+      const result = compileTranscript(campaign, session, force);
       if (result.skipped) {
         console.log(`  ⏭  ${label}: already compiled.`);
         skipped++;

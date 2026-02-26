@@ -22,9 +22,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { log } from "../utils/logger.js";
+import { cfg } from "../config/env.js";
 
 const audioFxLog = log.withScope("audio-fx");
-const DEBUG_FX = process.env.DEBUG_VOICE === "true";
 const require = createRequire(import.meta.url);
 let ffmpegCommandCache: string | null = null;
 
@@ -33,8 +33,7 @@ function resolveFfmpegCommand(): string {
     return ffmpegCommandCache;
   }
 
-  const envOverride =
-    process.env.FFMPEG_PATH?.trim() || process.env.FFMPEG_BIN?.trim() || null;
+  const envOverride = cfg.audioFx.ffmpegPath?.trim() || null;
   if (envOverride) {
     ffmpegCommandCache = envOverride;
     return ffmpegCommandCache;
@@ -68,23 +67,23 @@ export async function applyPostTtsFx(
   input: Buffer,
   format: "mp3" | "wav"
 ): Promise<Buffer> {
-  const enabled = (process.env.AUDIO_FX_ENABLED ?? "false").toLowerCase() === "true";
+  const enabled = cfg.audioFx.enabled;
 
   if (!enabled) {
-    if (DEBUG_FX) {
+    if (cfg.voice.debug) {
       audioFxLog.debug("Disabled");
     }
     return input;
   }
 
   try {
-    const pitch = parseFloat(process.env.AUDIO_FX_PITCH ?? "1.0");
-    const reverbEnabled = (process.env.AUDIO_FX_REVERB ?? "false").toLowerCase() === "true";
-    const reverbWet = parseFloat(process.env.AUDIO_FX_REVERB_WET ?? "0.3");
-    const reverbDelay = parseInt(process.env.AUDIO_FX_REVERB_DELAY_MS ?? "20", 10);
-    const reverbDecay = parseFloat(process.env.AUDIO_FX_REVERB_DECAY ?? "0.4");
+    const pitch = cfg.audioFx.pitch;
+    const reverbEnabled = cfg.audioFx.reverb.enabled;
+    const reverbWet = cfg.audioFx.reverb.wet;
+    const reverbDelay = cfg.audioFx.reverb.delayMs;
+    const reverbDecay = cfg.audioFx.reverb.decay;
 
-    if (DEBUG_FX || pitch !== 1.0 || reverbEnabled) {
+    if (cfg.voice.debug || pitch !== 1.0 || reverbEnabled) {
       audioFxLog.debug(
         `Enabled (pitch=${pitch.toFixed(2)}, reverb=${reverbEnabled})`
       );
@@ -102,16 +101,16 @@ export async function applyPostTtsFx(
     if (reverbEnabled) {
       // Create multiple staggered delays to simulate a reverb tail
       // This is better than single aecho because it creates a more natural decay
-      const reverbRoom = parseInt(process.env.AUDIO_FX_REVERB_ROOM_MS ?? "100", 10); // room size in ms
-      const reverbDamping = parseFloat(process.env.AUDIO_FX_REVERB_DAMPING ?? "0.7"); // high freq damping
+      const reverbRoom = cfg.audioFx.reverb.roomMs; // room size in ms
+      const reverbDamping = cfg.audioFx.reverb.damping; // high freq damping
       
       // Build reverb using freeverb-style multi-tap delays
       // Multiple echoes at different delays create the reverb "tail"
       const taps = [
-        { delayMs: 30, gain: 0.4 },
-        { delayMs: 60, gain: 0.3 },
-        { delayMs: 100, gain: 0.2 },
-        { delayMs: 150, gain: 0.15 },
+        { delayMs: Math.max(10, Math.round(reverbDelay * 1.0)), gain: Math.max(0.05, reverbDecay * 1.0) },
+        { delayMs: Math.max(20, Math.round(reverbDelay * 3.0)), gain: Math.max(0.05, reverbDecay * 0.75) },
+        { delayMs: Math.max(40, Math.round(reverbRoom * 1.0)), gain: Math.max(0.05, reverbDecay * 0.5) },
+        { delayMs: Math.max(60, Math.round(reverbRoom * 1.5)), gain: Math.max(0.05, reverbDecay * 0.35 * reverbDamping) },
       ];
       
       // Construct aecho with multiple taps: delays separated by | and gains by |

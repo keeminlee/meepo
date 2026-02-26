@@ -1,10 +1,11 @@
 ﻿import "dotenv/config";
 import { REST, Routes } from "discord.js";
 import { commandList } from "./index.js";
+import { getEnv } from "../config/rawEnv.js";
 
-const token = process.env.DISCORD_TOKEN;
-const clientId = process.env.DISCORD_CLIENT_ID;
-const guildId = process.env.GUILD_ID;
+const token = getEnv("DISCORD_TOKEN");
+const clientId = getEnv("DISCORD_CLIENT_ID");
+const guildId = getEnv("GUILD_ID");
 
 if (!token || !clientId || !guildId) {
   console.error("Missing env vars. Need DISCORD_TOKEN, DISCORD_CLIENT_ID, GUILD_ID");

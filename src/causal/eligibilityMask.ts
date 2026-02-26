@@ -186,6 +186,59 @@ export function getExclusionReasons(mask: EligibilityMask, lineIndex: number): A
 }
 
 /**
+ * Log a short eligibility summary to stderr (excluded ranges by reason).
+ * If lineIndex is set, also log which ranges cover that line (to debug why a line is ineligible).
+ * If span is set [start, end], log all excluded ranges that overlap that line range.
+ * Note: OOC cache HITs only show OOC spans; combat spans are applied separately and appear here.
+ */
+export function logEligibilitySummary(
+  mask: EligibilityMask,
+  opts?: { lineIndex?: number; span?: [number, number] },
+): void {
+  const byReason = new Map<string, { count: number; ranges: ExcludedRange[] }>();
+  for (const r of mask.excluded_ranges) {
+    const cur = byReason.get(r.reason) ?? { count: 0, ranges: [] };
+    cur.count++;
+    cur.ranges.push(r);
+    byReason.set(r.reason, cur);
+  }
+  const parts = Array.from(byReason.entries()).map(([reason, { count }]) => `${reason}: ${count}`);
+  console.error(`[eligibility] excluded ranges: ${parts.join(", ")}`);
+  for (const [reason, { ranges }] of byReason.entries()) {
+    const spans = ranges.map((r) => `[${r.start_index}-${r.end_index}]`).join(" ");
+    console.error(`[eligibility]   ${reason}: ${spans}`);
+  }
+  if (opts?.lineIndex != null) {
+    const covering = mask.excluded_ranges.filter(
+      (r) => opts.lineIndex! >= r.start_index && opts.lineIndex! <= r.end_index,
+    );
+    if (covering.length) {
+      console.error(
+        `[eligibility] line ${opts.lineIndex} ineligible: ${covering.map((r) => `${r.reason} [${r.start_index}-${r.end_index}]`).join(", ")}`,
+      );
+    } else {
+      console.error(`[eligibility] line ${opts.lineIndex} has no excluded range (eligible)`);
+    }
+  }
+  if (opts?.span != null) {
+    const [spanStart, spanEnd] = opts.span;
+    const overlapping = mask.excluded_ranges.filter(
+      (r) => r.end_index >= spanStart && r.start_index <= spanEnd,
+    );
+    if (overlapping.length) {
+      console.error(
+        `[eligibility] span L${spanStart}–L${spanEnd} overlaps ${overlapping.length} excluded range(s):`,
+      );
+      for (const r of overlapping) {
+        console.error(`  ${r.reason} [${r.start_index}-${r.end_index}]`);
+      }
+    } else {
+      console.error(`[eligibility] span L${spanStart}–L${spanEnd} has no overlapping excluded range (all eligible)`);
+    }
+  }
+}
+
+/**
  * Find next eligible line starting from after startIndex
  */
 export function findNextEligibleLine(

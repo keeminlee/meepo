@@ -20,18 +20,20 @@ export interface TtsProvider {
   synthesize(text: string): Promise<Buffer>;
 }
 
+import { cfg } from "../../config/env.js";
+
 /**
  * Get provider info for user-facing messages.
  */
 export function getTtsProviderInfo(): { name: string; description: string } {
-  const provider = process.env.TTS_PROVIDER ?? "noop";
+  const provider = cfg.tts.provider;
 
   switch (provider) {
     case "noop":
       return { name: "noop", description: "text-to-speech disabled" };
     case "openai": {
-      const model = process.env.TTS_OPENAI_MODEL ?? "gpt-4o-mini-tts";
-      const voice = process.env.TTS_VOICE ?? "alloy";
+      const model = cfg.tts.model;
+      const voice = cfg.tts.voice;
       return {
         name: "openai",
         description: `OpenAI TTS (${model}, voice: ${voice})`,
@@ -55,7 +57,7 @@ export async function getTtsProvider(): Promise<TtsProvider> {
   // Return cached promise if already initialized
   if (providerPromise) return providerPromise;
 
-  const provider = process.env.TTS_PROVIDER ?? "noop";
+  const provider = cfg.tts.provider;
 
   // Create the promise and cache it
   providerPromise = (async () => {

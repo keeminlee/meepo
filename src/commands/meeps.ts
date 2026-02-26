@@ -9,7 +9,7 @@
  * - history: View transaction history for self or other PC
  */
 
-import { SlashCommandBuilder, TextChannel } from 'discord.js';
+import { SlashCommandBuilder, TextChannel, GuildMember } from 'discord.js';
 import { log } from '../utils/logger.js';
 import { loadRegistry } from '../registry/loadRegistry.js';
 import { getActiveMeepo } from '../meepo/state.js';
@@ -21,6 +21,8 @@ import {
   formatMeepHistory,
 } from '../meeps/meeps.js';
 import { spendMeep, creditMeep, MEEP_MAX_BALANCE } from '../meeps/engine.js';
+import { isElevated } from '../security/isElevated.js';
+import type { CommandCtx } from './index.js';
 
 const meepsLog = log.withScope("meeps");
 
@@ -38,16 +40,6 @@ function resolvePcFromUser(user: any): { canonical_name: string; discord_user_id
     canonical_name: pc.canonical_name,
     discord_user_id: pc.discord_user_id!,
   };
-}
-
-/**
- * Check if interaction user is DM (has DM_ROLE_ID)
- */
-function isDm(interaction: any): boolean {
-  const dmRoleId = process.env.DM_ROLE_ID;
-  if (!dmRoleId) return false;
-  const member = interaction.member;
-  return member?.roles?.cache?.has(dmRoleId) ?? false;
 }
 
 export const meeps = {
@@ -101,7 +93,7 @@ export const meeps = {
         )
     ),
 
-  async execute(interaction: any) {
+  async execute(interaction: any, _ctx: CommandCtx | null) {
     const guildId = interaction.guildId as string;
     const sub = interaction.options.getSubcommand();
 
@@ -178,9 +170,9 @@ async function handleSpend(interaction: any, guildId: string): Promise<void> {
  */
 async function handleReward(interaction: any, guildId: string): Promise<void> {
   // Guard: DM-only
-  if (!isDm(interaction)) {
+  if (!isElevated(interaction.member as GuildMember | null)) {
     await interaction.reply({
-      content: 'You can only check your own balance, meep!',
+      content: 'Not authorized.',
       ephemeral: true,
     });
     return;
@@ -267,9 +259,9 @@ async function handleBalance(interaction: any, guildId: string): Promise<void> {
   meepsLog.debug(`/meeps balance invoked: invoker=${invoker.username}, target=${checkUser.username}`);
 
   // Guard: Non-DM checking someone else's balance
-  if (target && !isDm(interaction)) {
+  if (target && !isElevated(interaction.member as GuildMember | null)) {
     await interaction.reply({
-      content: 'You can only check your own balance, meep!',
+      content: 'Not authorized.',
       ephemeral: true,
     });
     return;
@@ -305,9 +297,9 @@ async function handleHistory(interaction: any, guildId: string): Promise<void> {
   const checkPC = resolvePcFromUser(checkUser);
 
   // Guard: Non-DM checking someone else's history
-  if (target && !isDm(interaction)) {
+  if (target && !isElevated(interaction.member as GuildMember | null)) {
     await interaction.reply({
-      content: 'You can only check your own history, meep!',
+      content: 'Not authorized.',
       ephemeral: true,
     });
     return;

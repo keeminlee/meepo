@@ -1,9 +1,16 @@
 ﻿import { randomUUID } from "node:crypto";
 import { log } from "../utils/logger.js";
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
+import { resolveCampaignSlug } from "../campaign/guildConfig.js";
 import { startSession, endSession } from "../sessions/sessions.js";
+import { getGuildMode, sessionKindForMode } from "../sessions/sessionRuntime.js";
 
 const meepoLog = log.withScope("meepo");
+
+function getMeepoDbForGuild(guildId: string) {
+  const campaignSlug = resolveCampaignSlug({ guildId });
+  return getDbForCampaign(campaignSlug);
+}
 
 export type MeepoInstance = {
   id: string;
@@ -18,7 +25,7 @@ export type MeepoInstance = {
 };
 
 export function getActiveMeepo(guildId: string): MeepoInstance | null {
-  const db = getDb();
+  const db = getMeepoDbForGuild(guildId);
   const row = db
     .prepare(
       "SELECT * FROM npc_instances WHERE guild_id = ? AND is_active = 1 ORDER BY created_at_ms DESC LIMIT 1"
@@ -33,7 +40,7 @@ export function wakeMeepo(opts: {
   channelId: string;
   personaSeed?: string | null;
 }): MeepoInstance {
-  const db = getDb();
+  const db = getMeepoDbForGuild(opts.guildId);
   const now = Date.now();
   const id = randomUUID();
 
@@ -59,7 +66,16 @@ export function wakeMeepo(opts: {
   meepoLog.info(`Woke up as form_id: meepo`);
 
   // Day 4: auto-start session on wake
-  startSession(opts.guildId);
+  const mode = getGuildMode(opts.guildId);
+  if (mode === "dormant") {
+    meepoLog.info(`Guild mode is dormant; skipping auto session start on wake (guild=${opts.guildId})`);
+  } else {
+    startSession(opts.guildId, null, null, {
+      source: "live",
+      modeAtStart: mode,
+      kind: sessionKindForMode(mode),
+    });
+  }
 
   return {
     id,
@@ -75,7 +91,7 @@ export function wakeMeepo(opts: {
 }
 
 export function sleepMeepo(guildId: string): number {
-  const db = getDb();
+  const db = getMeepoDbForGuild(guildId);
   
   // Day 4: auto-end session on sleep
   endSession(guildId);
@@ -87,7 +103,7 @@ export function sleepMeepo(guildId: string): number {
 }
 
 export function transformMeepo(guildId: string, formId: string): { success: boolean; error?: string } {
-  const db = getDb();
+  const db = getMeepoDbForGuild(guildId);
   
   const active = getActiveMeepo(guildId);
   if (!active) {

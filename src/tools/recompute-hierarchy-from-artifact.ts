@@ -214,15 +214,25 @@ function recomputeFromRound1Links(input: {
     metrics: round1LinkMetrics,
   });
 
+  const annealParams = input.params.anneal as {
+    windowLinks?: number;
+    hillTau: number;
+    hillSteepness: number;
+    betaLex: number;
+    lambda?: number;
+    topKContrib?: number;
+    ambientMassBoost?: boolean;
+  };
+
   const anneal1 = annealLinks({
     links: round1LinkNodes,
-    windowLinks: input.params.anneal.windowLinks,
-    hillTau: input.params.anneal.hillTau,
-    hillSteepness: input.params.anneal.hillSteepness,
-    betaLex: input.params.anneal.betaLex,
-    lambda: input.params.anneal.lambda,
-    topKContrib: input.params.anneal.topKContrib,
-    ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
+    windowLinks: annealParams.windowLinks ?? 8,
+    hillTau: annealParams.hillTau,
+    hillSteepness: annealParams.hillSteepness,
+    betaLex: annealParams.betaLex,
+    lambda: annealParams.lambda ?? 0.8,
+    topKContrib: annealParams.topKContrib ?? 5,
+    ambientMassBoost: annealParams.ambientMassBoost ?? false,
   });
 
   allRounds.push({
@@ -291,13 +301,13 @@ function recomputeFromRound1Links(input: {
 
     const anneal2 = annealLinks({
       links: round2LinkNodes,
-      windowLinks: input.params.anneal.windowLinks,
-      hillTau: input.params.anneal.hillTau,
-      hillSteepness: input.params.anneal.hillSteepness,
-      betaLex: input.params.anneal.betaLex,
-      lambda: input.params.anneal.lambda,
-      topKContrib: input.params.anneal.topKContrib,
-      ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
+      windowLinks: annealParams.windowLinks ?? 8,
+      hillTau: annealParams.hillTau,
+      hillSteepness: annealParams.hillSteepness,
+      betaLex: annealParams.betaLex,
+      lambda: annealParams.lambda ?? 0.8,
+      topKContrib: annealParams.topKContrib ?? 5,
+      ambientMassBoost: annealParams.ambientMassBoost ?? false,
     });
 
     propagateInternalStrength(anneal2.links, prevLevelMap);
@@ -369,13 +379,13 @@ function recomputeFromRound1Links(input: {
 
     const anneal3 = annealLinks({
       links: round3LinkNodes,
-      windowLinks: input.params.anneal.windowLinks,
-      hillTau: input.params.anneal.hillTau,
-      hillSteepness: input.params.anneal.hillSteepness,
-      betaLex: input.params.anneal.betaLex,
-      lambda: input.params.anneal.lambda,
-      topKContrib: input.params.anneal.topKContrib,
-      ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
+      windowLinks: annealParams.windowLinks ?? 8,
+      hillTau: annealParams.hillTau,
+      hillSteepness: annealParams.hillSteepness,
+      betaLex: annealParams.betaLex,
+      lambda: annealParams.lambda ?? 0.8,
+      topKContrib: annealParams.topKContrib ?? 5,
+      ambientMassBoost: annealParams.ambientMassBoost ?? false,
     });
 
     propagateInternalStrength(anneal3.links, prevLevelMap);

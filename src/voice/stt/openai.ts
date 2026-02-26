@@ -12,6 +12,7 @@ import { log } from "../../utils/logger.js";
 import { SttProvider } from "./provider.js";
 import { pcmToWav } from "./wav.js";
 import { toFile } from "openai/uploads";
+import { cfg } from "../../config/env.js";
 
 const sttLog = log.withScope("stt");
 
@@ -42,11 +43,11 @@ export class OpenAiSttProvider implements SttProvider {
   private prompt?: string;
 
   constructor() {
-    this.model = process.env.STT_OPENAI_MODEL ?? "gpt-4o-mini-transcribe";
-    this.language = process.env.STT_LANGUAGE ?? "en";
-    this.prompt = process.env.STT_PROMPT;
+    this.model = cfg.stt.model;
+    this.language = cfg.stt.language;
+    this.prompt = cfg.stt.prompt;
 
-    if (process.env.DEBUG_VOICE === "true") {
+    if (cfg.voice.debug) {
       sttLog.debug(
         `OpenAI provider initialized: model=${this.model}, language=${this.language}${this.prompt ? ", prompt enabled" : ""}`
       );

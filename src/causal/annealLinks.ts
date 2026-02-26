@@ -1,6 +1,17 @@
 import { distanceScoreHill } from "./textFeatures.js";
 import type { CausalLink } from "./types.js";
 import type { CyclePhaseMetrics, MetricStats, NeighborEdgeTrace } from "./cycleTypes.js";
+import {
+  evidenceFromDistanceLexical,
+  evidenceToStrength,
+  localityToTau,
+  type LeverParams,
+} from "./evidenceStrength.js";
+import {
+  buildLexicalCorpusStats,
+  lexicalSignals,
+  scoreTokenOverlapSimple,
+} from "./lexicalSignals.js";
 
 export interface AnnealInput {
   links: CausalLink[];
@@ -14,6 +25,7 @@ export interface AnnealInput {
   includeContextText?: boolean;
   contextByLinkId?: Map<string, string[]>;
   tierThresholds?: { beat: number; event: number; scene: number };
+  levers?: LeverParams;
 }
 
 export interface AnnealOutput {
@@ -24,11 +36,7 @@ export interface AnnealOutput {
 }
 
 function scoreTokenOverlap(text1: string, text2: string): number {
-  const tokens1 = new Set(text1.toLowerCase().split(/\s+/).filter((t) => t.length > 2));
-  const tokens2 = new Set(text2.toLowerCase().split(/\s+/).filter((t) => t.length > 2));
-  if (tokens1.size === 0 || tokens2.size === 0) return 0;
-  const overlap = Array.from(tokens1).filter((t) => tokens2.has(t)).length;
-  return overlap / Math.max(tokens1.size, tokens2.size);
+  return scoreTokenOverlapSimple(text1, text2);
 }
 
 function getLinkText(link: CausalLink, contextByLinkId?: Map<string, string[]>, includeContextText?: boolean): string {
@@ -77,9 +85,13 @@ export function annealLinks(input: AnnealInput): AnnealOutput {
   const links = input.links.map((l) => ({ ...l }));
   const centers = links.map(getCenterIndex);
   const texts = links.map((l) => getLinkText(l, input.contextByLinkId, input.includeContextText));
+  const corpusStats = input.levers ? buildLexicalCorpusStats(texts) : undefined;
   const massPrev = links.map((l) => l.mass ?? l.link_mass ?? l.mass_base ?? l.cause_mass ?? 0);
+  // Keep intrinsic base fixed across anneal iterations.
+  const massBaseIntrinsic = links.map((l) => l.mass_base ?? l.link_mass ?? l.mass ?? l.cause_mass ?? 0);
   const tierPrev = links.map((l) => l.tier ?? "link");
 
+  const tau = input.levers ? localityToTau(input.levers.locality) : input.hillTau;
   const neighborEdges: NeighborEdgeTrace[] = [];
   const massBoosts: number[] = [];
   const massBases: number[] = [];
@@ -92,9 +104,20 @@ export function annealLinks(input: AnnealInput): AnnealOutput {
       if (i === j) continue;
       const dist = Math.abs(centers[i] - centers[j]);
       if (dist > input.windowLinks) continue;
-      const distStrength = distanceScoreHill(dist, input.hillTau, input.hillSteepness);
-      const lexical = scoreTokenOverlap(texts[i], texts[j]);
-      const strengthLl = distStrength * (1 + input.betaLex * lexical);
+      const distEvidence = distanceScoreHill(dist, tau, input.hillSteepness);
+      const { lexicalScore: lexical, keywordOverlap } = input.levers
+        ? lexicalSignals(texts[i], texts[j], corpusStats)
+        : { lexicalScore: scoreTokenOverlap(texts[i], texts[j]), keywordOverlap: 0 };
+      const strengthLl = input.levers
+        ? evidenceToStrength(
+            evidenceFromDistanceLexical(
+              distEvidence,
+              Math.min(1, lexical * (1 + keywordOverlap * (input.levers.keywordLexBonus ?? 0.25))),
+            ),
+            input.levers.coupling,
+            input.levers.strengthScale ?? 2,
+          )
+        : distEvidence * (1 + input.betaLex * lexical);
       const contrib = strengthLl * massPrev[j];
       totalContrib += contrib;
       strengthLlValues.push(strengthLl);
@@ -117,8 +140,9 @@ export function annealLinks(input: AnnealInput): AnnealOutput {
     const top = candidates.slice(0, input.topKContrib);
     neighborEdges.push(...top);
 
-    const boost = input.ambientMassBoost ? totalContrib * input.lambda : 0;
-    const base = massPrev[i];
+    // Neighbor-based boost is always applied (anneal redistributes mass). ambientMassBoost can add extra term later if needed.
+    const boost = totalContrib * input.lambda;
+    const base = massBaseIntrinsic[i];
     const nextMass = base + boost;
 
     links[i].mass_base = base;
@@ -153,14 +177,15 @@ export function annealLinks(input: AnnealInput): AnnealOutput {
     "link_id\tmass_base\tmass_prev\tmass_new\tboost\ttier_prev\ttier_new\ttop_contributor_link_id",
   ];
   for (let i = 0; i < links.length; i++) {
-    const base = massPrev[i];
-    const nextMass = links[i].mass ?? base;
+    const base = massBaseIntrinsic[i];
+    const prevMass = massPrev[i];
+    const nextMass = links[i].mass ?? prevMass;
     const boost = links[i].mass_boost ?? 0;
     const topContributor = neighborEdges.find((edge) => edge.to_link_id === links[i].id)?.from_link_id ?? "";
     const prev = tierPrev[i] ?? "link";
     const next = links[i].tier ?? "link";
     lines.push(
-      `${links[i].id}\t${base.toFixed(3)}\t${base.toFixed(3)}\t${nextMass.toFixed(3)}\t${boost.toFixed(3)}\t${prev}\t${next}\t${topContributor}`,
+      `${links[i].id}\t${base.toFixed(3)}\t${prevMass.toFixed(3)}\t${nextMass.toFixed(3)}\t${boost.toFixed(3)}\t${prev}\t${next}\t${topContributor}`,
     );
   }
 

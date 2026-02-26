@@ -34,6 +34,7 @@ export interface ConvoTailContext {
  */
 export function buildConvoTailContext(
   session_id: string | null,
+  guildId: string,
   limit: number = 60
 ): ConvoTailContext {
   // No session = no tail
@@ -41,7 +42,7 @@ export function buildConvoTailContext(
     return { tailBlock: "" };
   }
 
-  const turns = getConvoTail(session_id, limit);
+  const turns = getConvoTail(session_id, guildId, limit);
 
   // No turns = no tail
   if (turns.length === 0) {

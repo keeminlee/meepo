@@ -8,6 +8,8 @@
  * 3. getDefaultCampaignSlug() — always use this when 1 and 2 are not available.
  */
 
+import { getEnv } from "../config/rawEnv.js";
+
 const DEFAULT_CAMPAIGN_SLUG_ENV = "DEFAULT_CAMPAIGN_SLUG";
 const FALLBACK_SLUG = "default";
 
@@ -16,7 +18,7 @@ const FALLBACK_SLUG = "default";
  * Set DEFAULT_CAMPAIGN_SLUG in .env to match your primary campaign (e.g. faeterra-main).
  */
 export function getDefaultCampaignSlug(): string {
-  const fromEnv = process.env[DEFAULT_CAMPAIGN_SLUG_ENV];
+  const fromEnv = getEnv(DEFAULT_CAMPAIGN_SLUG_ENV);
   if (fromEnv != null && fromEnv.trim() !== "") {
     return fromEnv.trim();
   }

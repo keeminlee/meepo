@@ -70,6 +70,17 @@ const ACTION_VERBS = new Set([
   "check",
 ]);
 
+// "Insight check!", "Perception check", etc. — explicit request to roll a skill
+const SKILL_NAMES =
+  "insight|perception|athletics|acrobatics|arcana|deception|history|intimidation|investigation|medicine|nature|performance|persuasion|religion|stealth|survival|animal handling|sleight of hand";
+const SKILL_CHECK_INTENT = new RegExp(`\\b(${SKILL_NAMES})\\s+check\\b`, "i");
+// Just "Insight!" or "Perception." at end of line (short call-out to roll)
+const SKILL_CALLOUT_INTENT = new RegExp(`^\\s*(${SKILL_NAMES})\\s*[!.]?\\s*$`, "i");
+// Liberal L1 recall: any mention of a skill name in the line counts as intent (lower precision, strength/tier filter later)
+const SKILL_NAMES_FOR_ANYWHERE =
+  "insight|perception|athletics|acrobatics|arcana|deception|history|intimidation|investigation|medicine|nature|performance|persuasion|religion|stealth|survival|animal\\s+handling|sleight\\s+of\\s+hand";
+const SKILL_NAME_ANYWHERE = new RegExp(`\\b(${SKILL_NAMES_FOR_ANYWHERE})\\b`, "i");
+
 const REQUEST_PATTERNS: Array<{ type: IntentType; pattern: RegExp }> = [
   { type: "request", pattern: /^\s*(can i|can we|may i|could i|could we|would i|would i be able to)\b/i },
   { type: "request", pattern: /^\s*(i want to|i'd like to|i would like to|i'm going to|i am going to|i kind of want to|i sorta want to)\b/i },
@@ -113,41 +124,46 @@ export function detectIntent(text: string): IntentDetection {
     return { isIntent: false, intent_type: "declare", strongIntent: false, weakIntent: false };
   }
 
+  // Single mass for all causes (no inflation by type); strength/tier filter later
   return {
     isIntent: true,
     intent_type: cause.cause_type,
-    strongIntent: cause.mass >= 0.7,
-    weakIntent: cause.mass < 0.7,
+    strongIntent: true,
+    weakIntent: false,
   };
 }
 
 export function detectCause(text: string): CauseDetection {
   const stripped = stripPunctuation(text);
+
+  // Single leaf mass for all causes (no inflation by type)
+  const LEAF_MASS = 1;
+
+  if (SKILL_CHECK_INTENT.test(text)) {
+    return { isCause: true, cause_type: "request", mass: LEAF_MASS };
+  }
+  if (SKILL_CALLOUT_INTENT.test(text)) {
+    return { isCause: true, cause_type: "request", mass: LEAF_MASS };
+  }
+
   if (stripped.length < 6) {
     return { isCause: false, cause_type: "declare", mass: 0 };
   }
 
   const wordCount = countWords(stripped);
 
-  const hasRollOrActionKeyword = /\b(roll|check|attack|cast|spell|investigate|inspect|search|open|unlock|sneak|hide|persuade|deceive)\b/i.test(text);
-
   if (STRONG_QUESTION_START.test(text)) {
-    const hasAction = STRONG_QUESTION_START.test(text)
-      ? hasActionVerbWithin(text, 6)
-      : false;
+    const hasAction = hasActionVerbWithin(text, 6);
     const hasQuestionMark = /\?\s*$/.test(text);
     if (hasQuestionMark || wordCount >= 4 || hasAction) {
-      const mass = hasRollOrActionKeyword || hasAction ? 0.9 : 0.75;
-      return { isCause: true, cause_type: "question", mass };
+      return { isCause: true, cause_type: "question", mass: LEAF_MASS };
     }
   }
 
   for (const entry of REQUEST_PATTERNS) {
     if (entry.pattern.test(text)) {
-      const hasAction = hasActionVerbWithin(text, 3);
-      if (hasAction) {
-        const mass = hasRollOrActionKeyword ? 0.95 : 0.85;
-        return { isCause: true, cause_type: entry.type, mass };
+      if (hasActionVerbWithin(text, 3)) {
+        return { isCause: true, cause_type: entry.type, mass: LEAF_MASS };
       }
     }
   }
@@ -155,17 +171,19 @@ export function detectCause(text: string): CauseDetection {
   for (const entry of DECLARE_PATTERNS) {
     if (entry.pattern.test(text)) {
       if (wordCount >= 4) {
-        const mass = hasRollOrActionKeyword ? 1.0 : 0.9;
-        return { isCause: true, cause_type: entry.type, mass };
+        return { isCause: true, cause_type: entry.type, mass: LEAF_MASS };
       }
     }
   }
 
   for (const entry of WEAK_INTENT_PATTERNS) {
     if (entry.pattern.test(text)) {
-      const mass = hasRollOrActionKeyword ? 0.65 : 0.45;
-      return { isCause: true, cause_type: entry.type, mass };
+      return { isCause: true, cause_type: entry.type, mass: LEAF_MASS };
     }
+  }
+
+  if (SKILL_NAME_ANYWHERE.test(text)) {
+    return { isCause: true, cause_type: "request", mass: LEAF_MASS };
   }
 
   return { isCause: false, cause_type: "declare", mass: 0 };

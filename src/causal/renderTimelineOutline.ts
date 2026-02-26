@@ -9,9 +9,14 @@ type SpanItem = {
   end: number;
   center: number;
   mass: number;
+  mass_base: number;
+  mass_boost: number;
   strength: number;
   parent_id: string | null;
+  cause_anchor_index: number | null;
+  effect_anchor_index: number | null;
   absorbed_singleton_anchors: number[];
+  context_line_indices: number[];
 };
 
 function fmtCenter(value: number): string {
@@ -40,6 +45,8 @@ export function renderTimelineOutline(input: {
   nodes: CausalLink[];
   transcript: TranscriptEntry[];
   fullNodeMap?: Map<string, CausalLink>;
+  /** Optional per-node absorption rounds (e.g. node id -> [1,2]) for line absorption tags. */
+  annealRoundsByNodeId?: Map<string, number[]>;
   includeMeta?: boolean;
 }): string {
   const nodeById = input.fullNodeMap ?? new Map(input.nodes.map((node) => [node.id, node]));
@@ -142,6 +149,8 @@ export function renderTimelineOutline(input: {
       const level = node.level ?? 1;
       const center = node.center_index ?? (span.start + span.end) / 2;
       const mass = node.mass ?? node.link_mass ?? node.mass_base ?? 0;
+      const massBase = node.mass_base ?? node.link_mass ?? mass;
+      const massBoost = node.mass_boost ?? 0;
       const strength = node.strength_internal ?? node.strength_bridge ?? node.strength_ce ?? node.score ?? 0;
       return {
         id: node.id,
@@ -151,10 +160,15 @@ export function renderTimelineOutline(input: {
         end: span.end,
         center,
         mass,
+        mass_base: massBase,
+        mass_boost: massBoost,
         strength,
         parent_id: parentById.get(node.id) ?? null,
+        cause_anchor_index: node.cause_anchor_index ?? node.intent_anchor_index ?? null,
+        effect_anchor_index: node.effect_anchor_index ?? node.consequence_anchor_index ?? null,
         absorbed_singleton_anchors:
           inferKind(node) === "composite" ? collectSingletonAnchors(node, new Set<string>()) : [],
+        context_line_indices: node.context_line_indices ?? [],
       };
     })
     .sort((a, b) => {
@@ -193,6 +207,33 @@ export function renderTimelineOutline(input: {
   let active: SpanItem[] = [];
   const activeById = new Set<string>();
   const spanById = new Map(spans.map((span) => [span.id, span]));
+  // L0 leaves absorbed into links during ANNEAL/ABSORPTION:
+  // map transcript line -> absorbing center + absorption rounds.
+  const annealedTargetsByLine = new Map<number, { targets: number[]; rounds: number[] }>();
+  for (const span of spans) {
+    // Require explicit absorption-round provenance so annotations always include step info.
+    const rounds = input.annealRoundsByNodeId?.get(span.id) ?? [];
+    const annealed = rounds.length > 0;
+    if (!annealed) continue;
+
+    const sourceLines = new Set<number>();
+    for (const idx of span.absorbed_singleton_anchors) {
+      sourceLines.add(idx);
+    }
+    for (const idx of span.context_line_indices) {
+      sourceLines.add(idx);
+    }
+
+    for (const idx of sourceLines) {
+      const cur = annealedTargetsByLine.get(idx) ?? { targets: [], rounds: [] };
+      cur.targets.push(span.center);
+      for (const r of rounds) {
+        if (!cur.rounds.includes(r)) cur.rounds.push(r);
+      }
+      cur.rounds.sort((a, b) => a - b);
+      annealedTargetsByLine.set(idx, cur);
+    }
+  }
 
   const countHigherActiveLevels = (level: number): number => {
     const levels = new Set<number>();
@@ -244,7 +285,12 @@ export function renderTimelineOutline(input: {
     }
 
     const indent = "  ".repeat(getActiveHierarchyDepth());
-    lines.push(`${indent}- ${renderTranscriptLine(entry)}`);
+    const annealed = annealedTargetsByLine.get(entry.line_index);
+    const annealedPhrase =
+      annealed && annealed.targets.length > 0
+        ? ` absorbed into L${fmtCenter(annealed.targets[0] ?? entry.line_index)}${annealed.rounds.length > 0 ? ` (absorption r${annealed.rounds.join(",r")})` : ""}`
+        : "";
+    lines.push(`${indent}- ${renderTranscriptLine(entry)}${annealedPhrase}`);
 
     active = active.filter((span) => span.end > entry.line_index);
     activeById.clear();

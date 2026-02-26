@@ -6,6 +6,10 @@ import {
   formatMeepoInteractionsSection,
 } from "../ledger/meepoInteractions.js";
 import { log } from "../utils/logger.js";
+import { resolveCampaignSlug } from "../campaign/guildConfig.js";
+import { getDbForCampaign } from "../db.js";
+import { getGoldMemoriesForQuery } from "../gold/goldMemoryRepo.js";
+import { cfg } from "../config/env.js";
 
 const llmLog = log.withScope("llm");
 
@@ -61,10 +65,14 @@ export async function buildMeepoPrompt(opts: {
   let meepoMemoriesSection = "";
   let memoryRefs: string[] = [];
   if (opts.mindspace) {
+    const meepoMindDb = opts.guildId
+      ? getDbForCampaign(resolveCampaignSlug({ guildId: opts.guildId }))
+      : undefined;
     const result = await getMeepoMemoriesSection({
       mindspace: opts.mindspace,
       includeLegacy: isCampaign,
       personaId: opts.personaId,
+      db: meepoMindDb,
     });
     meepoMemoriesSection = result.section;
     memoryRefs = result.memoryRefs;
@@ -83,6 +91,23 @@ export async function buildMeepoPrompt(opts: {
     tierSection = formatMeepoInteractionsSection(opts.guildId, interactions);
   }
 
+  let goldSection = "";
+  if (cfg.features.goldMemoryEnabled && opts.guildId && opts.recentContext) {
+    const campaignSlug = resolveCampaignSlug({ guildId: opts.guildId });
+    const snippets = getGoldMemoriesForQuery({
+      guildId: opts.guildId,
+      campaignSlug,
+      query: opts.recentContext,
+      limit: 5,
+    });
+    if (snippets.length > 0) {
+      const lines = snippets
+        .map((m, idx) => `${idx + 1}) ${m.character}: ${m.summary}`)
+        .join("\n");
+      goldSection = `\nGOLD MEMORY (curated campaign canon):\n${lines}\n`;
+    }
+  }
+
   const styleGuard = persona.styleGuard || "";
   if (!persona.styleGuard) {
     console.warn(`Warning: Persona ${opts.personaId} missing styleGuard`);
@@ -94,6 +119,7 @@ export async function buildMeepoPrompt(opts: {
     persona.identity +
     memory +
     meepoMemoriesSection +
+    goldSection +
     tierSection +
     partyMemory +
     convoTail +

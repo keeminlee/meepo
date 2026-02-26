@@ -8,7 +8,8 @@
  * Fallback: live query from ledger_entries (used when bronze hasn't been compiled).
  */
 
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
+import { getDefaultCampaignSlug } from "../campaign/defaultCampaign.js";
 
 export interface TranscriptEntry {
   line_index: number;
@@ -43,6 +44,11 @@ export interface GetTranscriptLinesOptions {
   primaryOnly?: boolean;
   maxLines?: number;
   onMissing?: "skip" | "placeholder";
+  db?: any;
+}
+
+function resolveTranscriptDb(db?: any): any {
+  return db ?? getDbForCampaign(getDefaultCampaignSlug());
 }
 
 function toRequestedLineNumbers(selector: TranscriptLineSelector): number[] {
@@ -104,14 +110,15 @@ function toRequestedLineNumbers(selector: TranscriptLineSelector): number[] {
  */
 export function buildTranscript(
   sessionId: string,
-  primaryOnly: boolean = true
+  primaryOnly: boolean = true,
+  db?: any
 ): TranscriptEntry[] {
   // Prefer bronze when available
-  const bronze = tryGetBronzeTranscript(sessionId);
+  const bronze = tryGetBronzeTranscript(sessionId, db);
   if (bronze !== null) return bronze;
 
   // Fallback: live query from ledger_entries
-  return buildTranscriptFromLedger(sessionId, primaryOnly);
+  return buildTranscriptFromLedger(sessionId, primaryOnly, db);
 }
 
 /**
@@ -120,14 +127,15 @@ export function buildTranscript(
  */
 export function buildTranscriptFromLedger(
   sessionId: string,
-  primaryOnly: boolean = true
+  primaryOnly: boolean = true,
+  db?: any
 ): TranscriptEntry[] {
-  const db = getDb();
+  const conn = resolveTranscriptDb(db);
 
   const narrativeWeightFilter = primaryOnly ? "AND narrative_weight = ?" : "";
   const params = primaryOnly ? [sessionId, "primary"] : [sessionId];
 
-  const rows = db
+  const rows = conn
     .prepare(
       `SELECT author_name, content, content_norm, timestamp_ms
        FROM ledger_entries
@@ -182,7 +190,7 @@ export function getTranscriptLinesDetailed(
   const primaryOnly = opts?.primaryOnly ?? true;
   const maxLines = opts?.maxLines;
   const onMissing = opts?.onMissing ?? "skip";
-  const transcript = buildTranscript(sessionId, primaryOnly);
+  const transcript = buildTranscript(sessionId, primaryOnly, opts?.db);
   let requestedLines = toRequestedLineNumbers(lineNumbersOrRange);
 
   if (typeof maxLines === "number" && Number.isFinite(maxLines) && maxLines >= 0) {
@@ -221,10 +229,10 @@ export function getTranscriptLinesDetailed(
  * Read bronze_transcript for a session. Returns null if not yet compiled.
  * Internal — callers should use buildTranscript() which auto-falls back.
  */
-function tryGetBronzeTranscript(sessionId: string): TranscriptEntry[] | null {
-  const db = getDb();
+function tryGetBronzeTranscript(sessionId: string, db?: any): TranscriptEntry[] | null {
+  const conn = resolveTranscriptDb(db);
 
-  const rows = db
+  const rows = conn
     .prepare(
       `SELECT line_index, author_name, content, timestamp_ms
        FROM bronze_transcript
@@ -252,8 +260,8 @@ function tryGetBronzeTranscript(sessionId: string): TranscriptEntry[] | null {
  * Read bronze_transcript for a session.
  * Throws if bronze hasn't been compiled yet (use compile-transcripts first).
  */
-export function getBronzeTranscript(sessionId: string): TranscriptEntry[] {
-  const rows = tryGetBronzeTranscript(sessionId);
+export function getBronzeTranscript(sessionId: string, db?: any): TranscriptEntry[] {
+  const rows = tryGetBronzeTranscript(sessionId, db);
   if (rows === null) {
     throw new Error(
       `No bronze transcript found for session ${sessionId}. ` +
@@ -266,6 +274,6 @@ export function getBronzeTranscript(sessionId: string): TranscriptEntry[] {
 /**
  * Returns true if bronze_transcript has been compiled for this session.
  */
-export function hasBronzeTranscript(sessionId: string): boolean {
-  return tryGetBronzeTranscript(sessionId) !== null;
+export function hasBronzeTranscript(sessionId: string, db?: any): boolean {
+  return tryGetBronzeTranscript(sessionId, db) !== null;
 }

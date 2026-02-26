@@ -10,6 +10,7 @@ import * as path from 'path';
 import { log } from '../utils/logger.js';
 import { setSpeaking, getSpeakingState, onSpeakingStateChange, setPresence, getPresenceState, onPresenceStateChange } from './speakingState.js';
 import { loadRegistry } from '../registry/loadRegistry.js';
+import { cfg } from '../config/env.js';
 
 const overlayLog = log.withScope("overlay");
 
@@ -17,8 +18,8 @@ const app = express();
 let httpServer: HttpServer | null = null;
 let wss: WebSocketServer | null = null;
 
-const overlayPort = parseInt(process.env.OVERLAY_PORT || '7777', 10);
-const dmRoleId = process.env.DM_ROLE_ID || '';
+const overlayPort = cfg.overlay.port;
+const dmRoleId = cfg.discord.dmRoleId || '';
 
 // In-memory broadcast queue (buffer messages if no active connections)
 const activeBroadcasters = new Set<WebSocket>();

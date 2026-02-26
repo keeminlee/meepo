@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { CausalLinksRunMeta } from "../causal/persistCausalLinks.js";
+import type { CausalLinksRunMeta } from "./causal/persistCausalLinks.js";
 
 export type ProvenanceSource = "db" | "recomputed";
 

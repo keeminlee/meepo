@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { log } from "./utils/logger.js";
+import { getDefaultCampaignSlug } from "./campaign/defaultCampaign.js";
+import { resolveCampaignPidPath } from "./dataPaths.js";
 
 const bootLog = log.withScope("boot");
 
@@ -8,7 +10,7 @@ const bootLog = log.withScope("boot");
  * PID lock file to prevent multiple bot instances running simultaneously
  */
 
-const LOCK_FILE = path.join(process.cwd(), "data", "bot.pid");
+const LOCK_FILE = resolveCampaignPidPath(getDefaultCampaignSlug());
 
 function isPidRunning(pid: number): boolean {
   try {

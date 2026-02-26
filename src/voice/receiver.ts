@@ -3,27 +3,28 @@ import { getVoiceState } from "./state.js";
 import { pipeline } from "node:stream";
 import prism from "prism-media";
 import { getSttProvider } from "./stt/provider.js";
-import { normalizeTranscript } from "./stt/normalize.js";
 import { normalizeText } from "../registry/normalizeText.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
 import { isMeepoSpeaking } from "./speaker.js";
-import { isAddressedToMeepo } from "./wakeword.js";
+import { isLatchAnchor, hasMeepoInLine } from "./wakeword.js";
 import { respondToVoiceUtterance } from "./voiceReply.js";
 import { getActiveMeepo } from "../meepo/state.js";
+import { getActivePersonaId } from "../meepo/personaState.js";
 import {
   setLatch,
   isLatchActive,
-  incrementLatchTurn,
   DEFAULT_LATCH_SECONDS,
   DEFAULT_MAX_LATCH_TURNS,
 } from "../latch/latch.js";
 import { getActiveSession } from "../sessions/sessions.js";
+import { getGuildMode } from "../sessions/sessionRuntime.js";
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pcmToWav } from "./stt/wav.js";
 import { log } from "../utils/logger.js";
 import { overlayEmitSpeaking } from "../overlay/server.js";
+import { cfg } from "../config/env.js";
 
 /**
  * Phase 2 Task 1-2: Speaking detection + PCM capture pipeline
@@ -43,7 +44,7 @@ const BYTES_PER_SAMPLE = 2;
 const BYTES_PER_SEC = RATE * CHANNELS * BYTES_PER_SAMPLE; // 192000
 
 // Stream end behavior
-const END_SILENCE_MS = 700;
+const END_SILENCE_MS = cfg.voice.endSilenceMs;
 
 // Conservative gating (err on allowing speech through)
 const MIN_AUDIO_MS = 250;        // require at least 250ms worth of PCM bytes
@@ -61,6 +62,23 @@ const MIN_ACTIVE_MS = 200;       // require ~200ms of active audio (10 frames)
 
 // Memory safety: max PCM buffer size (20 seconds @ 48kHz stereo 16-bit = ~4MB)
 const MAX_PCM_BYTES = 60 * BYTES_PER_SEC; // 3,840,000 bytes
+
+// Explicit STT noise phrases to drop before ledger/reply handling.
+const BLOCKED_STT_PHRASES = new Set<string>([
+  "thank you for watching",
+]);
+
+function normalizeSttPhrase(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isBlockedSttTranscript(text: string): boolean {
+  return BLOCKED_STT_PHRASES.has(normalizeSttPhrase(text));
+}
 
 // Singleton STT provider (lazy-initialized)
 let sttProvider: Awaited<ReturnType<typeof getSttProvider>> | null = null;
@@ -123,7 +141,7 @@ async function saveAudioChunk(
   wavBuffer: Buffer,
   startedAt: number
 ): Promise<string | null> {
-  const shouldSave = (process.env.STT_SAVE_AUDIO ?? "false").toLowerCase() === "true";
+  const shouldSave = cfg.stt.saveAudio;
   if (!shouldSave) {
     return null;
   }
@@ -245,6 +263,11 @@ async function handleTranscription(
       return;
     }
 
+    if (isBlockedSttTranscript(result.text)) {
+      voiceLog.info(`🔕 Discarded blocked STT phrase: "${result.text}"`);
+      return;
+    }
+
     // Phase 1C: Normalize with registry (for content_norm field)
     const contentNorm = normalizeText(result.text);
 
@@ -280,19 +303,31 @@ async function handleTranscription(
       `📝 Ledger: ${displayName}, text="${result.text}"${result.confidence ? `, confidence=${result.confidence.toFixed(2)}` : ""}`
     );
 
-    // Task 4.6 + Tier S/A: Latch keyed by bound channel; addressed → voice, latched but not addressed → text
+    // Tier S/A: Per-user latch. S = voice reply, A = text reply.
     const meepo = getActiveMeepo(guildId);
     if (!meepo) return;
 
+    const guildMode = getGuildMode(guildId);
+    if (guildMode === "dormant") {
+      voiceLog.debug(`🎯 VOICE GATE: guild mode dormant → ignore`);
+      return;
+    }
+
     const boundChannelId = meepo.channel_id;
-    incrementLatchTurn(guildId, boundChannelId);
+    const personaId = getActivePersonaId(guildId);
+    const hasMeepo = hasMeepoInLine(contentNorm, personaId);
 
-    const addressedToMeepo = isAddressedToMeepo(contentNorm, meepo.form_id);
-    const latched = isLatchActive(guildId, boundChannelId);
+    if (isLatchAnchor(contentNorm, personaId)) {
+      setLatch(guildId, boundChannelId, userId, DEFAULT_LATCH_SECONDS, DEFAULT_MAX_LATCH_TURNS);
+    }
+    const latched = isLatchActive(guildId, boundChannelId, userId);
 
-    if (addressedToMeepo) {
-      setLatch(guildId, boundChannelId, DEFAULT_LATCH_SECONDS, DEFAULT_MAX_LATCH_TURNS);
-      voiceLog.debug(`🎯 VOICE GATE: addressed → voice reply`);
+    // Voice when: (1) latch anchor (first word / hey meepo / first 3 words / short line), or (2) latched + name in line.
+    const voiceAnchor = isLatchAnchor(contentNorm, personaId);
+    const voiceReply = voiceAnchor || (latched && hasMeepo);
+    if (voiceReply) {
+      const trigger = voiceAnchor ? "wake_phrase" : "mention";
+      voiceLog.debug(`🎯 VOICE GATE: ${voiceAnchor ? "anchor" : "latched+hasMeepo"} → voice reply (Tier S)`);
       respondToVoiceUtterance({
         guildId,
         channelId,
@@ -300,13 +335,14 @@ async function handleTranscription(
         speakerName: displayName,
         utterance: contentNorm,
         textChannelId: boundChannelId,
+        replyViaTextOnly: false,
         tier: "S",
-        trigger: "wake_phrase",
+        trigger,
       }).catch((err) => {
         voiceLog.error(`VoiceReply unhandled error:`, { err });
       });
-    } else if (latched) {
-      voiceLog.debug(`🎯 VOICE GATE: latched, not addressed → text reply to bound channel`);
+    } else if (hasMeepo) {
+      voiceLog.debug(`🎯 VOICE GATE: hasMeepo, not latched → text reply (Tier A)`);
       respondToVoiceUtterance({
         guildId,
         channelId,
@@ -315,13 +351,28 @@ async function handleTranscription(
         utterance: contentNorm,
         textChannelId: boundChannelId,
         replyViaTextOnly: true,
-        tier: "S",
+        tier: "A",
+        trigger: "name_mention",
+      }).catch((err) => {
+        voiceLog.error(`VoiceReply unhandled error:`, { err });
+      });
+    } else if (latched) {
+      voiceLog.debug(`🎯 VOICE GATE: latched, no Meepo in line → text reply (Tier A)`);
+      respondToVoiceUtterance({
+        guildId,
+        channelId,
+        speakerId: userId,
+        speakerName: displayName,
+        utterance: contentNorm,
+        textChannelId: boundChannelId,
+        replyViaTextOnly: true,
+        tier: "A",
         trigger: "latched_followup",
       }).catch((err) => {
         voiceLog.error(`VoiceReply unhandled error:`, { err });
       });
     } else {
-      voiceLog.debug(`🎯 VOICE GATE: not addressed, not latched → ignore`);
+      voiceLog.debug(`🎯 VOICE GATE: not latched, no Meepo → ignore`);
     }
   } catch (err) {
     voiceLog.error(`Transcription failed:`, { err });

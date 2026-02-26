@@ -22,7 +22,8 @@ export interface OfficialSessionRow {
  *
  * "Official" means:
  *   - label IS NOT NULL and label <> ''
- *   - label does not contain "test" or "chat" (case-insensitive)
+ *   - kind = 'canon'
+ *   - mode_at_start != 'lab'
  */
 export function getOfficialSessionRows(db: Database.Database): OfficialSessionRow[] {
   // Fetch all candidates ordered newest-first, then deduplicate by label
@@ -32,8 +33,8 @@ export function getOfficialSessionRows(db: Database.Database): OfficialSessionRo
        FROM sessions
        WHERE label IS NOT NULL
          AND label <> ''
-         AND LOWER(label) NOT LIKE '%test%'
-         AND LOWER(label) NOT LIKE '%chat%'
+         AND kind = 'canon'
+         AND mode_at_start <> 'lab'
        ORDER BY created_at_ms DESC`
     )
     .all() as OfficialSessionRow[];
@@ -71,8 +72,8 @@ export function getOfficialSessionByLabel(
       `SELECT session_id, label, source, created_at_ms
        FROM sessions
        WHERE label = ?
-         AND LOWER(label) NOT LIKE '%test%'
-         AND LOWER(label) NOT LIKE '%chat%'
+         AND kind = 'canon'
+         AND mode_at_start <> 'lab'
        ORDER BY created_at_ms DESC
        LIMIT 1`
     )

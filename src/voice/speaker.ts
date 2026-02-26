@@ -21,6 +21,7 @@ import { Readable } from "node:stream";
 import { log } from "../utils/logger.js";
 import { getVoiceState } from "./state.js";
 import { overlayEmitSpeaking } from "../overlay/server.js";
+import { cfg } from "../config/env.js";
 
 const voiceLog = log.withScope("voice");
 
@@ -59,7 +60,7 @@ function getOrCreatePlayer(guildId: string): AudioPlayer | null {
 
     // Clean up on finish
     player.on(AudioPlayerStatus.Idle, () => {
-      if (process.env.DEBUG_VOICE === "true") {
+      if (cfg.voice.debug) {
         voiceLog.debug(`Playback finished`);
       }
     });
@@ -78,7 +79,7 @@ function getOrCreatePlayer(guildId: string): AudioPlayer | null {
     };
     guildSpeakers.set(guildId, speaker);
 
-    if (process.env.DEBUG_VOICE === "true") {
+    if (cfg.voice.debug) {
       voiceLog.debug(`Created audio player`);
     }
   }
@@ -138,7 +139,7 @@ export function speakInGuild(
         inlineVolume: true,
       });
 
-      if (process.env.DEBUG_VOICE === "true") {
+      if (cfg.voice.debug) {
         const metaStr = meta?.userDisplayName
           ? ` (${meta.userDisplayName})`
           : "";
@@ -208,7 +209,7 @@ export function cleanupSpeaker(guildId: string): void {
       speaker.meepoSpeakRefCount = 0;
     }
     guildSpeakers.delete(guildId);
-    if (process.env.DEBUG_VOICE === "true") {
+    if (cfg.voice.debug) {
       voiceLog.debug(`Cleaned up speaker`);
     }
   }

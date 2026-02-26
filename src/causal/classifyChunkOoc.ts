@@ -16,7 +16,9 @@
 
 import { chat } from "../llm/client.js";
 import type { TranscriptEntry } from "../ledger/transcripts.js";
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
+import { getDefaultCampaignSlug } from "../campaign/defaultCampaign.js";
+import { getEnv } from "../config/rawEnv.js";
 
 export interface ChunkEventClassification {
   /** Absolute start index in full transcript array */
@@ -41,7 +43,7 @@ export interface ChunkEventClassification {
 export async function classifyChunkOoc(
   span: { start_index: number; end_index: number },
   transcript: TranscriptEntry[],
-  model: string = process.env.LLM_MODEL ?? "gpt-4o-mini",
+  model: string = getEnv("LLM_MODEL", "gpt-4o-mini") ?? "gpt-4o-mini",
 ): Promise<ChunkEventClassification[]> {
   const lines = transcript.slice(span.start_index, span.end_index + 1);
   if (lines.length === 0) return [];
@@ -152,10 +154,10 @@ export async function classifyChunkOocCached(
   sessionId: string,
   span: { start_index: number; end_index: number },
   transcript: TranscriptEntry[],
-  model: string = process.env.LLM_MODEL ?? "gpt-4o-mini",
+  model: string = getEnv("LLM_MODEL", "gpt-4o-mini") ?? "gpt-4o-mini",
   forceReclassify: boolean = false,
 ): Promise<ChunkEventClassification[]> {
-  const db = getDb();
+  const db = getDbForCampaign(getDefaultCampaignSlug());
 
   if (forceReclassify) {
     db.prepare(

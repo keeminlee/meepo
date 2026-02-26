@@ -2,20 +2,28 @@
  * Guild-level persona state. form_id is cosmetic only; persona_id governs prompt + memory + guardrails.
  */
 
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
+import { resolveCampaignSlug } from "../campaign/guildConfig.js";
 import { getActiveSessionId } from "../sessions/sessionRuntime.js";
 import { getPersona } from "../personas/index.js";
 import { log } from "../utils/logger.js";
+import { cfg } from "../config/env.js";
+import type { MeepoMode } from "../config/types.js";
 
 const personaLog = log.withScope("persona-state");
 
 const DEFAULT_PERSONA_ID = "meta_meepo";
 
+function getPersonaDbForGuild(guildId: string) {
+  const campaignSlug = resolveCampaignSlug({ guildId });
+  return getDbForCampaign(campaignSlug);
+}
+
 /**
  * Get the active persona ID for a guild. Defaults to meta_meepo if unset.
  */
 export function getActivePersonaId(guildId: string): string {
-  const db = getDb();
+  const db = getPersonaDbForGuild(guildId);
   const row = db
     .prepare("SELECT active_persona_id FROM guild_runtime_state WHERE guild_id = ? LIMIT 1")
     .get(guildId) as { active_persona_id: string | null } | undefined;
@@ -30,11 +38,11 @@ export function getActivePersonaId(guildId: string): string {
  * Set the active persona ID for a guild. Ensures guild_runtime_state row exists (creates with current session if needed).
  */
 export function setActivePersonaId(guildId: string, personaId: string): void {
-  const db = getDb();
+  const db = getPersonaDbForGuild(guildId);
   const now = Date.now();
   const existing = db
-    .prepare("SELECT active_session_id FROM guild_runtime_state WHERE guild_id = ? LIMIT 1")
-    .get(guildId) as { active_session_id: string | null } | undefined;
+    .prepare("SELECT active_session_id, active_mode FROM guild_runtime_state WHERE guild_id = ? LIMIT 1")
+    .get(guildId) as { active_session_id: string | null; active_mode: MeepoMode | null } | undefined;
 
   if (existing) {
     db.prepare(
@@ -42,10 +50,11 @@ export function setActivePersonaId(guildId: string, personaId: string): void {
     ).run(personaId, now, guildId);
   } else {
     const sessionId = getActiveSessionId(guildId);
+    const mode = cfg.mode;
     db.prepare(`
-      INSERT INTO guild_runtime_state (guild_id, active_session_id, active_persona_id, updated_at_ms)
-      VALUES (?, ?, ?, ?)
-    `).run(guildId, sessionId, personaId, now);
+      INSERT INTO guild_runtime_state (guild_id, active_session_id, active_persona_id, active_mode, updated_at_ms)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(guildId, sessionId, personaId, mode, now);
   }
   personaLog.debug(`Set active persona: guild=${guildId}, persona_id=${personaId}`);
 }

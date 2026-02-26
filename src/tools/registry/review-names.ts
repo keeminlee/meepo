@@ -32,6 +32,8 @@ type PendingDecisions = {
   generated_at: string;
   source: {
     db: string;
+    guildId?: string | null;
+    campaignSlug?: string;
     primaryOnly: boolean;
     minCount: number;
   };
@@ -179,8 +181,14 @@ function resolveCampaignFromArgs(args: Record<string, string | boolean>): string
  */
 async function reviewNames(): Promise<void> {
   const args = parseArgs();
+  const guildId = (args.guild as string | undefined)?.trim() || null;
   const campaignSlug = resolveCampaignFromArgs(args);
   console.log(`Campaign: ${campaignSlug}`);
+  if (guildId) {
+    console.log(`Guild scope: ${guildId}`);
+  } else {
+    console.log("Guild scope: (not specified)");
+  }
 
   const registryDir = getRegistryDirForCampaign(campaignSlug);
   const pendingPath = path.join(registryDir, "decisions.pending.yml");
@@ -194,6 +202,23 @@ async function reviewNames(): Promise<void> {
   console.log(`[review-names] Loading pending decisions...`);
   const pendingContent = fs.readFileSync(pendingPath, "utf-8");
   const pendingData = yaml.parse(pendingContent) as PendingDecisions;
+
+  const sourceCampaign = pendingData?.source?.campaignSlug;
+  if (sourceCampaign && sourceCampaign !== campaignSlug) {
+    throw new Error(
+      `Pending file campaign mismatch: pending has ${sourceCampaign}, but active campaign is ${campaignSlug}. Run review with matching --campaign/--guild.`,
+    );
+  }
+
+  const sourceGuild = pendingData?.source?.guildId ?? null;
+  if (sourceGuild && guildId && sourceGuild !== guildId) {
+    throw new Error(
+      `Pending file guild mismatch: pending has guild ${sourceGuild}, but CLI --guild is ${guildId}.`,
+    );
+  }
+  if (!sourceGuild) {
+    console.log("⚠️  Pending file has no guild scope metadata (likely from older scan).");
+  }
 
   if (!pendingData.pending || pendingData.pending.length === 0) {
     console.log(`✅ No pending candidates to review!`);

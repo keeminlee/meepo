@@ -4,6 +4,7 @@ import { joinVoice } from "../voice/connection.js";
 import { getVoiceState, setVoiceState } from "../voice/state.js";
 import { startReceiver } from "../voice/receiver.js";
 import { logSystemEvent } from "../ledger/system.js";
+import { cfg } from "../config/env.js";
 
 const meepoLog = log.withScope("meepo");
 
@@ -22,7 +23,7 @@ export async function autoJoinGeneralVoice(opts: {
   guildId: string;
   channelId: string; // Text channel for logging
 }): Promise<void> {
-  const generalVoiceChannelId = process.env.MEEPO_HOME_VOICE_CHANNEL_ID;
+  const generalVoiceChannelId = cfg.overlay.homeVoiceChannelId;
   
   if (!generalVoiceChannelId) {
     meepoLog.debug("MEEPO_HOME_VOICE_CHANNEL_ID not set, skipping auto-join");
