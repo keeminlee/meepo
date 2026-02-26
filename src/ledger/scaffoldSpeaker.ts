@@ -1,3 +1,5 @@
+import { getEnv } from "../config/rawEnv.js";
+
 /**
  * scaffoldSpeaker.ts
  *
@@ -46,7 +48,7 @@ export function buildDmNameSet(detectedDm?: string | null, extra?: string[]): Se
   }
 
   // Priority 2: DM_SPEAKER env var
-  const envNames = process.env.DM_SPEAKER ?? "";
+  const envNames = getEnv("DM_SPEAKER", "") ?? "";
   if (envNames.trim()) {
     for (const n of envNames.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
       set.add(n);

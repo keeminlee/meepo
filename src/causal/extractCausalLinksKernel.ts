@@ -22,6 +22,17 @@ import type { ActorLike } from "./actorFeatures.js";
 import { isLineEligible } from "./eligibilityMask.js";
 import type { CausalLink, IntentDebugTrace, EligibilityMask } from "./types.js";
 import { isDmSpeaker } from "../ledger/scaffoldSpeaker.js";
+import {
+  evidenceFromDistanceLexical,
+  evidenceToStrength,
+  localityToTau,
+  type LeverParams,
+} from "./evidenceStrength.js";
+import {
+  buildLexicalCorpusStats,
+  lexicalSignals,
+  scoreTokenOverlapSimple,
+} from "./lexicalSignals.js";
 
 export const CAUSAL_KERNEL_VERSION = "ce-mass-v3";
 
@@ -43,6 +54,10 @@ export interface KernelInput {
   linkBoostDamping?: number;
   requireClaimedNeighbors?: boolean;
   ambientMassBoost?: boolean;
+  /** Max cause–effect distance for L1 links (avoids huge spans when eligibility masks out middle). */
+  maxL1Span?: number;
+  /** When set, use evidence→strength (E^γ) instead of distance*(1+betaLex*lexical). */
+  levers?: LeverParams;
 }
 
 export interface KernelOutput {
@@ -83,6 +98,8 @@ interface EdgeCandidate {
 }
 
 const K_LOCAL_DEFAULT = 8;
+/** Max cause–effect distance for L1 links; avoids huge spans when eligibility masks out the middle. */
+const MAX_L1_SPAN_DEFAULT = 18;
 const STRONG_MIN_SCORE_DEFAULT = 1.0;
 const WEAK_MIN_SCORE_DEFAULT = 1.0;
 const HILL_TAU_DEFAULT = 8;
@@ -96,25 +113,25 @@ const LINK_BOOST_DAMPING_DEFAULT = 0.15;
  * Simple lexical overlap scorer
  */
 function scoreTokenOverlap(text1: string, text2: string): number {
-  const tokens1 = new Set(text1.toLowerCase().split(/\s+/).filter((t) => t.length > 2));
-  const tokens2 = new Set(text2.toLowerCase().split(/\s+/).filter((t) => t.length > 2));
-  
-  if (tokens1.size === 0 || tokens2.size === 0) return 0;
-  
-  const overlap = Array.from(tokens1).filter((t) => tokens2.has(t)).length;
-  return overlap / Math.max(tokens1.size, tokens2.size);
+  return scoreTokenOverlapSimple(text1, text2);
 }
 
 function classifyLegacyStrength(mass: number): "strong" | "weak" {
   return mass >= 0.7 ? "strong" : "weak";
 }
 
-function computeLeafMass(text: string, speaker: "pc" | "dm"): number {
-  const words = text.trim().split(/\s+/).filter(Boolean).length;
-  const base = speaker === "pc" ? 0.22 : 0.18;
-  const lenBoost = Math.min(0.18, words * 0.01);
-  return Number((base + lenBoost).toFixed(4));
+function thresholdForCause(
+  cause: { detectionMass: number },
+  strongMinScore: number,
+  weakMinScore: number,
+  minPairStrength?: number,
+): number {
+  const byStrength = classifyLegacyStrength(cause.detectionMass) === "strong" ? strongMinScore : weakMinScore;
+  return typeof minPairStrength === "number" ? Math.max(minPairStrength, byStrength) : byStrength;
 }
+
+/** Single mass for every L1 link (all leaves); no inflation by cause/effect type or link formation. */
+const LEAF_MASS = 1;
 
 /**
  * Match PC speaker from line
@@ -154,18 +171,25 @@ function scoreCandidate(
   hillSteepness: number,
   betaLex: number,
   effectDetection: EffectDetection,
+  levers?: LeverParams,
+  corpusStats?: ReturnType<typeof buildLexicalCorpusStats>,
 ): Omit<ScoredCandidate, "effectIndex" | "effectLineIndex"> {
-  // Distance score: Hill curve
   const distanceScore = distanceScoreHill(distance, hillTau, hillSteepness);
-
-  // Lexical overlap
-  const lexicalScore = scoreTokenOverlap(causeText, effectText);
-
-  // Answer boost
+  const { lexicalScore, keywordOverlap } = levers
+    ? lexicalSignals(causeText, effectText, corpusStats)
+    : { lexicalScore: scoreTokenOverlap(causeText, effectText), keywordOverlap: 0 };
   const answerBoost = isYesNoAnswerLike(effectText) ? 0.15 : 0;
 
-  // Final: distance-first with lexical as multiplier
-  const strength_ce = distanceScore * (1 + lexicalScore * betaLex) + answerBoost;
+  let strength_ce: number;
+  if (levers) {
+    // Lever regime: extra lexical boost when overlap includes cause/effect trigger keywords.
+    const keywordBoost = keywordOverlap * (levers.keywordLexBonus ?? 0.25);
+    const lexicalAugmented = Math.min(1, lexicalScore * (1 + keywordBoost));
+    const E = evidenceFromDistanceLexical(distanceScore, lexicalAugmented, answerBoost);
+    strength_ce = evidenceToStrength(E, levers.coupling, levers.strengthScale ?? 2);
+  } else {
+    strength_ce = distanceScore * (1 + lexicalScore * betaLex) + answerBoost;
+  }
 
   return {
     distance,
@@ -198,10 +222,12 @@ function boostLinkMasses(
   linkWindow: number,
   damping: number,
   requireClaimedNeighbors: boolean,
+  levers?: LeverParams,
 ): void {
   const centers = links.map(getCenterIndex);
   const texts = links.map(getLinkText);
   const baseMass = links.map((l) => l.link_mass ?? l.mass ?? l.cause_mass ?? 0);
+  const corpusStats = levers ? buildLexicalCorpusStats(texts) : undefined;
 
   for (let i = 0; i < links.length; i++) {
     let bonus = 0;
@@ -212,9 +238,20 @@ function boostLinkMasses(
       const centerDistance = Math.abs(centers[i] - centers[j]);
       if (centerDistance > linkWindow) continue;
 
-      const distStrength = distanceScoreHill(centerDistance, hillTau, hillSteepness);
-      const lexicalOverlap = scoreTokenOverlap(texts[i], texts[j]);
-      const strengthLL = distStrength * (1 + betaLexLL * lexicalOverlap);
+      const distEvidence = distanceScoreHill(centerDistance, hillTau, hillSteepness);
+      const { lexicalScore, keywordOverlap } = levers
+        ? lexicalSignals(texts[i], texts[j], corpusStats)
+        : { lexicalScore: scoreTokenOverlap(texts[i], texts[j]), keywordOverlap: 0 };
+      const strengthLL = levers
+        ? evidenceToStrength(
+            evidenceFromDistanceLexical(
+              distEvidence,
+              Math.min(1, lexicalScore * (1 + keywordOverlap * (levers.keywordLexBonus ?? 0.25))),
+            ),
+            levers.coupling,
+            levers.strengthScale ?? 2,
+          )
+        : distEvidence * (1 + betaLexLL * lexicalScore);
       bonus += strengthLL * baseMass[j];
     }
 
@@ -240,7 +277,7 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
     strongMinScore = STRONG_MIN_SCORE_DEFAULT,
     weakMinScore = WEAK_MIN_SCORE_DEFAULT,
     minPairStrength,
-    hillTau = HILL_TAU_DEFAULT,
+    hillTau: hillTauParam = HILL_TAU_DEFAULT,
     hillSteepness = HILL_STEEPNESS_DEFAULT,
     betaLex = BETA_LEX_DEFAULT,
     betaLexLL = BETA_LEX_LL_DEFAULT,
@@ -248,7 +285,12 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
     linkBoostDamping = LINK_BOOST_DAMPING_DEFAULT,
     requireClaimedNeighbors = true,
     ambientMassBoost = false,
+    maxL1Span = MAX_L1_SPAN_DEFAULT,
+    levers,
   } = input;
+
+  const hillTau = levers ? localityToTau(levers.locality) : hillTauParam;
+  const corpusStats = levers ? buildLexicalCorpusStats(transcript.map((t) => t.content)) : undefined;
 
   const links: CausalLink[] = [];
   const traces: IntentDebugTrace[] = [];
@@ -291,7 +333,7 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
       text: line.content,
       detection,
       detectionMass: detection.mass,
-      mass: computeLeafMass(line.content, "pc"),
+      mass: LEAF_MASS,
     });
   }
 
@@ -302,14 +344,12 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
     const detection = detectEffect(line.content);
     if (!detection.isEffect) continue;
 
-    const mass = computeLeafMass(line.content, "dm");
-
     effectPool.push({
       index: i,
       anchor_index: line.line_index,
       text: line.content,
       effect_type: detection.effect_type,
-      mass,
+      mass: LEAF_MASS,
       detection,
     });
 
@@ -317,14 +357,61 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
       anchor_index: line.line_index,
       text: line.content,
       effect_type: detection.effect_type,
-      mass,
+      mass: LEAF_MASS,
     });
   }
 
   const claimedEffects = new Set<number>();
   const claimedCauses = new Set<number>();
 
-  const effectByAnchor = new Map(effectPool.map((effect) => [effect.anchor_index, effect]));
+  // Index lines by speaker (eligible only) for "next k DM" / "prev k PC" candidate windows.
+  const dmIndices: number[] = [];
+  const pcIndices: number[] = [];
+  for (let i = 0; i < transcript.length; i++) {
+    if (!isLineEligible(eligibilityMask, i)) continue;
+    const line = transcript[i];
+    if (isDmSpeaker(line.author_name, dmSpeaker)) dmIndices.push(i);
+    else pcIndices.push(i);
+  }
+
+  type EffectEntry = (typeof effectPool)[number];
+  const effectByAnchor = new Map<number, EffectEntry>(
+    effectPool.map((e) => [e.anchor_index, e])
+  );
+  // Ensure every DM line has an effect entry (for candidate scoring); use synthetic if not in pool.
+  for (const i of dmIndices) {
+    const line = transcript[i];
+    const anchor = line.line_index;
+    if (effectByAnchor.has(anchor)) continue;
+    const detection = detectEffect(line.content);
+    effectByAnchor.set(anchor, {
+      index: i,
+      anchor_index: anchor,
+      text: line.content,
+      effect_type: (detection.effect_type ?? "other") as string,
+      mass: LEAF_MASS,
+      detection,
+    });
+  }
+
+  type CauseEntry = (typeof causes)[number];
+  const causeByIndex = new Map<number, CauseEntry>(causes.map((c) => [c.index, c]));
+  // Ensure every PC line has a cause entry for backward candidate scoring.
+  for (const i of pcIndices) {
+    if (causeByIndex.has(i)) continue;
+    const line = transcript[i];
+    const actor = matchPcSpeaker(line.author_name, actors);
+    if (!actor) continue;
+    const detection = detectCause(line.content);
+    causeByIndex.set(i, {
+      index: i,
+      actor,
+      text: line.content,
+      detection,
+      detectionMass: detection.mass,
+      mass: LEAF_MASS,
+    });
+  }
 
   const edgeByPair = new Map<string, EdgeCandidate>();
   const addOrUpdateEdge = (edge: EdgeCandidate) => {
@@ -352,14 +439,14 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
     }
   };
 
+  // Candidate selection: kLocal applies to correct-speaker lines only. We always take up to kLocal candidates when transcript bounds allow.
+  // Forward: for each cause (PC), effect candidates = the next kLocal DM lines (strictly after cause).
+  // Backward: for each effect (DM), cause candidates = the previous kLocal PC lines (strictly before effect).
   for (const cause of causes) {
-    const forwardEffects = effectPool
-      .filter((effect) => effect.anchor_index > cause.index)
-      .sort((a, b) => a.anchor_index - b.anchor_index)
-      .slice(0, kLocal);
-
-    for (const effect of forwardEffects) {
-      const distance = Math.max(1, effect.anchor_index - cause.index);
+    const nextKdm = dmIndices.filter((i) => i > cause.index).slice(0, kLocal);
+    for (const j of nextKdm) {
+      const effect = effectByAnchor.get(transcript[j].line_index)!;
+      const distance = Math.max(1, j - cause.index);
       const base = scoreCandidate(
         cause.text,
         effect.text,
@@ -368,8 +455,11 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
         hillSteepness,
         betaLex,
         effect.detection,
+        levers,
+        corpusStats,
       );
-
+      const threshold = thresholdForCause(cause, strongMinScore, weakMinScore, minPairStrength);
+      if (base.strength_ce < threshold) continue;
       addOrUpdateEdge({
         causeIndex: cause.index,
         effectIndex: effect.anchor_index,
@@ -384,14 +474,13 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
     }
   }
 
-  for (const effect of effectPool) {
-    const backwardCauses = causes
-      .filter((cause) => cause.index < effect.anchor_index)
-      .sort((a, b) => b.index - a.index)
-      .slice(0, kLocal);
-
-    for (const cause of backwardCauses) {
-      const distance = Math.max(1, effect.anchor_index - cause.index);
+  for (const effectIdx of dmIndices) {
+    const effect = effectByAnchor.get(transcript[effectIdx].line_index)!;
+    const prevKpc = pcIndices.filter((i) => i < effectIdx).slice(-kLocal);
+    for (const j of prevKpc) {
+      const cause = causeByIndex.get(j)!;
+      const distance = Math.max(1, effectIdx - j);
+      const rollPromptBoost = effect.detection.effect_type === "roll" ? 0.1 : 0;
       const base = scoreCandidate(
         cause.text,
         effect.text,
@@ -400,9 +489,12 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
         hillSteepness,
         betaLex,
         effect.detection,
+        levers,
+        corpusStats,
       );
-
-      const rollPromptBoost = effect.detection.effect_type === "roll" ? 0.1 : 0;
+      const strengthCe = base.strength_ce + rollPromptBoost;
+      const threshold = thresholdForCause(cause, strongMinScore, weakMinScore, minPairStrength);
+      if (strengthCe < threshold) continue;
       addOrUpdateEdge({
         causeIndex: cause.index,
         effectIndex: effect.anchor_index,
@@ -411,13 +503,15 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
         distanceScore: base.distanceScore,
         lexicalScore: base.lexicalScore,
         answerBoost: base.answerBoost + rollPromptBoost,
-        strength_ce: base.strength_ce + rollPromptBoost,
+        strength_ce: strengthCe,
         effectDetection: effect.detection,
       });
     }
   }
 
-  const edges = Array.from(edgeByPair.values()).sort((a, b) => {
+  let edges = Array.from(edgeByPair.values());
+  edges = edges.filter((e) => e.distance <= maxL1Span);
+  edges.sort((a, b) => {
     if (b.strength_ce !== a.strength_ce) return b.strength_ce - a.strength_ce;
     if (a.distance !== b.distance) return a.distance - b.distance;
     if (a.causeIndex !== b.causeIndex) return a.causeIndex - b.causeIndex;
@@ -453,7 +547,6 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
 
       const strengthBridge = chosen.strength_ce;
       const strengthInternal = strengthBridge;
-      const massBase = cause.mass + effect.mass + strengthInternal;
       const spanStart = Math.min(cause.index, effect.anchor_index);
       const spanEnd = Math.max(cause.index, effect.anchor_index);
 
@@ -475,13 +568,13 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
         strength_internal: strengthInternal,
         strength: strengthInternal,
         strength_ce: strengthBridge,
-        mass_base: massBase,
-        link_mass: massBase,
+        mass_base: LEAF_MASS,
+        link_mass: LEAF_MASS,
         mass_boost: 0,
         span_start_index: spanStart,
         span_end_index: spanEnd,
         center_index: (cause.index + effect.anchor_index) / 2,
-        mass: massBase,
+        mass: LEAF_MASS,
         actor: cause.actor.id,
         intent_text: cause.text,
         intent_type: cause.detection.cause_type,
@@ -532,7 +625,6 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
       continue;
     }
 
-    const massBase = cause.mass;
     const spanStart = cause.index;
     const spanEnd = cause.index;
     links.push({
@@ -553,13 +645,13 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
       strength_internal: 0,
       strength: 0,
       strength_ce: null,
-      mass_base: massBase,
-      link_mass: massBase,
+      mass_base: LEAF_MASS,
+      link_mass: LEAF_MASS,
       mass_boost: 0,
       span_start_index: spanStart,
       span_end_index: spanEnd,
       center_index: cause.index,
-      mass: massBase,
+      mass: LEAF_MASS,
       actor: cause.actor.id,
       intent_text: cause.text,
       intent_type: cause.detection.cause_type,
@@ -613,6 +705,7 @@ export function extractCausalLinksKernel(input: KernelInput, emitTraces: boolean
       linkWindow,
       linkBoostDamping,
       requireClaimedNeighbors,
+      levers,
     );
   }
 

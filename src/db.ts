@@ -1,33 +1,126 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { cfg } from "./config/env.js";
+import { getEnv } from "./config/rawEnv.js";
+import { resolveCampaignDbPath } from "./dataPaths.js";
 
 let dbSingleton: Database.Database | null = null;
+const dbByPath = new Map<string, Database.Database>();
+let schemaSqlCache: string | null = null;
+let warnedDeprecatedGetDb = false;
+
+function getControlDbPath(): string {
+  return path.resolve(cfg.data.root, "control", "control.sqlite");
+}
+
+function assertTestDbPathSafety(dbPath: string): void {
+  if (getEnv("NODE_ENV") !== "test") return;
+
+  const resolvedDbPath = path.resolve(dbPath);
+  const resolvedTmpRoot = path.resolve(os.tmpdir());
+  const normalize = (value: string) => path.normalize(value).toLowerCase();
+
+  if (!normalize(resolvedDbPath).startsWith(normalize(resolvedTmpRoot + path.sep))) {
+    throw new Error(
+      `[db-test-safety] Refusing non-temp DB path in test mode: ${resolvedDbPath}. Expected under ${resolvedTmpRoot}`,
+    );
+  }
+}
+
+function runMigrationsWithSummary(db: Database.Database, dbPath: string): void {
+  const migrationsSilent = getEnv("MIGRATIONS_SILENT") === "1";
+  let appliedSteps = 0;
+  const originalLog = console.log;
+
+  console.log = (...args: unknown[]) => {
+    const first = String(args[0] ?? "");
+    if (first.startsWith("Migrating:")) {
+      appliedSteps += 1;
+      return;
+    }
+    originalLog(...args);
+  };
+
+  try {
+    applyMigrations(db);
+  } finally {
+    console.log = originalLog;
+  }
+
+  if (!migrationsSilent && appliedSteps > 0) {
+    originalLog(`[migrate] applied ${appliedSteps} steps to ${path.resolve(dbPath)}`);
+  }
+}
 
 function ensureDirFor(dbPath: string) {
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-export function getDb(): Database.Database {
-  if (dbSingleton) return dbSingleton;
+function getSchemaSql(): string {
+  if (schemaSqlCache) return schemaSqlCache;
+  const schemaPath = path.join(process.cwd(), "src", "db", "schema.sql");
+  schemaSqlCache = fs.readFileSync(schemaPath, "utf8");
+  return schemaSqlCache;
+}
 
-  const dbPath = process.env.DB_PATH || "./data/bot.sqlite";
+function bootstrapDbAtPath(dbPath: string): Database.Database {
+  assertTestDbPathSafety(dbPath);
   ensureDirFor(dbPath);
-
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
+  db.exec(getSchemaSql());
+  runMigrationsWithSummary(db, dbPath);
+  return db;
+}
 
-  // apply schema
-  const schemaPath = path.join(process.cwd(), "src", "db", "schema.sql");
-  const schema = fs.readFileSync(schemaPath, "utf8");
-  db.exec(schema);
+export function getControlDb(): Database.Database {
+  const dbPath = getControlDbPath();
+  const existing = dbByPath.get(dbPath);
+  if (existing) {
+    console.log(`[db-route] ${JSON.stringify({ type: "control", dbPath, status: "cache-hit" })}`);
+    return existing;
+  }
 
-  // Apply migrations
-  applyMigrations(db);
+  const db = bootstrapDbAtPath(dbPath);
+  dbByPath.set(dbPath, db);
+  console.log(`[db-route] ${JSON.stringify({ type: "control", dbPath, status: "opened-new" })}`);
+  return db;
+}
 
+export function getDb(): Database.Database {
+  if (!warnedDeprecatedGetDb) {
+    warnedDeprecatedGetDb = true;
+    console.warn("[db] getDb() is deprecated for runtime hot paths. Prefer getControlDb() or getDbForCampaign().");
+  }
+
+  if (dbSingleton) return dbSingleton;
+  const dbPath = path.resolve(cfg.db.path);
+  const existing = dbByPath.get(dbPath);
+  if (existing) {
+    dbSingleton = existing;
+    return existing;
+  }
+  const db = bootstrapDbAtPath(dbPath);
+  dbByPath.set(dbPath, db);
   dbSingleton = db;
-  return dbSingleton;
+  return db;
+}
+
+export function getDbForCampaign(campaignSlug: string): Database.Database {
+  const dbPath = path.resolve(resolveCampaignDbPath(campaignSlug));
+  const existing = dbByPath.get(dbPath);
+  if (existing) {
+    console.log(`[db-route] ${JSON.stringify({ type: "campaign", slug: campaignSlug, dbPath, status: "cache-hit" })}`);
+    return existing;
+  }
+
+  const db = bootstrapDbAtPath(dbPath);
+  dbByPath.set(dbPath, db);
+  console.log(`[db-route] ${JSON.stringify({ type: "campaign", slug: campaignSlug, dbPath, status: "opened-new" })}`);
+  return db;
 }
 
 function applyMigrations(db: Database.Database) {
@@ -289,10 +382,13 @@ function applyMigrations(db: Database.Database) {
         CREATE TABLE sessions (
           session_id TEXT PRIMARY KEY,
           guild_id TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'canon',
+          mode_at_start TEXT NOT NULL DEFAULT 'ambient',
           label TEXT,
           created_at_ms INTEGER NOT NULL,
           started_at_ms INTEGER NOT NULL,
           ended_at_ms INTEGER,
+          ended_reason TEXT,
           started_by_id TEXT,
           started_by_name TEXT,
           source TEXT NOT NULL DEFAULT 'live'
@@ -303,7 +399,23 @@ function applyMigrations(db: Database.Database) {
         
         -- Restore data
         INSERT INTO sessions 
-        SELECT session_id, guild_id, label, created_at_ms, started_at_ms, ended_at_ms, started_by_id, started_by_name, source 
+        SELECT
+          session_id,
+          guild_id,
+          CASE WHEN LOWER(TRIM(COALESCE(label, ''))) = 'chat' THEN 'chat' ELSE 'canon' END,
+          CASE
+            WHEN LOWER(COALESCE(label, '')) LIKE '%test%' THEN 'lab'
+            WHEN LOWER(TRIM(COALESCE(label, ''))) = 'chat' THEN 'ambient'
+            ELSE 'ambient'
+          END,
+          label,
+          created_at_ms,
+          started_at_ms,
+          ended_at_ms,
+          NULL,
+          started_by_id,
+          started_by_name,
+          source
         FROM sessions_backup;
         
         DROP TABLE sessions_backup;
@@ -316,10 +428,13 @@ function applyMigrations(db: Database.Database) {
         CREATE TABLE sessions (
           session_id TEXT PRIMARY KEY,
           guild_id TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'canon',
+          mode_at_start TEXT NOT NULL DEFAULT 'ambient',
           label TEXT,
           created_at_ms INTEGER NOT NULL,
           started_at_ms INTEGER NOT NULL,
           ended_at_ms INTEGER,
+          ended_reason TEXT,
           started_by_id TEXT,
           started_by_name TEXT,
           source TEXT NOT NULL DEFAULT 'live'
@@ -372,6 +487,65 @@ function applyMigrations(db: Database.Database) {
     // After backfill, make it NOT NULL going forward
     // Note: SQLite doesn't support ALTER COLUMN, so we accept it as nullable for now
     // New sessions will always populate created_at_ms in startSession()
+  }
+
+  const sessionColumnsWithCreatedReason = db.pragma("table_info(sessions)") as any[];
+  const hasEndedReason = sessionColumnsWithCreatedReason.some((col: any) => col.name === "ended_reason");
+
+  if (!hasEndedReason) {
+    console.log("Migrating: Adding ended_reason to sessions table (Phase 4)");
+    db.exec(`
+      ALTER TABLE sessions ADD COLUMN ended_reason TEXT;
+    `);
+  }
+
+  // Migration: Add kind to sessions table (Phase 4 - runtime routing)
+  const sessionColumnsWithCreatedAt = db.pragma("table_info(sessions)") as any[];
+  const hasKind = sessionColumnsWithCreatedAt.some((col: any) => col.name === "kind");
+
+  if (!hasKind) {
+    console.log("Migrating: Adding kind to sessions table (Phase 4)");
+    db.exec(`
+      ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'canon';
+    `);
+
+    // Backfill legacy chat sessions by label
+    db.prepare(`
+      UPDATE sessions
+      SET kind = 'chat'
+      WHERE LOWER(TRIM(COALESCE(label, ''))) = 'chat'
+    `).run();
+  }
+
+  // Migration: Add mode_at_start to sessions table (Phase 4 - mode snapshot)
+  const sessionColumnsWithKind = db.pragma("table_info(sessions)") as any[];
+  const hasModeAtStart = sessionColumnsWithKind.some((col: any) => col.name === "mode_at_start");
+
+  if (!hasModeAtStart) {
+    console.log("Migrating: Adding mode_at_start to sessions table (Phase 4)");
+    db.exec(`
+      ALTER TABLE sessions ADD COLUMN mode_at_start TEXT NOT NULL DEFAULT 'ambient';
+    `);
+
+    // Requested rule: labels containing "test" are lab-mode sessions.
+    db.prepare(`
+      UPDATE sessions
+      SET mode_at_start = 'lab'
+      WHERE LOWER(COALESCE(label, '')) LIKE '%test%'
+    `).run();
+
+    db.prepare(`
+      UPDATE sessions
+      SET mode_at_start = 'ambient'
+      WHERE LOWER(TRIM(COALESCE(label, ''))) = 'chat'
+    `).run();
+
+    // Fill any remaining nulls with configured default mode.
+    db.prepare(`
+      UPDATE sessions
+      SET mode_at_start = ?
+      WHERE mode_at_start IS NULL
+    `).run(cfg.mode);
   }
 
   // Migration: Create meepo_mind table (Knowledge Base v1)
@@ -878,6 +1052,14 @@ function applyMigrations(db: Database.Database) {
     db.prepare("UPDATE guild_runtime_state SET active_persona_id = ? WHERE active_persona_id IS NULL").run("meta_meepo");
   }
 
+  const grsColumnsAfterPersona = db.pragma("table_info(guild_runtime_state)") as any[];
+  const hasActiveMode = grsColumnsAfterPersona.some((col: any) => col.name === "active_mode");
+  if (!hasActiveMode) {
+    console.log("Migrating: Adding active_mode to guild_runtime_state (Phase 4)");
+    db.exec("ALTER TABLE guild_runtime_state ADD COLUMN active_mode TEXT");
+    db.prepare("UPDATE guild_runtime_state SET active_mode = ? WHERE active_mode IS NULL").run(cfg.mode);
+  }
+
   // Migration: Persona Overhaul v1 - meepo_mind.mindspace
   const mindColsAfter = db.pragma("table_info(meepo_mind)") as any[];
   const hasMindspace = mindColsAfter.some((col: any) => col.name === "mindspace");
@@ -965,13 +1147,28 @@ function applyMigrations(db: Database.Database) {
     `);
   }
 
-  // Migration: Latch turn count (Tier S/A: expire by N turns)
-  const latchCols = db.pragma("table_info(latches)") as any[];
-  const hasTurnCount = latchCols.some((c: any) => c.name === "turn_count");
-  if (!hasTurnCount) {
-    console.log("Migrating: Adding turn_count and max_turns to latches (Tier S/A)");
-    db.exec("ALTER TABLE latches ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0");
-    db.exec("ALTER TABLE latches ADD COLUMN max_turns INTEGER");
+  // Migration: Latches per (guild, channel, user) — drop old key-based table if present
+  const tableListForLatches = db.pragma("table_list") as any[];
+  const hasLatches = tableListForLatches.some((t: any) => t.name === "latches");
+  if (hasLatches) {
+    const latchCols = db.pragma("table_info(latches)") as any[];
+    const hasKeyCol = latchCols.some((c: any) => c.name === "key");
+    if (hasKeyCol) {
+      console.log("Migrating: Recreating latches as per-user (guild, channel, user_id)");
+      db.exec("DROP TABLE latches");
+      db.exec(`
+        CREATE TABLE latches (
+          guild_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          expires_at_ms INTEGER NOT NULL,
+          turn_count INTEGER NOT NULL DEFAULT 0,
+          max_turns INTEGER,
+          PRIMARY KEY (guild_id, channel_id, user_id)
+        );
+        CREATE INDEX idx_latches_scope ON latches(guild_id, channel_id);
+      `);
+    }
   }
 
   // Migration: meepo_interactions (Tier S/A retrieval anchors)
@@ -996,6 +1193,61 @@ function applyMigrations(db: Database.Database) {
       CREATE INDEX idx_meepo_interactions_guild_persona ON meepo_interactions(guild_id, persona_id);
       CREATE INDEX idx_meepo_interactions_session ON meepo_interactions(session_id);
       CREATE INDEX idx_meepo_interactions_created ON meepo_interactions(created_at_ms DESC);
+    `);
+  }
+
+  // Migration: gold_memory table (curated campaign memory rows)
+  const tablesForGold = db.pragma("table_list") as any[];
+  const hasGoldMemory = tablesForGold.some((t: any) => t.name === "gold_memory");
+  if (!hasGoldMemory) {
+    console.log("Migrating: Creating gold_memory table");
+    db.exec(`
+      CREATE TABLE gold_memory (
+        guild_id TEXT NOT NULL,
+        campaign_slug TEXT NOT NULL,
+        memory_key TEXT NOT NULL,
+        character TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        source_ids_json TEXT NOT NULL DEFAULT '[]',
+        gravity REAL NOT NULL DEFAULT 1.0,
+        certainty REAL NOT NULL DEFAULT 1.0,
+        resilience REAL NOT NULL DEFAULT 1.0,
+        status TEXT NOT NULL DEFAULT 'active',
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, campaign_slug, memory_key)
+      );
+      CREATE INDEX idx_gold_memory_scope ON gold_memory(guild_id, campaign_slug, character);
+      CREATE INDEX idx_gold_memory_status ON gold_memory(guild_id, campaign_slug, status, updated_at_ms DESC);
+    `);
+  }
+
+  // Migration: gold_memory_candidate table (pending/approved/rejected queue)
+  const tablesForGoldCand = db.pragma("table_list") as any[];
+  const hasGoldCandidate = tablesForGoldCand.some((t: any) => t.name === "gold_memory_candidate");
+  if (!hasGoldCandidate) {
+    console.log("Migrating: Creating gold_memory_candidate table");
+    db.exec(`
+      CREATE TABLE gold_memory_candidate (
+        guild_id TEXT NOT NULL,
+        campaign_slug TEXT NOT NULL,
+        candidate_key TEXT NOT NULL,
+        session_id TEXT,
+        character TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        source_ids_json TEXT NOT NULL DEFAULT '[]',
+        gravity REAL NOT NULL DEFAULT 1.0,
+        certainty REAL NOT NULL DEFAULT 1.0,
+        resilience REAL NOT NULL DEFAULT 1.0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        reviewed_at_ms INTEGER,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, campaign_slug, candidate_key)
+      );
+      CREATE INDEX idx_gold_candidate_scope ON gold_memory_candidate(guild_id, campaign_slug, status, updated_at_ms DESC);
     `);
   }
 

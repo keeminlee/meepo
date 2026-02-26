@@ -61,6 +61,13 @@ http://localhost:7777/overlay            # Browser Source for speaking indicator
 
 ## Architecture Overview
 
+### DB Routing Guardrail (Campaign Isolation)
+
+- Runtime DB routing is campaign-scoped and must not silently fall back across campaigns.
+- Internal campaign resolution is allowed only at guild-aware entrypoints (functions that already have `guildId`).
+- Deep helpers that do not naturally have `guildId` must receive `db` from their caller (or remain tool/offline scoped), rather than resolving campaign internally.
+- This prevents accidental default-campaign reads, hidden cross-campaign leaks, and uncontrolled signature creep.
+
 ### Dual Knowledge System
 
 **1. Omniscient Ledger** ✅ Complete

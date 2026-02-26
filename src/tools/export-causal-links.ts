@@ -6,7 +6,7 @@
  * 
  * CLI:
  *   npx tsx src/tools/export-causal-links.ts --session C2E20 \
- *     --output causal-debug.md \
+ *     --output docs/notes/causal/causal-debug.md \
  *     --debugLinksDense \
  *     --kLocal 8 \
  *     --hillTau 2 \
@@ -51,7 +51,7 @@ import { buildTranscript } from "../ledger/transcripts.js";
 import { generateRegimeMasks, type RegimeChunk } from "../causal/pruneRegimes.js";
 import { buildEligibilityMask, buildRefinedEligibilityMask } from "../causal/eligibilityMask.js";
 import { CAUSAL_KERNEL_VERSION, extractCausalLinksKernel, type KernelInput } from "../causal/extractCausalLinksKernel.js";
-import { hasCausalLinks, persistCausalLinks, readCausalLinksWithMeta, type CausalLinksRunMeta } from "../causal/persistCausalLinks.js";
+import { hasCausalLinks, persistCausalLinks, readCausalLinksWithMeta, type CausalLinksRunMeta } from "./causal/persistCausalLinks.js";
 import { buildDmNameSet, detectDmSpeaker } from "../ledger/scaffoldSpeaker.js";
 import { loadRegistry } from "../registry/loadRegistry.js";
 import type { CausalLink, IntentDebugTrace } from "../causal/types.js";

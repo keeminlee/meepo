@@ -1,3 +1,5 @@
+import { cfg } from "../config/env.js";
+
 /**
  * Centralized logging system for Meepo.
  *
@@ -13,6 +15,7 @@
  *
  * Legacy Compatibility:
  *   DEBUG_VOICE=true  →  Sets LOG_LEVEL=debug and LOG_SCOPES includes 'voice'
+ *   DEBUG_LATCH=true  →  Sets LOG_LEVEL=debug and LOG_SCOPES includes 'latch' (latch state tracking)
  *      (emits one-time deprecation warning)
  */
 
@@ -57,28 +60,12 @@ class Logger {
   private deprecationWarnings: Set<string> = new Set();
 
   constructor() {
-    // Parse LOG_LEVEL (default: info)
-    const logLevelEnv = (process.env.LOG_LEVEL ?? "info").toLowerCase();
-    if (logLevelEnv in LOG_LEVELS) {
-      this.level = LOG_LEVELS[logLevelEnv as LogLevel];
-    } else {
-      this.level = LOG_LEVELS.info;
-    }
-
-    // Parse LOG_SCOPES (default: all scopes allowed)
-    const logScopesEnv = process.env.LOG_SCOPES ?? "";
-    this.scopes = new Set(
-      logScopesEnv
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s)
-    );
-
-    // Parse LOG_FORMAT (default: pretty)
-    this.format = (process.env.LOG_FORMAT ?? "pretty") as "pretty" | "json";
+    this.level = LOG_LEVELS[cfg.logging.level] ?? LOG_LEVELS.info;
+    this.scopes = new Set(cfg.logging.scopes ?? []);
+    this.format = cfg.logging.format;
 
     // Legacy compatibility: DEBUG_VOICE → LOG_LEVEL=debug, LOG_SCOPES+=voice
-    if (process.env.DEBUG_VOICE === "true") {
+    if (cfg.voice.debug) {
       this.emitDeprecationWarning(
         "DEBUG_VOICE",
         'Set LOG_LEVEL=debug and LOG_SCOPES=voice instead'
@@ -90,6 +77,18 @@ class Logger {
         // Empty scopes means all are allowed, so we don't add "voice"
       } else {
         this.scopes.add("voice");
+      }
+    }
+
+    // Legacy compatibility: DEBUG_LATCH → LOG_LEVEL=debug, LOG_SCOPES+=latch
+    if (cfg.logging.debugLatch) {
+      this.emitDeprecationWarning(
+        "DEBUG_LATCH",
+        'Set LOG_LEVEL=debug and LOG_SCOPES=latch instead'
+      );
+      this.level = Math.min(this.level, LOG_LEVELS.debug);
+      if (this.scopes.size > 0) {
+        this.scopes.add("latch");
       }
     }
   }

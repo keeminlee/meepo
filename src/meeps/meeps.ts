@@ -10,9 +10,15 @@
 
 import { randomUUID } from 'crypto';
 import { log } from '../utils/logger.js';
-import { getDb } from '../db.js';
+import { getDbForCampaign } from '../db.js';
+import { resolveCampaignSlug } from '../campaign/guildConfig.js';
 
 const meepsLog = log.withScope("meeps");
+
+function getMeepsDbForGuild(guildId: string) {
+  const campaignSlug = resolveCampaignSlug({ guildId });
+  return getDbForCampaign(campaignSlug);
+}
 
 export type IssuerType = 'dm' | 'player' | 'meepo' | 'system';
 
@@ -54,7 +60,7 @@ export function createMeepTx(opts: {
   anchor_session_id?: string;
   anchor_line_index?: number;
 }): string {
-  const db = getDb();
+  const db = getMeepsDbForGuild(opts.guild_id);
   const tx_id = randomUUID();
   const now = Date.now();
 
@@ -92,7 +98,7 @@ export function createMeepTx(opts: {
  * @returns balance (0 if no transactions)
  */
 export function getMeepBalance(guild_id: string, target_discord_id: string): number {
-  const db = getDb();
+  const db = getMeepsDbForGuild(guild_id);
   const result = db.prepare(`
     SELECT COALESCE(SUM(delta), 0) as balance
     FROM meep_transactions
@@ -110,7 +116,7 @@ export function getMeepHistory(
   target_discord_id: string,
   limit: number = 10
 ): MeepTransaction[] {
-  const db = getDb();
+  const db = getMeepsDbForGuild(guild_id);
   const rows = db.prepare(`
     SELECT * FROM meep_transactions
     WHERE guild_id = ? AND target_discord_id = ?

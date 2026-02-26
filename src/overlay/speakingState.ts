@@ -8,10 +8,19 @@
 
 const SPEAKING_OFF_DEBOUNCE_MS = 400;
 
+export type SpeakingChangeMeta = {
+  reason?: string;
+};
+
+type SetSpeakingOptions = {
+  immediate?: boolean;
+  reason?: string;
+};
+
 const speakingState = new Map<string, boolean>();
 const presenceState = new Map<string, boolean>();
 const debounceTimers = new Map<string, NodeJS.Timeout>();
-let onStateChange: ((id: string, speaking: boolean) => void) | null = null;
+let onStateChange: ((id: string, speaking: boolean, meta?: SpeakingChangeMeta) => void) | null = null;
 let onPresenceChange: ((id: string, present: boolean) => void) | null = null;
 
 /**
@@ -19,7 +28,7 @@ let onPresenceChange: ((id: string, present: boolean) => void) | null = null;
  * Called with (id, speaking) when state actually changes
  */
 export function onSpeakingStateChange(
-  callback: (id: string, speaking: boolean) => void
+  callback: (id: string, speaking: boolean, meta?: SpeakingChangeMeta) => void
 ) {
   onStateChange = callback;
 }
@@ -39,7 +48,7 @@ export function onPresenceStateChange(
  * - true: emit immediately
  * - false: emit after debounce (unless speaking resumes before timeout)
  */
-export function setSpeaking(id: string, speaking: boolean) {
+export function setSpeaking(id: string, speaking: boolean, options?: SetSpeakingOptions) {
   const currentState = speakingState.get(id) ?? false;
 
   if (speaking) {
@@ -53,12 +62,24 @@ export function setSpeaking(id: string, speaking: boolean) {
     // Emit immediately if state actually changed
     if (!currentState) {
       speakingState.set(id, true);
-      onStateChange?.(id, true);
+      onStateChange?.(id, true, options?.reason ? { reason: options.reason } : undefined);
     }
   } else {
     // Debounce the "false" event
     // If already false, do nothing
     if (!currentState) {
+      return;
+    }
+
+    if (options?.immediate) {
+      const existingTimer = debounceTimers.get(id);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+        debounceTimers.delete(id);
+      }
+
+      speakingState.set(id, false);
+      onStateChange?.(id, false, options?.reason ? { reason: options.reason } : undefined);
       return;
     }
 
@@ -72,7 +93,7 @@ export function setSpeaking(id: string, speaking: boolean) {
     const timer = setTimeout(() => {
       debounceTimers.delete(id);
       speakingState.set(id, false);
-      onStateChange?.(id, false);
+      onStateChange?.(id, false, options?.reason ? { reason: options.reason } : undefined);
     }, SPEAKING_OFF_DEBOUNCE_MS);
 
     debounceTimers.set(id, timer);

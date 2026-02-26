@@ -74,11 +74,13 @@ function renderExpandedNode(params: {
 
   const level = node.level ?? 1;
   const mass = node.mass ?? node.link_mass ?? node.mass_base ?? 0;
+  const massBase = node.mass_base ?? node.link_mass ?? mass;
   const strengthInternal = node.strength_internal ?? node.strength_bridge ?? node.strength_ce ?? node.score ?? 0;
   const span = getSpan(node);
   const center = node.center_index ?? (span.start + span.end) / 2;
+  const annealedPhrase = level === 1 && fmtKind(node).trim() === "link" && mass !== massBase ? ` absorbed_mass=${mass.toFixed(2)}` : "";
 
-  lines.push(`${indent}- [L${level}${fmtKind(node)} m=${mass.toFixed(2)} s=${strengthInternal.toFixed(2)} span L${span.start}–L${span.end} center=L${fmtCenter(center)}]`);
+  lines.push(`${indent}- [L${level}${fmtKind(node)} m=${mass.toFixed(2)} s=${strengthInternal.toFixed(2)} span L${span.start}–L${span.end} center=L${fmtCenter(center)}${annealedPhrase}]`);
 
   if (isComposite(node) && typeof node.join_center_distance === "number" && typeof node.join_lexical_score === "number") {
     lines.push(

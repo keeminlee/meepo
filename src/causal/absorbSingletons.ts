@@ -1,6 +1,17 @@
 import { distanceScoreHill } from "./textFeatures.js";
 import type { CausalLink } from "./types.js";
 import type { ContextEdge, CyclePhaseMetrics, MetricStats, SingletonNode } from "./cycleTypes.js";
+import {
+  evidenceFromDistanceLexical,
+  evidenceToStrength,
+  localityToTau,
+  type LeverParams,
+} from "./evidenceStrength.js";
+import {
+  buildLexicalCorpusStats,
+  lexicalSignals,
+  scoreTokenOverlapSimple,
+} from "./lexicalSignals.js";
 
 export interface AbsorbInput {
   links: CausalLink[];
@@ -16,6 +27,7 @@ export interface AbsorbInput {
   hillTau: number;
   hillSteepness: number;
   betaLex: number;
+  levers?: LeverParams;
 }
 
 export interface AbsorbOutput {
@@ -36,11 +48,7 @@ type Candidate = {
 };
 
 function scoreTokenOverlap(text1: string, text2: string): number {
-  const tokens1 = new Set(text1.toLowerCase().split(/\s+/).filter((t) => t.length > 2));
-  const tokens2 = new Set(text2.toLowerCase().split(/\s+/).filter((t) => t.length > 2));
-  if (tokens1.size === 0 || tokens2.size === 0) return 0;
-  const overlap = Array.from(tokens1).filter((t) => tokens2.has(t)).length;
-  return overlap / Math.max(tokens1.size, tokens2.size);
+  return scoreTokenOverlapSimple(text1, text2);
 }
 
 function getLinkText(link: CausalLink): string {
@@ -84,6 +92,14 @@ export function absorbSingletons(input: AbsorbInput): AbsorbOutput {
   const singletonEffects = [...input.singletonEffects];
   const contextEdges: ContextEdge[] = [];
   const contextByLinkId = new Map<string, string[]>();
+  const tau = input.levers ? localityToTau(input.levers.locality) : input.hillTau;
+  const corpusStats = input.levers
+    ? buildLexicalCorpusStats([
+        ...links.map((l) => getLinkText(l)),
+        ...singletonCauses.map((s) => s.text),
+        ...singletonEffects.map((s) => s.text),
+      ])
+    : undefined;
 
   const candidates: Candidate[] = [];
   for (const singleton of [...singletonCauses, ...singletonEffects]) {
@@ -94,9 +110,21 @@ export function absorbSingletons(input: AbsorbInput): AbsorbOutput {
       const distance = Math.abs(singleton.anchor_index - center);
       if (distance > radius) continue;
 
-      const distanceScore = distanceScoreHill(distance, input.hillTau, input.hillSteepness);
-      const lexical = scoreTokenOverlap(singleton.text, getLinkText(link));
-      const strength = distanceScore * (1 + input.betaLex * lexical);
+      const distanceScore = distanceScoreHill(distance, tau, input.hillSteepness);
+      const linkText = getLinkText(link);
+      const { lexicalScore: lexical, keywordOverlap } = input.levers
+        ? lexicalSignals(singleton.text, linkText, corpusStats)
+        : { lexicalScore: scoreTokenOverlap(singleton.text, linkText), keywordOverlap: 0 };
+      const strength = input.levers
+        ? evidenceToStrength(
+            evidenceFromDistanceLexical(
+              distanceScore,
+              Math.min(1, lexical * (1 + keywordOverlap * (input.levers.keywordLexBonus ?? 0.25))),
+            ),
+            input.levers.coupling,
+            input.levers.strengthScale ?? 2,
+          )
+        : distanceScore * (1 + input.betaLex * lexical);
       const thresholdCtx =
         typeof input.ctxThresholdBase === "number"
           ? input.ctxThresholdBase + (input.ctxThresholdPerLogMass ?? 0) * Math.log(1 + Math.max(0, singleton.mass))
@@ -155,6 +183,17 @@ export function absorbSingletons(input: AbsorbInput): AbsorbOutput {
     const arr = contextByLinkId.get(candidate.link.id) ?? [];
     arr.push(candidate.singleton.text);
     contextByLinkId.set(candidate.link.id, arr);
+
+    const currentMass = getLinkMass(candidate.link);
+    const addedMass = Math.max(0, candidate.singleton.mass ?? 0);
+    const nextMass = currentMass + addedMass;
+    candidate.link.mass = nextMass;
+    candidate.link.link_mass = nextMass;
+    candidate.link.mass_boost = (candidate.link.mass_boost ?? 0) + addedMass;
+
+    const ctxIndices = new Set<number>(candidate.link.context_line_indices ?? []);
+    ctxIndices.add(candidate.singleton.anchor_index);
+    candidate.link.context_line_indices = Array.from(ctxIndices).sort((a, b) => a - b);
   }
 
   for (const link of links) {

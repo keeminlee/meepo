@@ -53,28 +53,31 @@ export function detectConsequence(text: string): ConsequenceDetection {
   };
 }
 
+/** Single leaf mass for all effects (no inflation by type). */
+const LEAF_MASS = 1;
+
 export function detectEffect(text: string): EffectDetection {
   const roll = detectRollType(text);
   if (roll.roll_type) {
     return {
       isEffect: true,
       effect_type: "roll",
-      mass: 1.0,
+      mass: LEAF_MASS,
       roll_type: roll.roll_type,
       roll_subtype: roll.roll_subtype ?? null,
     };
   }
 
   if (INFORMATION_PATTERNS.some((pattern) => pattern.test(text))) {
-    return { isEffect: true, effect_type: "information", mass: 0.7 };
+    return { isEffect: true, effect_type: "information", mass: LEAF_MASS };
   }
 
   if (DETERMINISTIC_PATTERNS.some((pattern) => pattern.test(text))) {
-    return { isEffect: true, effect_type: "deterministic", mass: 0.85 };
+    return { isEffect: true, effect_type: "deterministic", mass: LEAF_MASS };
   }
 
   if (COMMITMENT_PATTERNS.some((pattern) => pattern.test(text))) {
-    return { isEffect: true, effect_type: "commitment", mass: 0.8 };
+    return { isEffect: true, effect_type: "commitment", mass: LEAF_MASS };
   }
 
   return { isEffect: false, effect_type: "other", mass: 0 };

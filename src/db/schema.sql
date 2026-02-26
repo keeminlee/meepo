@@ -49,12 +49,15 @@ ON ledger_entries(message_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_session
 ON ledger_entries(session_id);
 
--- Latches (per guild + channel)
+-- Latches v2: per (guild, channel, user) for Tier S/A reply gating
 CREATE TABLE IF NOT EXISTS latches (
-  key TEXT PRIMARY KEY,
   guild_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
-  expires_at_ms INTEGER NOT NULL
+  user_id TEXT NOT NULL,
+  expires_at_ms INTEGER NOT NULL,
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  max_turns INTEGER,
+  PRIMARY KEY (guild_id, channel_id, user_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_latches_scope
@@ -75,10 +78,13 @@ ON latches(guild_id, channel_id);
 CREATE TABLE IF NOT EXISTS sessions (
   session_id TEXT PRIMARY KEY,
   guild_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'canon',         -- 'canon' | 'chat'
+  mode_at_start TEXT NOT NULL DEFAULT 'ambient', -- 'canon' | 'ambient' | 'lab' | 'dormant'
   label TEXT,                              -- User-provided label (e.g., "C2E03") for reference
   created_at_ms INTEGER NOT NULL,          -- When this session record was created (immutable timestamp)
   started_at_ms INTEGER NOT NULL,          -- When the session's content began (may differ for ingested sessions)
   ended_at_ms INTEGER,
+  ended_reason TEXT,                       -- Optional closure reason ('mode_change', 'mode_change_to_dormant', etc.)
   started_by_id TEXT,
   started_by_name TEXT,
   source TEXT NOT NULL DEFAULT 'live'  -- 'live' | 'ingest-media' (for offline ingested sessions)
@@ -482,5 +488,53 @@ CREATE TABLE IF NOT EXISTS guild_runtime_state (
   guild_id TEXT PRIMARY KEY,
   active_session_id TEXT,                 -- Current active session (NULL if none)
   active_persona_id TEXT,                 -- meta_meepo | diegetic_meepo | xoblob (default meta_meepo)
+  active_mode TEXT,                       -- canon | ambient | lab | dormant
   updated_at_ms INTEGER NOT NULL
 );
+
+-- Gold Memory: curated campaign memory rows (human-authored, deterministic)
+CREATE TABLE IF NOT EXISTS gold_memory (
+  guild_id TEXT NOT NULL,
+  campaign_slug TEXT NOT NULL,
+  memory_key TEXT NOT NULL,
+  character TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '',
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  source_ids_json TEXT NOT NULL DEFAULT '[]',
+  gravity REAL NOT NULL DEFAULT 1.0,
+  certainty REAL NOT NULL DEFAULT 1.0,
+  resilience REAL NOT NULL DEFAULT 1.0,
+  status TEXT NOT NULL DEFAULT 'active', -- active | archived
+  updated_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, campaign_slug, memory_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gold_memory_scope
+ON gold_memory(guild_id, campaign_slug, character);
+
+CREATE INDEX IF NOT EXISTS idx_gold_memory_status
+ON gold_memory(guild_id, campaign_slug, status, updated_at_ms DESC);
+
+-- Gold Memory Candidate: queued rows pending review/approval
+CREATE TABLE IF NOT EXISTS gold_memory_candidate (
+  guild_id TEXT NOT NULL,
+  campaign_slug TEXT NOT NULL,
+  candidate_key TEXT NOT NULL,
+  session_id TEXT,
+  character TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '',
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  source_ids_json TEXT NOT NULL DEFAULT '[]',
+  gravity REAL NOT NULL DEFAULT 1.0,
+  certainty REAL NOT NULL DEFAULT 1.0,
+  resilience REAL NOT NULL DEFAULT 1.0,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected
+  reviewed_at_ms INTEGER,
+  updated_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, campaign_slug, candidate_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gold_candidate_scope
+ON gold_memory_candidate(guild_id, campaign_slug, status, updated_at_ms DESC);

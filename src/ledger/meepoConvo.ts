@@ -13,7 +13,9 @@
  * - Unified memory store (approved → meepo_mind)
  */
 
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
+import { getDefaultCampaignSlug } from "../campaign/defaultCampaign.js";
+import { resolveCampaignSlug } from "../campaign/guildConfig.js";
 import { log } from "../utils/logger.js";
 
 const convoLog = log.withScope("meepo-convo");
@@ -48,6 +50,7 @@ export interface ConvoCandidate {
 }
 
 export interface LogTurnOptions {
+  guild_id: string;
   session_id: string;
   channel_id: string;
   message_id?: string | null;
@@ -57,6 +60,15 @@ export interface LogTurnOptions {
   content_raw: string;
   content_norm?: string | null;
   ts_ms?: number;
+}
+
+function getConvoDbForGuild(guildId: string) {
+  const campaignSlug = resolveCampaignSlug({ guildId });
+  return getDbForCampaign(campaignSlug);
+}
+
+function getConvoDbForCampaign(campaignSlug?: string) {
+  return getDbForCampaign(campaignSlug ?? getDefaultCampaignSlug());
 }
 
 // ============================================================================
@@ -73,7 +85,7 @@ export interface LogTurnOptions {
  * @returns The log entry ID (new or existing)
  */
 export function logConvoTurn(opts: LogTurnOptions): number {
-  const db = getDb();
+  const db = getConvoDbForGuild(opts.guild_id);
   const ts_ms = opts.ts_ms ?? Date.now();
 
   try {
@@ -131,8 +143,8 @@ export function logConvoTurn(opts: LogTurnOptions): number {
  * @param limit - Max number of turns to retrieve (default: 60)
  * @returns Array of conversation turns (oldest first)
  */
-export function getConvoTail(session_id: string, limit: number = 60): ConvoTurn[] {
-  const db = getDb();
+export function getConvoTail(session_id: string, guildId: string, limit: number = 60): ConvoTurn[] {
+  const db = getConvoDbForGuild(guildId);
 
   try {
     const turns = db
@@ -160,8 +172,8 @@ export function getConvoTail(session_id: string, limit: number = 60): ConvoTurn[
  * @param session_id - Session ID
  * @returns Array of all turns (chronological order)
  */
-export function getSessionConvo(session_id: string): ConvoTurn[] {
-  const db = getDb();
+export function getSessionConvo(session_id: string, campaignSlug?: string): ConvoTurn[] {
+  const db = getConvoDbForCampaign(campaignSlug);
 
   try {
     return db
@@ -196,9 +208,10 @@ export function insertCandidate(
   source_log_id: number,
   candidate_type: string,
   candidate_text: string,
-  reason?: string | null
+  reason?: string | null,
+  campaignSlug?: string
 ): number {
-  const db = getDb();
+  const db = getConvoDbForCampaign(campaignSlug);
   const created_ts_ms = Date.now();
 
   try {
@@ -237,8 +250,8 @@ export function insertCandidate(
  *
  * @returns Array of pending candidates (oldest first)
  */
-export function listPendingCandidates(): ConvoCandidate[] {
-  const db = getDb();
+export function listPendingCandidates(campaignSlug?: string): ConvoCandidate[] {
+  const db = getConvoDbForCampaign(campaignSlug);
 
   try {
     return db
@@ -264,7 +277,7 @@ export function getCandidateWithContext(candidate_id: number): {
   candidate: ConvoCandidate;
   sourceTurn: ConvoTurn;
 } | null {
-  const db = getDb();
+  const db = getConvoDbForCampaign();
 
   try {
     const candidate = db
@@ -297,8 +310,8 @@ export function getCandidateWithContext(candidate_id: number): {
  * @param candidate_id - Candidate ID
  * @param review_notes - Optional notes from reviewer
  */
-export function approveCandidate(candidate_id: number, review_notes?: string | null): void {
-  const db = getDb();
+export function approveCandidate(candidate_id: number, review_notes?: string | null, campaignSlug?: string): void {
+  const db = getConvoDbForCampaign(campaignSlug);
   const reviewed_ts_ms = Date.now();
 
   try {
@@ -321,8 +334,8 @@ export function approveCandidate(candidate_id: number, review_notes?: string | n
  * @param candidate_id - Candidate ID
  * @param review_notes - Optional reason for rejection
  */
-export function rejectCandidate(candidate_id: number, review_notes?: string | null): void {
-  const db = getDb();
+export function rejectCandidate(candidate_id: number, review_notes?: string | null, campaignSlug?: string): void {
+  const db = getConvoDbForCampaign(campaignSlug);
   const reviewed_ts_ms = Date.now();
 
   try {

@@ -17,6 +17,7 @@
 import { getOpenAIClient } from "../../llm/client.js";
 import { log } from "../../utils/logger.js";
 import { TtsProvider } from "./provider.js";
+import { cfg } from "../../config/env.js";
 
 const ttsLog = log.withScope("tts");
 
@@ -26,14 +27,11 @@ export class OpenAiTtsProvider implements TtsProvider {
   private maxCharsPerChunk: number;
 
   constructor() {
-    this.model = process.env.TTS_OPENAI_MODEL ?? "gpt-4o-mini-tts";
-    this.voice = process.env.TTS_VOICE ?? "alloy";
-    this.maxCharsPerChunk = parseInt(
-      process.env.TTS_MAX_CHARS_PER_CHUNK ?? "350",
-      10
-    );
+    this.model = cfg.tts.model;
+    this.voice = cfg.tts.voice;
+    this.maxCharsPerChunk = cfg.tts.chunkSizeChars;
 
-    if (process.env.DEBUG_VOICE === "true") {
+    if (cfg.voice.debug) {
       ttsLog.debug(
         `OpenAI provider initialized: model=${this.model}, voice=${this.voice}, maxCharsPerChunk=${this.maxCharsPerChunk}`
       );
@@ -76,7 +74,7 @@ export class OpenAiTtsProvider implements TtsProvider {
       const client = getOpenAIClient();
       const chunks = this.chunkText(text.trim());
 
-      if (process.env.DEBUG_VOICE === "true") {
+      if (cfg.voice.debug) {
         ttsLog.debug(
           `Synthesizing ${chunks.length} chunk(s), total chars=${text.length}`
         );
@@ -97,7 +95,7 @@ export class OpenAiTtsProvider implements TtsProvider {
         const buf = Buffer.from(await response.arrayBuffer());
         buffers.push(buf);
 
-        if (process.env.DEBUG_VOICE === "true" && chunks.length > 1) {
+        if (cfg.voice.debug && chunks.length > 1) {
           ttsLog.debug(
             `Chunk ${i + 1}/${chunks.length}: ${chunk.substring(0, 50).replace(/\n/g, " ")}...`
           );
@@ -107,7 +105,7 @@ export class OpenAiTtsProvider implements TtsProvider {
       // Concatenate all MP3 buffers
       const totalBuffer = Buffer.concat(buffers);
 
-      if (process.env.DEBUG_VOICE === "true") {
+      if (cfg.voice.debug) {
         ttsLog.debug(
           `Synthesis complete: ${totalBuffer.length} bytes of MP3 audio`
         );

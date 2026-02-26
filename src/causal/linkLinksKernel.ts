@@ -1,6 +1,18 @@
 import { distanceScoreHill } from "./textFeatures.js";
 import type { CausalLink } from "./types.js";
 import { inferNodeKind } from "./nodeKind.js";
+import {
+  evidenceFromDistanceLexical,
+  evidenceToStrength,
+  localityToTau,
+  mergeThreshold,
+  type LeverParams,
+} from "./evidenceStrength.js";
+import {
+  buildLexicalCorpusStats,
+  lexicalSignals,
+  scoreTokenOverlapSimple,
+} from "./lexicalSignals.js";
 
 export type LinkLinkParams = {
   kLocalLinks: number;
@@ -11,6 +23,7 @@ export type LinkLinkParams = {
   tLinkBase?: number;
   tLinkK?: number;
   maxForwardLines: number;
+  levers?: LeverParams;
 };
 
 export type LinkLinkCandidate = {
@@ -32,11 +45,7 @@ export type LinkLinkOutput = {
 };
 
 function scoreTokenOverlap(text1: string, text2: string): number {
-  const tokens1 = new Set(text1.toLowerCase().split(/\s+/).filter((t) => t.length > 2));
-  const tokens2 = new Set(text2.toLowerCase().split(/\s+/).filter((t) => t.length > 2));
-  if (tokens1.size === 0 || tokens2.size === 0) return 0;
-  const overlap = Array.from(tokens1).filter((t) => tokens2.has(t)).length;
-  return overlap / Math.max(tokens1.size, tokens2.size);
+  return scoreTokenOverlapSimple(text1, text2);
 }
 
 function getLinkText(link: CausalLink): string {
@@ -82,6 +91,14 @@ function getNodeMass(link: CausalLink): number {
 }
 
 function thresholdForLinkMasses(params: LinkLinkParams, massA: number, massB: number): number {
+  if (params.levers) {
+    return mergeThreshold(
+      massA,
+      massB,
+      params.levers.thresholdBase ?? 1,
+      params.levers.growth_resistance,
+    );
+  }
   const t0 = params.tLinkBase ?? params.minBridge;
   const k = params.tLinkK ?? 0.15;
   return t0 + k * Math.log(1 + Math.sqrt(Math.max(0, massA) * Math.max(0, massB)));
@@ -125,6 +142,8 @@ export function linkLinksKernel(input: {
   const nodes = input.nodes.map((node) => cloneForNextLevel(node, node.level ?? 1));
   const centers = nodes.map(getCenterIndex);
   const texts = nodes.map(getLinkText);
+  const corpusStats = input.params.levers ? buildLexicalCorpusStats(texts) : undefined;
+  const tau = input.params.levers ? localityToTau(input.params.levers.locality) : input.params.hillTau;
 
   type PairCandidate = {
     leftIndex: number;
@@ -135,6 +154,7 @@ export function linkLinksKernel(input: {
     lexical_score: number;
   };
 
+  // Local search for round 2+: for each node i, right (effect) candidates = the kLocalLinks nearest nodes j by center_index that are strictly after i (center[j] > center[i]), within maxForwardLines. Not strictly adjacent—we take the k nearest by center distance.
   const candidates: PairCandidate[] = [];
   for (let i = 0; i < nodes.length; i++) {
     const forward: Array<{ index: number; center_distance: number }> = [];
@@ -149,9 +169,20 @@ export function linkLinksKernel(input: {
     const local = forward.slice(0, input.params.kLocalLinks);
 
     for (const { index: j, center_distance } of local) {
-      const distStrength = distanceScoreHill(center_distance, input.params.hillTau, input.params.hillSteepness);
-      const lexical_score = scoreTokenOverlap(texts[i], texts[j]);
-      const strength_bridge = distStrength * (1 + input.params.betaLex * lexical_score);
+      const distEvidence = distanceScoreHill(center_distance, tau, input.params.hillSteepness);
+      const { lexicalScore: lexical_score, keywordOverlap } = input.params.levers
+        ? lexicalSignals(texts[i], texts[j], corpusStats)
+        : { lexicalScore: scoreTokenOverlap(texts[i], texts[j]), keywordOverlap: 0 };
+      const strength_bridge = input.params.levers
+        ? evidenceToStrength(
+            evidenceFromDistanceLexical(
+              distEvidence,
+              Math.min(1, lexical_score * (1 + keywordOverlap * (input.params.levers.keywordLexBonus ?? 0.25))),
+            ),
+            input.params.levers.coupling,
+            input.params.levers.strengthScale ?? 2,
+          )
+        : distEvidence * (1 + input.params.betaLex * lexical_score);
       const leftMass = getNodeMass(nodes[i]);
       const rightMass = getNodeMass(nodes[j]);
       const threshold_link = thresholdForLinkMasses(input.params, leftMass, rightMass);
@@ -199,7 +230,7 @@ export function linkLinksKernel(input: {
     const leftInternal = ensureStrengthInternal(left);
     const rightInternal = ensureStrengthInternal(right);
     const strengthInternal = candidate.strength_bridge + leftInternal + rightInternal;
-    const massBase = leftMass + rightMass + strengthInternal;
+    const massBase = leftMass + rightMass; // composite mass = sum of child masses only (no strength term)
 
     const composite: CausalLink = {
       ...left,

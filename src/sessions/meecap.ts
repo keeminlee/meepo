@@ -18,13 +18,16 @@
 
 import { chat } from "../llm/client.js";
 import type { LedgerEntry } from "../ledger/ledger.js";
-import { getLedgerForSession } from "../ledger/ledger.js";
 import { buildTranscript } from "../ledger/transcripts.js";
 import { loadRegistry } from "../registry/loadRegistry.js";
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
 import { randomUUID } from "node:crypto";
 import fs from "fs";
 import path from "path";
+import { cfg } from "../config/env.js";
+import { resolveCampaignExportSubdir } from "../dataPaths.js";
+import { getDefaultCampaignSlug } from "../campaign/defaultCampaign.js";
+import { resolveCampaignSlug } from "../campaign/guildConfig.js";
 
 /**
  * Get formatted list of PC names from registry for prompt context
@@ -50,7 +53,7 @@ function getPCNamesForPrompt(): string {
 export type MeecapMode = "narrative" | "v1_json";
 
 function getMeecapMode(): MeecapMode {
-  const mode = process.env.MEECAP_MODE ?? "narrative";
+  const mode = cfg.session.meecapMode;
   return mode === "v1_json" ? "v1_json" : "narrative";
 }
 
@@ -69,7 +72,11 @@ function saveNarrativeToFile(args: {
   const { sessionId, sessionLabel, narrative } = args;
 
   try {
-    const meecapsDir = path.resolve("data", "meecaps", "narratives");
+    const campaignSlug = resolveCampaignSlug({});
+    const meecapsDir = resolveCampaignExportSubdir(campaignSlug, "meecaps", {
+      forWrite: true,
+      ensureExists: true,
+    });
     
     // Ensure directory exists
     if (!fs.existsSync(meecapsDir)) {
@@ -194,6 +201,32 @@ export async function generateMeecapStub(args: {
   }
 }
 
+export async function generateNarrativeMeecapFromTranscript(args: {
+  sessionId: string;
+  transcript: string;
+  entryCount: number;
+  model?: string;
+}): Promise<{ narrative: string; validationErrors: string[] }> {
+  const prompts = buildNarrativeMeecapPrompts({
+    sessionId: args.sessionId,
+    transcript: args.transcript,
+    entryCount: args.entryCount,
+  });
+
+  const modelOutput = await chat({
+    systemPrompt: prompts.systemPrompt,
+    userMessage: prompts.userMessage,
+    model: args.model,
+    maxTokens: 16000,
+  });
+
+  const validationErrors = validateMeecapNarrative(modelOutput);
+  return {
+    narrative: modelOutput.trim(),
+    validationErrors,
+  };
+}
+
 /**
  * Generate narrative prose Meecap (story-like retelling).
  * 
@@ -205,7 +238,7 @@ async function generateMeecapNarrative(args: {
   entries: LedgerEntry[];
   buildBeatsJson?: boolean;
 }): Promise<MeecapGenerationResult> {
-  const { sessionId, sessionLabel, entries: _entries, buildBeatsJson = true } = args;
+  const { sessionId, sessionLabel, entries, buildBeatsJson = true } = args;
 
   try {
     // Build transcript with line indices using shared builder
@@ -214,9 +247,6 @@ async function generateMeecapNarrative(args: {
     // Get transcript entries to determine entry count
     const transcriptEntries = buildTranscript(sessionId, true);
     const entryCount = transcriptEntries.length;
-    
-    // Get ledger entries for beats JSON generation (needs ledger IDs)
-    const entries = getLedgerForSession({ sessionId, primaryOnly: true });
     
     if (entryCount === 0) {
       return {
@@ -317,15 +347,11 @@ async function generateMeecapV1Json(args: {
   sessionLabel?: string | null;
   entries: LedgerEntry[];
 }): Promise<MeecapGenerationResult> {
-  const { sessionId, sessionLabel, entries: _entries } = args;
+  const { sessionId, sessionLabel, entries } = args;
 
   try {
     // Build transcript with line indices using shared builder
     const transcript = buildMeecapTranscript(sessionId, true);
-    
-    // Get entries for validation - using ledger query for compatibility with validateMeecapV1
-    // which needs ledger IDs for reference validation
-    const entries = getLedgerForSession({ sessionId, primaryOnly: true });
     
     if (!entries || entries.length === 0) {
       return {
@@ -877,8 +903,9 @@ export function buildBeatsJsonFromNarrative(args: {
   entries?: LedgerEntry[];
   label?: string;
   insertToDB?: boolean;
+  db?: any;
 }): { ok: true; beats: MeecapBeats } | { ok: false; error: string } {
-  const { sessionId, lineCount, narrative, entries, label, insertToDB = false } = args;
+  const { sessionId, lineCount, narrative, entries, label, insertToDB = false, db: injectedDb } = args;
 
   const narrativeSection = extractSection(narrative, "=== NARRATIVE ===", "=== SOURCE TRANSCRIPT ===");
   if (!narrativeSection) {
@@ -923,7 +950,7 @@ export function buildBeatsJsonFromNarrative(args: {
   // Optionally insert beats into database
   if (insertToDB) {
     try {
-      const db = getDb();
+      const db = injectedDb ?? getDbForCampaign(getDefaultCampaignSlug());
       const now = Date.now();
       
       // Get session label for backfill

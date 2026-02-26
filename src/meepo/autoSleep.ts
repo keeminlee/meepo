@@ -6,12 +6,15 @@
  */
 
 import { log } from "../utils/logger.js";
-import { getDb } from "../db.js";
 import { getActiveMeepo, sleepMeepo } from "./state.js";
+import { cfg } from "../config/env.js";
+import { resolveCampaignSlug } from "../campaign/guildConfig.js";
+import { getDbForCampaign } from "../db.js";
+import { getControlDb } from "../db.js";
 
 const meepoLog = log.withScope("meepo");
 
-const AUTO_SLEEP_MS = Number(process.env.MEEPO_AUTO_SLEEP_MS ?? "600000"); // Default: 10 minutes
+const AUTO_SLEEP_MS = cfg.session.autoSleepMs;
 const CHECK_INTERVAL_MS = 60000; // Check every 60 seconds
 
 let checkInterval: NodeJS.Timeout | null = null;
@@ -20,11 +23,11 @@ let checkInterval: NodeJS.Timeout | null = null;
  * Check for inactive Meepo instances and auto-sleep them.
  */
 function checkInactivity() {
-  const db = getDb();
+  const controlDb = getControlDb();
   
   try {
     // Get all guilds with active Meepo instances
-    const activeInstances = db
+    const activeInstances = controlDb
       .prepare("SELECT DISTINCT guild_id FROM npc_instances WHERE is_active = 1")
       .all() as { guild_id: string }[];
 
@@ -32,8 +35,11 @@ function checkInactivity() {
       const active = getActiveMeepo(guild_id);
       if (!active) continue;
 
+      const campaignSlug = resolveCampaignSlug({ guildId: guild_id });
+      const campaignDb = getDbForCampaign(campaignSlug);
+
       // Get timestamp of most recent ledger entry for this guild
-      const lastEntry = db
+      const lastEntry = campaignDb
         .prepare(`
           SELECT timestamp_ms 
           FROM ledger_entries 

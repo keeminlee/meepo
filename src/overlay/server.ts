@@ -10,6 +10,7 @@ import * as path from 'path';
 import { log } from '../utils/logger.js';
 import { setSpeaking, getSpeakingState, onSpeakingStateChange, setPresence, getPresenceState, onPresenceStateChange } from './speakingState.js';
 import { loadRegistry } from '../registry/loadRegistry.js';
+import { cfg } from '../config/env.js';
 
 const overlayLog = log.withScope("overlay");
 
@@ -17,8 +18,8 @@ const app = express();
 let httpServer: HttpServer | null = null;
 let wss: WebSocketServer | null = null;
 
-const overlayPort = parseInt(process.env.OVERLAY_PORT || '7777', 10);
-const dmRoleId = process.env.DM_ROLE_ID || '';
+const overlayPort = cfg.overlay.port;
+const dmRoleId = cfg.discord.dmRoleId || '';
 
 // In-memory broadcast queue (buffer messages if no active connections)
 const activeBroadcasters = new Set<WebSocket>();
@@ -157,11 +158,12 @@ export async function startOverlayServer() {
     setupWebSocket();
 
     // Listen for speaking state changes and broadcast
-    onSpeakingStateChange((id: string, speaking: boolean) => {
+    onSpeakingStateChange((id: string, speaking: boolean, meta?: { reason?: string }) => {
       broadcastToClients({
         type: 'speaking',
         id,
         speaking,
+        reason: meta?.reason,
         t: Date.now(),
       });
     });
@@ -187,8 +189,15 @@ export async function startOverlayServer() {
  * Emit speaking event for a token
  * Should be called from receiver (DM/PCs) and speaker (Meepo)
  */
-export function overlayEmitSpeaking(id: string, speaking: boolean) {
-  setSpeaking(id, speaking);
+export function overlayEmitSpeaking(
+  id: string,
+  speaking: boolean,
+  options?: {
+    immediate?: boolean;
+    reason?: string;
+  }
+) {
+  setSpeaking(id, speaking, options);
 }
 
 /**

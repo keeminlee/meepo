@@ -52,11 +52,17 @@ See [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) for command details and readi
 
 Start with [docs/README.md](docs/README.md) for the documentation map.
 
+Release docs:
+- [docs/V1_RELEASE_CHECKLIST.md](docs/V1_RELEASE_CHECKLIST.md)
+- [CHANGELOG.md](CHANGELOG.md)
+
 High-use references:
+- [docs/MAP.md](docs/MAP.md)
 - [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md)
+- [DB routing guardrail](docs/CURRENT_STATE.md#db-routing-guardrail-campaign-isolation)
 - [docs/CAUSAL_CORE_PHYSICS.md](docs/CAUSAL_CORE_PHYSICS.md)
-- [LOGGING_REFERENCE.md](LOGGING_REFERENCE.md)
-- [causal-debug.md](causal-debug.md)
+- [docs/notes/ops/LOGGING_REFERENCE.md](docs/notes/ops/LOGGING_REFERENCE.md)
+- [docs/notes/causal/causal-debug.md](docs/notes/causal/causal-debug.md)
 
 ## License
 

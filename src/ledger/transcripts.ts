@@ -8,13 +8,23 @@
  * Fallback: live query from ledger_entries (used when bronze hasn't been compiled).
  */
 
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
+import { getDefaultCampaignSlug } from "../campaign/defaultCampaign.js";
 
 export interface TranscriptEntry {
   line_index: number;
   author_name: string;
   content: string;       // normalized content (fallback to raw if N/A)
   timestamp_ms: number;
+  source_type?: string;
+  source_ids?: string[];
+}
+
+export type TranscriptView = "auto" | "bronze" | "raw";
+
+export interface BuildTranscriptOptions {
+  primaryOnly?: boolean;
+  view?: TranscriptView;
 }
 
 export type TranscriptLineRange = {
@@ -43,6 +53,12 @@ export interface GetTranscriptLinesOptions {
   primaryOnly?: boolean;
   maxLines?: number;
   onMissing?: "skip" | "placeholder";
+  db?: any;
+  view?: TranscriptView;
+}
+
+function resolveTranscriptDb(db?: any): any {
+  return db ?? getDbForCampaign(getDefaultCampaignSlug());
 }
 
 function toRequestedLineNumbers(selector: TranscriptLineSelector): number[] {
@@ -104,14 +120,34 @@ function toRequestedLineNumbers(selector: TranscriptLineSelector): number[] {
  */
 export function buildTranscript(
   sessionId: string,
-  primaryOnly: boolean = true
+  optionsOrPrimaryOnly: BuildTranscriptOptions | boolean = true,
+  db?: any
 ): TranscriptEntry[] {
-  // Prefer bronze when available
-  const bronze = tryGetBronzeTranscript(sessionId);
-  if (bronze !== null) return bronze;
+  const options: BuildTranscriptOptions =
+    typeof optionsOrPrimaryOnly === "boolean"
+      ? { primaryOnly: optionsOrPrimaryOnly, view: "auto" }
+      : {
+          primaryOnly: optionsOrPrimaryOnly.primaryOnly ?? true,
+          view: optionsOrPrimaryOnly.view ?? "auto",
+        };
+
+  // Prefer bronze when available unless explicitly forced to raw
+  if (options.view !== "raw") {
+    const bronze = tryGetBronzeTranscript(sessionId, db);
+    if (bronze !== null) {
+      return enforceContiguousLineIndex(bronze);
+    }
+
+    if (options.view === "bronze") {
+      throw new Error(
+        `No bronze transcript found for session ${sessionId}. ` +
+          `Run: npx tsx src/tools/compile-transcripts.ts --session <LABEL>`
+      );
+    }
+  }
 
   // Fallback: live query from ledger_entries
-  return buildTranscriptFromLedger(sessionId, primaryOnly);
+  return buildTranscriptFromLedger(sessionId, options.primaryOnly ?? true, db);
 }
 
 /**
@@ -120,14 +156,15 @@ export function buildTranscript(
  */
 export function buildTranscriptFromLedger(
   sessionId: string,
-  primaryOnly: boolean = true
+  primaryOnly: boolean = true,
+  db?: any
 ): TranscriptEntry[] {
-  const db = getDb();
+  const conn = resolveTranscriptDb(db);
 
   const narrativeWeightFilter = primaryOnly ? "AND narrative_weight = ?" : "";
   const params = primaryOnly ? [sessionId, "primary"] : [sessionId];
 
-  const rows = db
+  const rows = conn
     .prepare(
       `SELECT author_name, content, content_norm, timestamp_ms
        FROM ledger_entries
@@ -182,7 +219,11 @@ export function getTranscriptLinesDetailed(
   const primaryOnly = opts?.primaryOnly ?? true;
   const maxLines = opts?.maxLines;
   const onMissing = opts?.onMissing ?? "skip";
-  const transcript = buildTranscript(sessionId, primaryOnly);
+  const transcript = buildTranscript(
+    sessionId,
+    { primaryOnly, view: opts?.view ?? "auto" },
+    opts?.db
+  );
   let requestedLines = toRequestedLineNumbers(lineNumbersOrRange);
 
   if (typeof maxLines === "number" && Number.isFinite(maxLines) && maxLines >= 0) {
@@ -221,12 +262,12 @@ export function getTranscriptLinesDetailed(
  * Read bronze_transcript for a session. Returns null if not yet compiled.
  * Internal — callers should use buildTranscript() which auto-falls back.
  */
-function tryGetBronzeTranscript(sessionId: string): TranscriptEntry[] | null {
-  const db = getDb();
+function tryGetBronzeTranscript(sessionId: string, db?: any): TranscriptEntry[] | null {
+  const conn = resolveTranscriptDb(db);
 
-  const rows = db
+  const rows = conn
     .prepare(
-      `SELECT line_index, author_name, content, timestamp_ms
+      `SELECT line_index, author_name, content, timestamp_ms, source_type, source_ids
        FROM bronze_transcript
        WHERE session_id = ?
        ORDER BY line_index ASC`
@@ -236,6 +277,8 @@ function tryGetBronzeTranscript(sessionId: string): TranscriptEntry[] | null {
       author_name: string;
       content: string;
       timestamp_ms: number;
+      source_type: string;
+      source_ids: string;
     }>;
 
   if (rows.length === 0) return null;
@@ -245,6 +288,8 @@ function tryGetBronzeTranscript(sessionId: string): TranscriptEntry[] | null {
     author_name: row.author_name,
     content: row.content,
     timestamp_ms: row.timestamp_ms,
+    source_type: row.source_type,
+    source_ids: parseSourceIds(row.source_ids),
   }));
 }
 
@@ -252,20 +297,37 @@ function tryGetBronzeTranscript(sessionId: string): TranscriptEntry[] | null {
  * Read bronze_transcript for a session.
  * Throws if bronze hasn't been compiled yet (use compile-transcripts first).
  */
-export function getBronzeTranscript(sessionId: string): TranscriptEntry[] {
-  const rows = tryGetBronzeTranscript(sessionId);
+export function getBronzeTranscript(sessionId: string, db?: any): TranscriptEntry[] {
+  const rows = tryGetBronzeTranscript(sessionId, db);
   if (rows === null) {
     throw new Error(
       `No bronze transcript found for session ${sessionId}. ` +
         `Run: npx tsx src/tools/compile-transcripts.ts --session <LABEL>`
     );
   }
-  return rows;
+  return enforceContiguousLineIndex(rows);
 }
 
 /**
  * Returns true if bronze_transcript has been compiled for this session.
  */
-export function hasBronzeTranscript(sessionId: string): boolean {
-  return tryGetBronzeTranscript(sessionId) !== null;
+export function hasBronzeTranscript(sessionId: string, db?: any): boolean {
+  return tryGetBronzeTranscript(sessionId, db) !== null;
+}
+
+function parseSourceIds(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((value): value is string => typeof value === "string");
+  } catch {
+    return [];
+  }
+}
+
+function enforceContiguousLineIndex(entries: TranscriptEntry[]): TranscriptEntry[] {
+  return entries.map((entry, index) => ({
+    ...entry,
+    line_index: index,
+  }));
 }

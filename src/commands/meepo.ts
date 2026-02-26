@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, TextChannel } from "discord.js";
+import { SlashCommandBuilder, TextChannel, GuildMember } from "discord.js";
 import { getActiveMeepo, wakeMeepo, sleepMeepo, transformMeepo } from "../meepo/state.js";
 import { getActivePersonaId, getMindspace, setActivePersonaId } from "../meepo/personaState.js";
 import { getGuildDefaultPersonaId, resolveCampaignSlug, setGuildCampaignSlug, setGuildDefaultPersonaId } from "../campaign/guildConfig.js";
@@ -14,10 +14,11 @@ import { startReceiver, stopReceiver } from "../voice/receiver.js";
 import { getSttProviderInfo } from "../voice/stt/provider.js";
 import { getTtsProvider } from "../voice/tts/provider.js";
 import { speakInGuild } from "../voice/speaker.js";
+import { voicePlaybackController } from "../voice/voicePlaybackController.js";
 import { applyPostTtsFx } from "../voice/audioFx.js";
 import { loadRegistry } from "../registry/loadRegistry.js";
 import { extractRegistryMatches } from "../registry/extractRegistryMatches.js";
-import { searchEventsByTitle, type EventRow } from "../ledger/eventSearch.js";
+import { searchEventsByTitleScoped, type EventRow } from "../ledger/eventSearch.js";
 import { getTranscriptLinesDetailed, getTranscriptLines } from "../ledger/transcripts.js";
 import { loadGptcap } from "../ledger/gptcapProvider.js";
 import { findRelevantBeats, type ScoredBeat } from "../recall/findRelevantBeats.js";
@@ -26,20 +27,20 @@ import {
   findRelevantMeepoInteractions,
   getInteractionSnippets,
 } from "../ledger/meepoInteractions.js";
-import { getDb } from "../db.js";
 import { log } from "../utils/logger.js";
 import { getTodayAtNinePmEtUnixSeconds } from "../utils/timestamps.js";
 import { getNextSessionLabel } from "../sessions/sessionLabels.js";
+import { cfg } from "../config/env.js";
+import type { MeepoMode } from "../config/types.js";
+import { getGuildMode, sessionKindForMode, setGuildMode } from "../sessions/sessionRuntime.js";
+import { endSession, getActiveSession, startSession } from "../sessions/sessions.js";
+import { getLegacyFallbacksThisBoot } from "../dataPaths.js";
+import { isElevated } from "../security/isElevated.js";
+import type { CommandCtx } from "./index.js";
 
 const meepoLog = log.withScope("meepo");
 
-function isDm(interaction: any): boolean {
-  const DM_ROLE_ID = process.env.DM_ROLE_ID || "";
-  return interaction.member?.roles?.cache?.has(DM_ROLE_ID) ?? false;
-}
-
-function getSessionLabelMap(sessionIds: string[]): Map<string, string | null> {
-  const db = getDb();
+function getSessionLabelMap(sessionIds: string[], db: any): Map<string, string | null> {
   const stmt = db.prepare("SELECT label FROM sessions WHERE session_id = ? LIMIT 1");
   const out = new Map<string, string | null>();
 
@@ -227,7 +228,8 @@ export const meepo = {
             .setRequired(true)
             .addChoices(
               { name: "Default persona (on wake)", value: "default-persona" },
-              { name: "Campaign slug (registry folder)", value: "campaign-slug" }
+              { name: "Campaign slug (registry folder)", value: "campaign-slug" },
+              { name: "Gold memory enabled (0/1)", value: "gold-memory-enabled" }
             )
         )
         .addStringOption((opt) =>
@@ -254,6 +256,23 @@ export const meepo = {
     )
     .addSubcommand((sub) =>
       sub
+        .setName("mode")
+        .setDescription("Get or set global Meepo mode for this guild.")
+        .addStringOption((opt) =>
+          opt
+            .setName("value")
+            .setDescription("Optional: set mode (DM-only)")
+            .setRequired(false)
+            .addChoices(
+              { name: "canon", value: "canon" },
+              { name: "ambient", value: "ambient" },
+              { name: "lab", value: "lab" },
+              { name: "dormant", value: "dormant" }
+            )
+        )
+    )
+    .addSubcommand((sub) =>
+      sub
         .setName("transform")
         .setDescription("[Deprecated] Use /meepo persona-set instead. Transform into a form (meepo, xoblob).")
         .addStringOption((opt) =>
@@ -276,6 +295,11 @@ export const meepo = {
       sub
         .setName("leave")
         .setDescription("Leave voice channel.")
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("hush")
+        .setDescription("Stop Meepo voice playback immediately.")
     )
     .addSubcommand((sub) =>
       sub
@@ -373,25 +397,22 @@ export const meepo = {
         .setDescription("[DM-only] Debug: list last 5 Tier S interactions for you; snippet resolution, persona, guild.")
     ),
 
-  async execute(interaction: any) {
+  async execute(interaction: any, ctx: CommandCtx | null) {
     const subGroup = interaction.options.getSubcommandGroup(false);
     const sub = interaction.options.getSubcommand();
     const guildId = interaction.guildId as string | null;
 
-    if (!guildId) {
+    if (!guildId || !ctx?.db) {
       await interaction.reply({ content: "Meepo only works in a server (not DMs).", ephemeral: true });
       return;
     }
 
+    const db = ctx.db;
+
     if (subGroup === "debug" && sub === "recall") {
-      const dmRoleId = process.env.DM_ROLE_ID;
-      if (dmRoleId) {
-        const member = interaction.member;
-        const hasDmRole = member?.roles?.cache?.has(dmRoleId) ?? false;
-        if (!hasDmRole) {
-          await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
-          return;
-        }
+      if (!isElevated(interaction.member as GuildMember | null)) {
+        await interaction.reply({ content: "Not authorized.", ephemeral: true });
+        return;
       }
 
       const queryText = interaction.options.getString("query", true).trim();
@@ -412,7 +433,7 @@ export const meepo = {
         const dedup = new Map<string, EventRow>();
 
         for (const term of terms) {
-          for (const event of searchEventsByTitle(term)) {
+          for (const event of searchEventsByTitleScoped({ term, guildId })) {
             dedup.set(event.event_id, event);
           }
         }
@@ -431,7 +452,7 @@ export const meepo = {
       }
 
       const sessionIds = Array.from(new Set(Array.from(allEvents.values()).map((e) => e.session_id)));
-      const sessionLabelById = getSessionLabelMap(sessionIds);
+      const sessionLabelById = getSessionLabelMap(sessionIds, db);
 
       const requestedLineSetBySession = new Map<string, Set<number>>();
       for (const event of allEvents.values()) {
@@ -575,8 +596,8 @@ export const meepo = {
     }
 
     if (sub === "persona-set") {
-      if (!isDm(interaction)) {
-        await interaction.reply({ content: "Only the DM can switch persona.", ephemeral: true });
+      if (!isElevated(interaction.member as GuildMember | null)) {
+        await interaction.reply({ content: "Not authorized.", ephemeral: true });
         return;
       }
       const personaId = interaction.options.getString("persona", true);
@@ -606,8 +627,8 @@ export const meepo = {
     }
 
     if (sub === "guild-config") {
-      if (!isDm(interaction)) {
-        await interaction.reply({ content: "Only the DM can change guild config.", ephemeral: true });
+      if (!isElevated(interaction.member as GuildMember | null)) {
+        await interaction.reply({ content: "Not authorized.", ephemeral: true });
         return;
       }
       const key = interaction.options.getString("key", true);
@@ -636,13 +657,21 @@ export const meepo = {
         });
         return;
       }
+      if (key === "gold-memory-enabled") {
+        await interaction.reply({
+          content:
+            "Gold-memory toggle is currently environment-driven. Set `GOLD_MEMORY_ENABLED=1` in your runtime env and restart the bot.",
+          ephemeral: true,
+        });
+        return;
+      }
       await interaction.reply({ content: "Unknown config key.", ephemeral: true });
       return;
     }
 
     if (sub === "debug-persona") {
-      if (!isDm(interaction)) {
-        await interaction.reply({ content: "Only the DM can use debug-persona.", ephemeral: true });
+      if (!isElevated(interaction.member as GuildMember | null)) {
+        await interaction.reply({ content: "Not authorized.", ephemeral: true });
         return;
       }
       const personaId = getActivePersonaId(guildId);
@@ -651,7 +680,6 @@ export const meepo = {
         guildId,
         guildName: interaction.guild?.name ?? undefined,
       });
-      const db = getDb();
       const lastUsages = db.prepare(`
         SELECT persona_id, mindspace, used_memories
         FROM meep_usages
@@ -709,8 +737,21 @@ export const meepo = {
 
     if (sub === "status") {
       const inst = getActiveMeepo(guildId);
+      const mode = getGuildMode(guildId);
+      const activeSession = getActiveSession(guildId);
       if (!inst) {
-        await interaction.reply({ content: "Meepo is asleep. Use /meepo wake in the channel you want.", ephemeral: true });
+        await interaction.reply({
+          content:
+            "Meepo status:\n" +
+            "- awake: no\n" +
+            "- guild mode: " + mode + "\n" +
+            "- campaignSlug: " + ctx.campaignSlug + "\n" +
+            "- dbPath: " + ctx.dbPath + "\n" +
+            "- dmRoleConfigured: " + String(Boolean(cfg.discord.dmRoleId)) + "\n" +
+            "- legacyFallbacksThisBoot: " + getLegacyFallbacksThisBoot() + "\n" +
+            "- active session: " + (activeSession ? `${activeSession.session_id} (kind=${activeSession.kind}, mode_at_start=${activeSession.mode_at_start})` : "(none)"),
+          ephemeral: true,
+        });
         return;
       }
 
@@ -721,12 +762,108 @@ export const meepo = {
         content:
           "Meepo status:\n" +
           "- awake: yes\n" +
+          "- guild mode: " + mode + "\n" +
+          "- campaignSlug: " + ctx.campaignSlug + "\n" +
+          "- dbPath: " + ctx.dbPath + "\n" +
+          "- dmRoleConfigured: " + String(Boolean(cfg.discord.dmRoleId)) + "\n" +
+          "- legacyFallbacksThisBoot: " + getLegacyFallbacksThisBoot() + "\n" +
           "- bound channel: <#" + inst.channel_id + ">\n" +
           "- active persona: " + persona.displayName + " (" + activePersonaId + ")\n" +
           "- mindspace: " + (mindspace ?? "(no session)") + "\n" +
+          "- active session: " + (activeSession ? `${activeSession.session_id} (kind=${activeSession.kind}, mode_at_start=${activeSession.mode_at_start})` : "(none)") + "\n" +
           "- form (cosmetic): " + inst.form_id + "\n" +
           "- persona seed: " + (inst.persona_seed ?? "(none)") + "\n" +
           "- created_at_ms: " + inst.created_at_ms,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (sub === "mode") {
+      const requested = interaction.options.getString("value") as MeepoMode | null;
+      const currentMode = getGuildMode(guildId);
+
+      if (!requested) {
+        await interaction.reply({
+          content: `Global mode is **${currentMode}**.`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (!isElevated(interaction.member as GuildMember | null)) {
+        await interaction.reply({ content: "Not authorized.", ephemeral: true });
+        return;
+      }
+
+      if (requested === currentMode) {
+        await interaction.reply({
+          content: `Global mode is already **${currentMode}**.`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const activeSession = getActiveSession(guildId);
+      setGuildMode(guildId, requested);
+
+      if (!activeSession) {
+        await interaction.reply({
+          content: `Mode set to **${requested}**. No active session to rotate.`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const endReason = requested === "dormant" ? "mode_change_to_dormant" : "mode_change";
+      endSession(guildId, endReason);
+
+      const transitionChannelId = getActiveMeepo(guildId)?.channel_id ?? interaction.channelId;
+
+      if (requested === "dormant") {
+        logSystemEvent({
+          guildId,
+          channelId: transitionChannelId,
+          eventType: "session_transition",
+          content: `Mode changed ${currentMode} → ${requested}. Ended session ${activeSession.session_id} (kind=${activeSession.kind}, reason=${endReason}).`,
+          authorId: interaction.user.id,
+          authorName: interaction.user.username,
+          narrativeWeight: "secondary",
+        });
+
+        await interaction.reply({
+          content:
+            `Mode set to **${requested}**.\n` +
+            `Ended current session (${activeSession.kind}). Meepo will not start new sessions until re-enabled.`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const newKind = sessionKindForMode(requested);
+      const newSession = startSession(guildId, interaction.user.id, interaction.user.username, {
+        source: "live",
+        kind: newKind,
+        modeAtStart: requested,
+      });
+
+      logSystemEvent({
+        guildId,
+        channelId: transitionChannelId,
+        eventType: "session_transition",
+        content:
+          `Mode changed ${currentMode} → ${requested}. ` +
+          `Ended session ${activeSession.session_id} (kind=${activeSession.kind}, reason=${endReason}); ` +
+          `started session ${newSession.session_id} (kind=${newSession.kind}).`,
+        authorId: interaction.user.id,
+        authorName: interaction.user.username,
+        narrativeWeight: "secondary",
+      });
+
+      await interaction.reply({
+        content:
+          `Mode set to **${requested}**.\n` +
+          `Ended current session (${activeSession.kind}) and started a new session (${newSession.kind}) due to mode change.`,
         ephemeral: true,
       });
       return;
@@ -937,6 +1074,31 @@ export const meepo = {
       return;
     }
 
+    if (sub === "hush") {
+      const currentState = getVoiceState(guildId);
+      if (!currentState) {
+        await interaction.reply({
+          content: "Meep? Meepo isn't in voice right now!",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      voicePlaybackController.abort(guildId, "explicit_hush_command", {
+        channelId: currentState.channelId,
+        authorId: interaction.user.id,
+        authorName: interaction.user.username,
+        source: "command",
+        logSystemEvent: true,
+      });
+
+      await interaction.reply({
+        content: "Shh! Meepo goes quiet.",
+        ephemeral: true,
+      });
+      return;
+    }
+
     if (sub === "stt") {
       const action = interaction.options.getString("action", true);
       const currentState = getVoiceState(guildId);
@@ -983,15 +1145,9 @@ export const meepo = {
     }
 
     if (sub === "say") {
-      // DM-only enforcement
-      const dmRoleId = process.env.DM_ROLE_ID;
-      if (dmRoleId) {
-        const member = interaction.member;
-        const hasDmRole = member?.roles?.cache?.has(dmRoleId) ?? false;
-        if (!hasDmRole) {
-          await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
-          return;
-        }
+      if (!isElevated(interaction.member as GuildMember | null)) {
+        await interaction.reply({ content: "Not authorized.", ephemeral: true });
+        return;
       }
 
       // Preconditions
@@ -1007,7 +1163,7 @@ export const meepo = {
         return;
       }
 
-      const ttsEnabled = (process.env.TTS_ENABLED ?? "true").toLowerCase() !== "false";
+      const ttsEnabled = cfg.tts.enabled;
       if (!ttsEnabled) {
         await interaction.reply({ content: "TTS is not enabled (TTS_ENABLED=false).", ephemeral: true });
         return;
@@ -1089,14 +1245,9 @@ export const meepo = {
     }
 
     if (sub === "set-speaker-mask") {
-      // DM-only command
-      const dmRoleId = process.env.DM_ROLE_ID;
-      if (dmRoleId) {
-        const member = interaction.member;
-        if (!member?.roles?.cache?.has(dmRoleId)) {
-          await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
-          return;
-        }
+      if (!isElevated(interaction.member as GuildMember | null)) {
+        await interaction.reply({ content: "Not authorized.", ephemeral: true });
+        return;
       }
 
       const user = interaction.options.getUser("user");
@@ -1107,7 +1258,6 @@ export const meepo = {
         return;
       }
 
-      const db = getDb();
       const now = Date.now();
 
       // Upsert speaker mask
@@ -1127,14 +1277,9 @@ export const meepo = {
     }
 
     if (sub === "clear-speaker-mask") {
-      // DM-only command
-      const dmRoleId = process.env.DM_ROLE_ID;
-      if (dmRoleId) {
-        const member = interaction.member;
-        if (!member?.roles?.cache?.has(dmRoleId)) {
-          await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
-          return;
-        }
+      if (!isElevated(interaction.member as GuildMember | null)) {
+        await interaction.reply({ content: "Not authorized.", ephemeral: true });
+        return;
       }
 
       const user = interaction.options.getUser("user");
@@ -1144,7 +1289,6 @@ export const meepo = {
         return;
       }
 
-      const db = getDb();
       const result = db.prepare(`
         DELETE FROM speaker_masks
         WHERE guild_id = ? AND discord_user_id = ?
@@ -1173,7 +1317,6 @@ export const meepo = {
 
       const mode = interaction.options.getString("mode", true) as "voice" | "text";
 
-      const db = getDb();
       db.prepare(`
         UPDATE npc_instances
         SET reply_mode = ?
@@ -1188,18 +1331,16 @@ export const meepo = {
     }
 
     if (sub === "announce") {
-      // DM check
-      const dmRoleId = process.env.DM_ROLE_ID;
-      if (!dmRoleId || !interaction.member?.roles?.cache?.has(dmRoleId)) {
+      if (!isElevated(interaction.member as GuildMember | null)) {
         await interaction.reply({
-          content: "[DM-only] This command requires the DM role.",
+          content: "Not authorized.",
           ephemeral: true,
         });
         return;
       }
 
       // Get env-configured announcement channel
-      const channelId = process.env.ANNOUNCEMENT_CHANNEL_ID;
+      const channelId = cfg.session.announcementChannelId;
       if (!channelId) {
         await interaction.reply({
           content: "Announcement channel not configured. Ask the admin to set `ANNOUNCEMENT_CHANNEL_ID`.",
@@ -1263,8 +1404,8 @@ export const meepo = {
     }
 
     if (sub === "interactions") {
-      if (!isDm(interaction)) {
-        await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
+      if (!isElevated(interaction.member as GuildMember | null)) {
+        await interaction.reply({ content: "Not authorized.", ephemeral: true });
         return;
       }
       const personaId = getActivePersonaId(guildId) ?? "meepo";

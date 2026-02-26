@@ -30,8 +30,11 @@ import { buildExcerpt, estimateTokens } from "../ledger/scaffoldExcerpt.js";
 import { labelScaffoldBatch } from "../ledger/scaffoldLabel.js";
 import { applyLabels } from "../ledger/scaffoldJoin.js";
 import { MetricsCollector } from "../ledger/scaffoldMetrics.js";
-import { persistLabeledEvents } from "../ledger/scaffoldPersist.js";
+import { persistLabeledEvents } from "./ledger/scaffoldPersist.js";
 import type { EventScaffoldBatch } from "../ledger/scaffoldBatchTypes.js";
+import { getEnv } from "../config/rawEnv.js";
+const defaultLlmModel = getEnv("LLM_MODEL", "gpt-4o-mini") ?? "gpt-4o-mini";
+
 
 // ── CLI ───────────────────────────────────────────────────────────────────
 
@@ -228,7 +231,7 @@ async function main(): Promise<void> {
       const startTime = Date.now();
       const result = await labelScaffoldBatch(
         batch,
-        process.env.LLM_MODEL ?? "gpt-4o-mini"
+        defaultLlmModel
       );
       const latencyMs = Date.now() - startTime;
 

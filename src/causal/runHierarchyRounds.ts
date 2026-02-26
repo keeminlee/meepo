@@ -3,11 +3,24 @@ import type { TranscriptEntry } from "../ledger/transcripts.js";
 import type { ActorLike } from "./actorFeatures.js";
 import type { EligibilityMask } from "./types.js";
 import { CAUSAL_KERNEL_VERSION, extractCausalLinksKernel, type KernelInput } from "./extractCausalLinksKernel.js";
-import { annealLinks } from "./annealLinks.js";
 import { linkLinksKernel, type LinkLinkParams } from "./linkLinksKernel.js";
 import { propagateInternalStrength } from "./propagateInternalStrength.js";
+import { absorbSingletons } from "./absorbSingletons.js";
+import { isLineEligible } from "./eligibilityMask.js";
+import { isDmSpeaker } from "../ledger/scaffoldSpeaker.js";
+import type { SingletonNode } from "./cycleTypes.js";
 import type { CausalLink } from "./types.js";
 import type { RoundPhaseState, RoundMetrics } from "./hierarchyTypes.js";
+import type { LeverParams } from "./evidenceStrength.js";
+
+/** When enabled: if a link phase produces 0 new composites, run repeated anneal until mass stabilizes. */
+export type ConvergenceParams = {
+  enabled: boolean;
+  /** Stop anneal loop when max |mass_new - mass_prev| across nodes < this. */
+  massDeltaEpsilon: number;
+  /** Cap on anneal iterations per convergence run. */
+  maxAnnealIterations: number;
+};
 
 export type HierarchyParams = {
   kernel: {
@@ -17,16 +30,25 @@ export type HierarchyParams = {
     betaLex: number;
     strongMinScore: number;
     weakMinScore: number;
+    minPairStrength?: number;
+    maxL1Span?: number;
     ambientMassBoost?: boolean;
   };
   anneal: {
-    windowLinks: number;
+    /** Absorb singleton candidates within radius = radiusBase + radiusPerMass * linkMass. */
+    radiusBase: number;
+    radiusPerMass: number;
+    /** Per-link capacity cap = floor(capBase + capPerMass * linkMass). */
+    capBase: number;
+    capPerMass: number;
+    /** Minimum singleton→link absorb strength. */
+    minCtxStrength: number;
+    /** Optional mass-aware absorb threshold. */
+    ctxThresholdBase?: number;
+    ctxThresholdPerLogMass?: number;
     hillTau: number;
     hillSteepness: number;
     betaLex: number;
-    lambda: number;
-    topKContrib: number;
-    ambientMassBoost?: boolean;
   };
   linkLinks: {
     kLocalLinks: number;
@@ -37,6 +59,12 @@ export type HierarchyParams = {
     maxForwardLines: number;
   };
   maxLevel: number;
+  /** Max link+anneal rounds (round 1 = kernel; rounds 2..maxRounds = linkLinks). Default from maxLevel. */
+  maxRounds?: number;
+  /** If set, when a link round produces 0 new composites, run anneal until mass delta < epsilon (or max iters). */
+  convergence?: ConvergenceParams;
+  /** Two-lever params (evidence→strength). When set, kernel/linkLinks use E^γ and T0+η·g(m). */
+  levers?: LeverParams;
 };
 
 function percentile(values: number[], p: number): number {
@@ -72,6 +100,34 @@ function getMass(link: CausalLink): number {
   return link.mass ?? link.link_mass ?? link.mass_base ?? link.cause_mass ?? 0;
 }
 
+function buildAllEligibleL0Singletons(input: {
+  sessionId: string;
+  transcript: TranscriptEntry[];
+  eligibilityMask: EligibilityMask;
+  dmSpeaker: Set<string>;
+  claimedAnchorIndices: Set<number>;
+}): { singletonCauses: SingletonNode[]; singletonEffects: SingletonNode[] } {
+  const singletonCauses: SingletonNode[] = [];
+  const singletonEffects: SingletonNode[] = [];
+  for (let i = 0; i < input.transcript.length; i++) {
+    const line = input.transcript[i];
+    const idx = line.line_index;
+    if (!isLineEligible(input.eligibilityMask, idx)) continue;
+    if (input.claimedAnchorIndices.has(idx)) continue;
+    const singleton: SingletonNode = {
+      id: `S:l0:${input.sessionId}:${idx}`,
+      kind: isDmSpeaker(line.author_name, input.dmSpeaker) ? "effect" : "cause",
+      anchor_index: idx,
+      text: line.content,
+      mass: 1,
+      type: "stray_l0",
+    };
+    if (singleton.kind === "cause") singletonCauses.push(singleton);
+    else singletonEffects.push(singleton);
+  }
+  return { singletonCauses, singletonEffects };
+}
+
 export async function runRounds(input: {
   sessionId: string;
   transcript: TranscriptEntry[];
@@ -88,6 +144,7 @@ export async function runRounds(input: {
   const paramHash = createHash("sha256").update(paramsJson).digest("hex").slice(0, 12);
 
   const allRounds: RoundPhaseState[] = [];
+  let cumulativeAbsorptions = 0;
 
   // ROUND 1: Kernel (L0 -> L1)
   const kernelInput: KernelInput = {
@@ -99,10 +156,13 @@ export async function runRounds(input: {
     kLocal: input.params.kernel.kLocal,
     strongMinScore: input.params.kernel.strongMinScore,
     weakMinScore: input.params.kernel.weakMinScore,
+    minPairStrength: input.params.kernel.minPairStrength,
+    maxL1Span: input.params.kernel.maxL1Span,
     ambientMassBoost: input.params.kernel.ambientMassBoost ?? false,
     hillTau: input.params.kernel.hillTau,
     hillSteepness: input.params.kernel.hillSteepness,
     betaLex: input.params.kernel.betaLex,
+    levers: input.params.levers,
   };
 
   const kernelOutput = extractCausalLinksKernel(kernelInput, false);
@@ -141,26 +201,56 @@ export async function runRounds(input: {
     metrics: round1LinkMetrics,
   });
 
-  // Round 1 ANNEAL
-  const anneal1 = annealLinks({
-    links: round1LinkNodes,
-    windowLinks: input.params.anneal.windowLinks,
+  const claimedAnchorIndices = new Set<number>();
+  const round1AbsorbableLinks = round1LinkNodes.filter((n) => n.claimed);
+  for (const link of round1AbsorbableLinks) {
+    const cause = link.cause_anchor_index ?? link.intent_anchor_index;
+    const effect = link.effect_anchor_index ?? link.consequence_anchor_index;
+    if (typeof cause === "number") claimedAnchorIndices.add(cause);
+    if (typeof effect === "number") claimedAnchorIndices.add(effect);
+  }
+  const allEligibleL0 = buildAllEligibleL0Singletons({
+    sessionId: input.sessionId,
+    transcript: input.transcript,
+    eligibilityMask: input.eligibilityMask,
+    dmSpeaker: input.dmSpeaker,
+    claimedAnchorIndices,
+  });
+  let singletonCauses: SingletonNode[] = allEligibleL0.singletonCauses;
+  let singletonEffects: SingletonNode[] = allEligibleL0.singletonEffects;
+
+  // Round 1 ANNEAL (absorption): absorb singleton/stray L0 lines into current links.
+  const anneal1 = absorbSingletons({
+    links: round1AbsorbableLinks,
+    singletonCauses,
+    singletonEffects,
+    radiusBase: input.params.anneal.radiusBase,
+    radiusPerMass: input.params.anneal.radiusPerMass,
+    capBase: input.params.anneal.capBase,
+    capPerMass: input.params.anneal.capPerMass,
+    minCtxStrength: input.params.anneal.minCtxStrength,
+    ctxThresholdBase: input.params.anneal.ctxThresholdBase,
+    ctxThresholdPerLogMass: input.params.anneal.ctxThresholdPerLogMass,
     hillTau: input.params.anneal.hillTau,
     hillSteepness: input.params.anneal.hillSteepness,
     betaLex: input.params.anneal.betaLex,
-    lambda: input.params.anneal.lambda,
-    topKContrib: input.params.anneal.topKContrib,
-    ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
+    levers: input.params.levers,
   });
+  singletonCauses = anneal1.singletonCauses;
+  singletonEffects = anneal1.singletonEffects;
 
   const round1AnnealMetrics: RoundMetrics = {
     round: 1,
     phase: "anneal",
-    label: "anneal",
+    label: "absorption",
     timestamp_ms: Date.now(),
     counts: {
       nodes: anneal1.links.length,
-      neighbor_edges: anneal1.neighborEdges.length,
+      absorptions_this_round: anneal1.contextEdges.length,
+      absorptions_causes: anneal1.contextEdges.filter((e) => e.singleton_kind === "cause").length,
+      absorptions_effects: anneal1.contextEdges.filter((e) => e.singleton_kind === "effect").length,
+      singleton_causes_remaining: singletonCauses.length,
+      singleton_effects_remaining: singletonEffects.length,
     },
     stats: {
       strength_internal: stats(anneal1.links.map(getStrengthInternal)),
@@ -172,17 +262,20 @@ export async function runRounds(input: {
     round: 1,
     phase: "anneal",
     nodes: anneal1.links,
-    neighborEdges: anneal1.neighborEdges,
+    neighborEdges: [],
     metrics: round1AnnealMetrics,
-    massDeltaTsv: anneal1.massDeltaTsv,
   });
+  cumulativeAbsorptions += anneal1.contextEdges.length;
+  round1AnnealMetrics.counts.absorptions_cumulative = cumulativeAbsorptions;
 
   let prevLevelMap = new Map(anneal1.links.map((node) => [node.id, node]));
   let currentRoundNodes = anneal1.links;
 
-  // ROUND 2: Link-Links (L1 -> L2)
-  if (input.params.maxLevel >= 2) {
-    const linkLink2 = linkLinksKernel({
+  const maxRounds = input.params.maxRounds ?? input.params.maxLevel ?? 3;
+
+  // Rounds 2..maxRounds: Link-Links then anneal(absorb singleton context)
+  for (let r = 2; r <= maxRounds; r++) {
+    const linkOut = linkLinksKernel({
       sessionId: input.sessionId,
       nodes: currentRoundNodes,
       params: {
@@ -192,163 +285,95 @@ export async function runRounds(input: {
         betaLex: input.params.linkLinks.betaLex,
         minBridge: input.params.linkLinks.minBridge,
         maxForwardLines: input.params.linkLinks.maxForwardLines,
+        levers: input.params.levers,
       },
     });
 
-    const round2LinkNodes = [...linkLink2.composites, ...linkLink2.unpaired];
+    const linkNodes = [...linkOut.composites, ...linkOut.unpaired];
 
-    const round2LinkMetrics: RoundMetrics = {
-      round: 2,
+    const linkMetrics: RoundMetrics = {
+      round: r,
       phase: "link",
       label: "link",
       timestamp_ms: Date.now(),
       counts: {
-        nodes_total: round2LinkNodes.length,
-        pairs_formed: linkLink2.composites.length,
-        unpaired_total: linkLink2.unpaired.length,
+        nodes_total: linkNodes.length,
+        pairs_formed: linkOut.composites.length,
+        unpaired_total: linkOut.unpaired.length,
       },
       stats: {
-        strength_bridge: stats(round2LinkNodes.map(getStrengthBridge)),
-        strength_internal: stats(round2LinkNodes.map(getStrengthInternal)),
-        mass: stats(round2LinkNodes.map(getMass)),
+        strength_bridge: stats(linkNodes.map(getStrengthBridge)),
+        strength_internal: stats(linkNodes.map(getStrengthInternal)),
+        mass: stats(linkNodes.map(getMass)),
       },
     };
 
     allRounds.push({
-      round: 2,
+      round: r,
       phase: "link",
-      nodes: round2LinkNodes,
+      nodes: linkNodes,
       neighborEdges: [],
-      metrics: round2LinkMetrics,
-      candidates: linkLink2.candidates,
+      metrics: linkMetrics,
+      candidates: linkOut.candidates,
     });
 
-    // Round 2 ANNEAL
-    const anneal2 = annealLinks({
-      links: round2LinkNodes,
-      windowLinks: input.params.anneal.windowLinks,
+    const annealOut = absorbSingletons({
+      links: linkNodes,
+      singletonCauses,
+      singletonEffects,
+      radiusBase: input.params.anneal.radiusBase,
+      radiusPerMass: input.params.anneal.radiusPerMass,
+      capBase: input.params.anneal.capBase,
+      capPerMass: input.params.anneal.capPerMass,
+      minCtxStrength: input.params.anneal.minCtxStrength,
+      ctxThresholdBase: input.params.anneal.ctxThresholdBase,
+      ctxThresholdPerLogMass: input.params.anneal.ctxThresholdPerLogMass,
       hillTau: input.params.anneal.hillTau,
       hillSteepness: input.params.anneal.hillSteepness,
       betaLex: input.params.anneal.betaLex,
-      lambda: input.params.anneal.lambda,
-      topKContrib: input.params.anneal.topKContrib,
-      ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
+      levers: input.params.levers,
     });
-
-    // Propagate current level's internal strengths into composites
-    propagateInternalStrength(anneal2.links, prevLevelMap);
-
-    const round2AnnealMetrics: RoundMetrics = {
-      round: 2,
+    propagateInternalStrength(annealOut.links, prevLevelMap);
+    singletonCauses = annealOut.singletonCauses;
+    singletonEffects = annealOut.singletonEffects;
+    const annealMetrics: RoundMetrics = {
+      round: r,
       phase: "anneal",
-      label: "anneal",
+      label: "absorption",
       timestamp_ms: Date.now(),
       counts: {
-        nodes: anneal2.links.length,
-        neighbor_edges: anneal2.neighborEdges.length,
+        nodes: annealOut.links.length,
+        absorptions_this_round: annealOut.contextEdges.length,
+        absorptions_causes: annealOut.contextEdges.filter((e) => e.singleton_kind === "cause").length,
+        absorptions_effects: annealOut.contextEdges.filter((e) => e.singleton_kind === "effect").length,
+        singleton_causes_remaining: singletonCauses.length,
+        singleton_effects_remaining: singletonEffects.length,
       },
       stats: {
-        strength_internal: stats(anneal2.links.map(getStrengthInternal)),
-        mass: stats(anneal2.links.map(getMass)),
+        strength_internal: stats(annealOut.links.map(getStrengthInternal)),
+        mass: stats(annealOut.links.map(getMass)),
       },
     };
-
     allRounds.push({
-      round: 2,
+      round: r,
       phase: "anneal",
-      nodes: anneal2.links,
-      neighborEdges: anneal2.neighborEdges,
-      metrics: round2AnnealMetrics,
-      massDeltaTsv: anneal2.massDeltaTsv,
-    });
-
-    prevLevelMap = new Map(anneal2.links.map((node) => [node.id, node]));
-    currentRoundNodes = anneal2.links;
-  }
-
-  // ROUND 3: Link-Links (L2 -> L3)
-  if (input.params.maxLevel >= 3) {
-    const linkLink3 = linkLinksKernel({
-      sessionId: input.sessionId,
-      nodes: currentRoundNodes,
-      params: {
-        kLocalLinks: input.params.linkLinks.kLocalLinks,
-        hillTau: input.params.linkLinks.hillTau,
-        hillSteepness: input.params.linkLinks.hillSteepness,
-        betaLex: input.params.linkLinks.betaLex,
-        minBridge: input.params.linkLinks.minBridge,
-        maxForwardLines: input.params.linkLinks.maxForwardLines,
-      },
-    });
-
-    const round3LinkNodes = [...linkLink3.composites, ...linkLink3.unpaired];
-
-    const round3LinkMetrics: RoundMetrics = {
-      round: 3,
-      phase: "link",
-      label: "link",
-      timestamp_ms: Date.now(),
-      counts: {
-        nodes_total: round3LinkNodes.length,
-        pairs_formed: linkLink3.composites.length,
-        unpaired_total: linkLink3.unpaired.length,
-      },
-      stats: {
-        strength_bridge: stats(round3LinkNodes.map(getStrengthBridge)),
-        strength_internal: stats(round3LinkNodes.map(getStrengthInternal)),
-        mass: stats(round3LinkNodes.map(getMass)),
-      },
-    };
-
-    allRounds.push({
-      round: 3,
-      phase: "link",
-      nodes: round3LinkNodes,
+      nodes: annealOut.links,
       neighborEdges: [],
-      metrics: round3LinkMetrics,
-      candidates: linkLink3.candidates,
+      metrics: annealMetrics,
     });
+    cumulativeAbsorptions += annealOut.contextEdges.length;
+    annealMetrics.counts.absorptions_cumulative = cumulativeAbsorptions;
+    prevLevelMap = new Map(annealOut.links.map((node) => [node.id, node]));
+    currentRoundNodes = annealOut.links;
 
-    // Round 3 ANNEAL
-    const anneal3 = annealLinks({
-      links: round3LinkNodes,
-      windowLinks: input.params.anneal.windowLinks,
-      hillTau: input.params.anneal.hillTau,
-      hillSteepness: input.params.anneal.hillSteepness,
-      betaLex: input.params.anneal.betaLex,
-      lambda: input.params.anneal.lambda,
-      topKContrib: input.params.anneal.topKContrib,
-      ambientMassBoost: input.params.anneal.ambientMassBoost ?? false,
-    });
-
-    // Propagate current level's internal strengths into composites
-    propagateInternalStrength(anneal3.links, prevLevelMap);
-
-    const round3AnnealMetrics: RoundMetrics = {
-      round: 3,
-      phase: "anneal",
-      label: "anneal",
-      timestamp_ms: Date.now(),
-      counts: {
-        nodes: anneal3.links.length,
-        neighbor_edges: anneal3.neighborEdges.length,
-      },
-      stats: {
-        strength_internal: stats(anneal3.links.map(getStrengthInternal)),
-        mass: stats(anneal3.links.map(getMass)),
-      },
-    };
-
-    allRounds.push({
-      round: 3,
-      phase: "anneal",
-      nodes: anneal3.links,
-      neighborEdges: anneal3.neighborEdges,
-      metrics: round3AnnealMetrics,
-      massDeltaTsv: anneal3.massDeltaTsv,
-    });
-
-    currentRoundNodes = anneal3.links;
+    const convergence = input.params.convergence;
+    if (
+      convergence?.enabled &&
+      linkOut.composites.length === 0 &&
+      annealOut.contextEdges.length === 0
+    ) {
+      break;
+    }
   }
 
   return {

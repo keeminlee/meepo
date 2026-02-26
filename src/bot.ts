@@ -5,15 +5,16 @@ import { registerHandlers } from "./commands/index.js";
 import { getActiveMeepo, wakeMeepo, transformMeepo } from "./meepo/state.js";
 import { getActivePersonaId, getMindspace, setActivePersonaId } from "./meepo/personaState.js";
 import { getGuildDefaultPersonaId, resolveCampaignSlug } from "./campaign/guildConfig.js";
+import { getPersona } from "./personas/index.js";
 import { autoJoinGeneralVoice } from "./meepo/autoJoinVoice.js";
 import { startAutoSleepChecker } from "./meepo/autoSleep.js";
 import { getActiveSession } from "./sessions/sessions.js";
+import { getGuildMode } from "./sessions/sessionRuntime.js";
 import { appendLedgerEntry, getVoiceAwareContext } from "./ledger/ledger.js";
 import { getSanitizedSpeakerName } from "./ledger/speakerSanitizer.js";
 import { logConvoTurn } from "./ledger/meepoConvo.js";
 import { buildConvoTailContext } from "./recall/buildConvoTailContext.js";
-import { isAddressed } from "./meepo/triggers.js";
-import { isWakePhrase, containsPersonaName } from "./meepo/wakePhrase.js";
+import { isWakePhrase, isLatchAnchor, containsPersonaName } from "./meepo/wakePhrase.js";
 import {
   setLatch,
   isLatchActive,
@@ -24,31 +25,49 @@ import {
 import { getVoiceState } from "./voice/state.js";
 import { getTtsProvider } from "./voice/tts/provider.js";
 import { speakInGuild } from "./voice/speaker.js";
+import { voicePlaybackController } from "./voice/voicePlaybackController.js";
 import { applyPostTtsFx } from "./voice/audioFx.js";
 import { recordMeepoInteraction, classifyTrigger } from "./ledger/meepoInteractions.js";
 import { chat } from "./llm/client.js";
 import { buildMeepoPrompt, buildUserMessage } from "./llm/prompts.js";
 import { setBotNicknameForPersona } from "./meepo/nickname.js";
 import { acquireLock } from "./pidlock.js";
-import { seedMeepoMemories } from "./db.js";
+import { getDbForCampaign, seedMeepoMemories } from "./db.js";
 import { loadRegistry } from "./registry/loadRegistry.js";
 import { extractRegistryMatches } from "./registry/extractRegistryMatches.js";
-import { searchEventsByTitle, type EventRow } from "./ledger/eventSearch.js";
+import { searchEventsByTitleScoped, type EventRow } from "./ledger/eventSearch.js";
 import { loadGptcap } from "./ledger/gptcapProvider.js";
 import { findRelevantBeats, type ScoredBeat } from "./recall/findRelevantBeats.js";
 import { buildMemoryContext } from "./recall/buildMemoryContext.js";
 import { getTranscriptLines } from "./ledger/transcripts.js";
-import { getDb } from "./db.js";
 import { randomUUID } from "node:crypto";
 import { startOverlayServer, overlayEmitPresence } from "./overlay/server.js";
 import { joinVoice } from "./voice/connection.js";
 import { startReceiver } from "./voice/receiver.js";
 import { setVoiceState } from "./voice/state.js";
+import { cfg, printConfigSnapshot } from "./config/env.js";
+import { getEnvBool } from "./config/rawEnv.js";
 
 const bootLog = log.withScope("boot");
 const overlayLog = log.withScope("overlay");
 const textReplyLog = log.withScope("text-reply");
 const recallLog = log.withScope("recall");
+
+const TEXT_STOP_PHRASES = new Set<string>([
+  "meepo stop",
+  "meepo shush",
+  "stop meepo",
+]);
+
+function normalizeStopPhrase(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function isTextStopPhrase(text: string): boolean {
+  return TEXT_STOP_PHRASES.has(normalizeStopPhrase(text));
+}
+
+printConfigSnapshot(cfg);
 
 // PID lock: prevent multiple instances
 if (!acquireLock()) {
@@ -85,7 +104,7 @@ client.once("ready", async () => {
   }
 
   // Validate announcement channel configuration
-  const announcementChannelId = process.env.ANNOUNCEMENT_CHANNEL_ID;
+  const announcementChannelId = cfg.session.announcementChannelId;
   if (announcementChannelId) {
     bootLog.info(`Announcement channel configured: ${announcementChannelId}`);
   } else {
@@ -93,7 +112,7 @@ client.once("ready", async () => {
   }
 
   // Restore Meepo active state (if Meepo was active before shutdown)
-  const guildId = process.env.GUILD_ID;
+  const guildId = cfg.discord.guildId;
   if (guildId) {
     const activeMeepo = getActiveMeepo(guildId);
     if (activeMeepo) {
@@ -109,7 +128,11 @@ client.once("ready", async () => {
       } catch (err: any) {
         bootLog.warn(`Failed to auto-join voice on restore: ${err.message ?? err}`);
       }
+    } else {
+      bootLog.info(`Startup restore skipped: no active Meepo state for guild ${guildId}.`);
     }
+  } else {
+    bootLog.info(`Startup restore skipped: GUILD_ID not configured.`);
   }
 
   // Start auto-sleep checker for inactive Meepo instances
@@ -117,8 +140,8 @@ client.once("ready", async () => {
 
   // Auto-join overlay voice channel (for speaking detection, independent of Meepo sessions)
   // Configurable via OVERLAY_AUTOJOIN=true (disabled by default)
-  const overlayVoiceChannelId = process.env.OVERLAY_VOICE_CHANNEL_ID;
-  const overlayAutoJoinEnabled = process.env.OVERLAY_AUTOJOIN === "true";
+  const overlayVoiceChannelId = cfg.overlay.voiceChannelId;
+  const overlayAutoJoinEnabled = getEnvBool("OVERLAY_AUTOJOIN", false);
   
   if (overlayAutoJoinEnabled && guildId && overlayVoiceChannelId) {
     try {
@@ -168,7 +191,7 @@ client.once("ready", async () => {
 
 // Track voice channel presence for overlay (who's in voice)
 client.on("voiceStateUpdate", (oldState, newState) => {
-  const overlayChannelId = process.env.OVERLAY_VOICE_CHANNEL_ID;
+  const overlayChannelId = cfg.overlay.voiceChannelId;
   if (!overlayChannelId) return;
 
   const userId = newState.id;
@@ -199,6 +222,25 @@ client.on("messageCreate", async (message: any) => {
     const content = (message.content ?? "").toString();
     if (!content.trim()) return;
 
+    const activeVoiceState = getVoiceState(message.guildId);
+    if (activeVoiceState && isTextStopPhrase(content)) {
+      voicePlaybackController.abort(message.guildId, "explicit_text_stop", {
+        channelId: activeVoiceState.channelId,
+        authorId: message.author.id,
+        authorName: message.member?.displayName ?? message.author.username ?? message.author.id,
+        phrase: content,
+        source: "text",
+        logSystemEvent: true,
+      });
+      return;
+    }
+
+    const campaignSlug = resolveCampaignSlug({
+      guildId: message.guildId ?? undefined,
+      guildName: message.guild?.name ?? undefined,
+    });
+    const db = getDbForCampaign(campaignSlug);
+
     // Get active session if one exists (for session_id tracking)
     const activeSession = getActiveSession(message.guildId);
 
@@ -215,6 +257,12 @@ client.on("messageCreate", async (message: any) => {
       session_id: activeSession?.session_id ?? null,
     });
 
+    const guildMode = getGuildMode(message.guildId);
+    if (guildMode === "dormant") {
+      bootLog.debug(`🎯 TEXT GATE: guild mode dormant → ignore`);
+      return;
+    }
+
     // 2) WAKE-ON-NAME: Auto-wake Meepo if message contains "meepo" and Meepo is not active
     let active = getActiveMeepo(message.guildId);
     const contentLower = content.toLowerCase();
@@ -225,7 +273,13 @@ client.on("messageCreate", async (message: any) => {
     //   containsMeepo: contentLower.includes("meepo"),
     // });
     
-    if (!active && contentLower.includes("meepo")) {
+    const defaultPersonaId = getGuildDefaultPersonaId(message.guildId) ?? "meta_meepo";
+    const defaultPersonaName = getPersona(defaultPersonaId).displayName.toLowerCase();
+    const autoWakeHit =
+      isWakePhrase(content, defaultPersonaId, { mentioned: false, prefix: cfg.discord.botPrefix }) ||
+      containsPersonaName(content, defaultPersonaId);
+
+    if (!active && autoWakeHit) {
       bootLog.info(`AUTO-WAKE triggered by ${message.author.username} in channel ${message.channelId}`);
       
       // Wake Meepo and bind to this channel
@@ -258,12 +312,12 @@ client.on("messageCreate", async (message: any) => {
         author_id: "system",
         author_name: "SYSTEM",
         timestamp_ms: Date.now(),
-        content: `Auto-wake triggered by text containing "meepo".`,
+        content: `Auto-wake triggered by text containing wakephrase/name (meepo or ${defaultPersonaName}).`,
         tags: "system,action,wake",
       });
 
       // Persona Overhaul v1: default to Meta Meepo on wake
-      setActivePersonaId(message.guildId, getGuildDefaultPersonaId(message.guildId) ?? "meta_meepo");
+      setActivePersonaId(message.guildId, defaultPersonaId);
 
       // Continue processing to respond to the wake message
     }
@@ -395,38 +449,48 @@ client.on("messageCreate", async (message: any) => {
       }
     }
 
-    // 4) Tier S/A: LISTENING vs LATCHED — response gating and reply mode (text vs voice)
-    const prefix = process.env.BOT_PREFIX ?? "meepo:";
+    // 4) Tier S/A: Per-user latch. Tier S = voice reply, Tier A = text reply.
+    const prefix = cfg.discord.botPrefix;
     const personaId = getActivePersonaId(message.guildId);
-
-    incrementLatchTurn(message.guildId, message.channelId);
-
+    const userId = message.author.id;
     const mentionedMeepo = message.mentions?.users?.has(client.user!.id) ?? false;
-    const addressed = isWakePhrase(content, personaId, { mentioned: mentionedMeepo, prefix });
-    const nameInLine = containsPersonaName(content, personaId);
+    const isAnchor = isWakePhrase(content, personaId, { mentioned: mentionedMeepo, prefix });
+    const hasMeepo = containsPersonaName(content, personaId) || mentionedMeepo;
     const inBoundChannel = active.channel_id === message.channelId;
-    const latched = isLatchActive(message.guildId, message.channelId);
 
-    // LISTENING: in bound channel, only respond when name in line
-    if (inBoundChannel && !latched && !nameInLine) {
-      bootLog.debug(`🎯 TEXT GATE: LISTENING, no name in line → ignore`);
+    if (isLatchAnchor(content, personaId)) {
+      setLatch(message.guildId, message.channelId, userId, DEFAULT_LATCH_SECONDS, DEFAULT_MAX_LATCH_TURNS);
+    }
+    const latched = isLatchActive(message.guildId, message.channelId, userId);
+
+    // Reply decision: anchor → voice (or text); hasMeepo+latched → voice; hasMeepo → text; latched → text; else none
+    let replyMode: "voice" | "text" | "none" = "none";
+    if (isAnchor) {
+      replyMode = "voice"; // prefer voice; fall back to text if no voice state
+    } else if (hasMeepo) {
+      replyMode = latched ? "voice" : "text";
+    } else if (latched) {
+      replyMode = "text";
+    }
+
+    if (replyMode === "none") {
+      if (inBoundChannel && !latched && !hasMeepo) {
+        bootLog.debug(`🎯 TEXT GATE: no name, not latched → ignore`);
+      } else if (!inBoundChannel && !isAnchor) {
+        bootLog.debug(`🎯 TEXT GATE: not in bound channel, not anchor → ignore`);
+      }
       return;
     }
-    // Not in bound channel and not directly addressed → ignore
-    if (!inBoundChannel && !addressed) return;
+    if (!inBoundChannel && !isAnchor) return;
 
-    if (addressed) {
-      setLatch(message.guildId, message.channelId, DEFAULT_LATCH_SECONDS, DEFAULT_MAX_LATCH_TURNS);
-    }
-
-    const useVoice = latched && nameInLine;
-    const decision = useVoice ? "✓ reply (voice)" : "✓ reply (text)";
+    const voiceState = getVoiceState(message.guildId);
+    const useVoice = replyMode === "voice" && !!voiceState;
     bootLog.debug(
-      `🎯 TEXT GATE: addressed=${addressed} nameInLine=${nameInLine} latched=${latched} → ${decision}`
+      `🎯 TEXT GATE: isAnchor=${isAnchor} hasMeepo=${hasMeepo} latched=${latched} replyMode=${replyMode} useVoice=${useVoice}`
     );
 
     // 5) Generate response via LLM
-    const llmEnabled = process.env.LLM_ENABLED !== "false";
+    const llmEnabled = cfg.llm.enabled;
     
     if (!llmEnabled) {
       const reply = await message.reply("meep");
@@ -453,14 +517,10 @@ client.on("messageCreate", async (message: any) => {
 
       // Task 9: Run recall pipeline for party memory injection
       let partyMemory = "";
-      const memoryEnabled = process.env.MEEPO_MEMORY_ENABLED !== "false";
+      const memoryEnabled = cfg.features.memoryEnabled;
       
       if (memoryEnabled) {
         try {
-          const campaignSlug = resolveCampaignSlug({
-            guildId: message.guildId ?? undefined,
-            guildName: message.guild?.name ?? undefined,
-          });
           const registry = loadRegistry({ campaignSlug });
           const matches = extractRegistryMatches(content, registry);
           
@@ -470,7 +530,7 @@ client.on("messageCreate", async (message: any) => {
             // Search for events using registry matches
             const allEvents = new Map<string, EventRow>();
             for (const match of matches) {
-              const events = searchEventsByTitle(match.canonical);
+              const events = searchEventsByTitleScoped({ term: match.canonical, guildId: message.guildId });
               recallLog.debug(`Events for "${match.canonical}": ${events.length}`);
               for (const event of events) {
                 allEvents.set(event.event_id, event);
@@ -490,7 +550,6 @@ client.on("messageCreate", async (message: any) => {
 
               // Load GPTcaps and find relevant beats per session
               const allBeats: ScoredBeat[] = [];
-              const db = getDb();
 
               for (const [sessionId, sessionEvents] of eventsBySession.entries()) {
                 // Get session label for GPTcap loading
@@ -548,7 +607,7 @@ client.on("messageCreate", async (message: any) => {
                 if (firstSessionWithLines) {
                   const neededLines = Array.from(linesBySession.get(firstSessionWithLines) || []);
                   if (neededLines.length > 0) {
-                    const transcriptLines = getTranscriptLines(firstSessionWithLines, neededLines);
+                    const transcriptLines = getTranscriptLines(firstSessionWithLines, neededLines, { db });
                     partyMemory = buildMemoryContext(allBeats, transcriptLines, {
                       maxLinesPerBeat: 2,
                       maxTotalChars: 1600,
@@ -571,7 +630,7 @@ client.on("messageCreate", async (message: any) => {
 
       // Layer 0: Build conversation tail context (session-scoped)
       const activeSession = getActiveSession(message.guildId);
-      const { tailBlock } = buildConvoTailContext(activeSession?.session_id ?? null);
+      const { tailBlock } = buildConvoTailContext(activeSession?.session_id ?? null, message.guildId);
 
       const mindspace = getMindspace(message.guildId, personaId);
 
@@ -624,6 +683,7 @@ client.on("messageCreate", async (message: any) => {
       // Layer 0: Log player message before LLM call
       if (activeSession) {
         logConvoTurn({
+          guild_id: message.guildId,
           session_id: activeSession.session_id,
           channel_id: message.channelId,
           message_id: message.id,
@@ -642,6 +702,7 @@ client.on("messageCreate", async (message: any) => {
       // Layer 0: Log Meepo's response after LLM call
       if (activeSession) {
         logConvoTurn({
+          guild_id: message.guildId,
           session_id: activeSession.session_id,
           channel_id: message.channelId,
           message_id: null, // Will be set once reply is sent
@@ -654,15 +715,17 @@ client.on("messageCreate", async (message: any) => {
 
       textReplyLog.info(`💬 Meepo: "${response}"`);
 
+      let actualVoiceSent = false;
       if (useVoice) {
-        const voiceState = getVoiceState(message.guildId);
-        if (voiceState) {
+        const vs = getVoiceState(message.guildId);
+        if (vs) {
           try {
             const tts = await getTtsProvider();
             let audio = await tts.synthesize(response);
             if (audio.length > 0) {
               audio = await applyPostTtsFx(audio, "mp3");
               speakInGuild(message.guildId, audio, { userDisplayName: "[Meepo]" });
+              actualVoiceSent = true;
             }
           } catch (voiceErr: any) {
             textReplyLog.warn(`Voice reply failed: ${voiceErr.message}`);
@@ -672,9 +735,12 @@ client.on("messageCreate", async (message: any) => {
 
       const reply = await message.reply(response);
 
-      // Tier S/A: S = within latch (wake or follow-up), A = name mention outside latch
-      const tier = addressed || latched ? "S" : "A";
-      const baseTrigger = addressed
+      // Tier = reply channel: S = voice actually sent, A = text
+      const tier = actualVoiceSent ? "S" : "A";
+      const replyModeRecord = actualVoiceSent ? "voice" : "text";
+      incrementLatchTurn(message.guildId, message.channelId, userId);
+
+      const baseTrigger = isAnchor
         ? (mentionedMeepo ? "mention" : "wake_phrase")
         : latched
           ? "latched_followup"
@@ -686,17 +752,19 @@ client.on("messageCreate", async (message: any) => {
         personaId,
         tier,
         trigger,
-        speakerId: message.author.id,
+        speakerId: userId,
         meta: {
           trigger_message_id: message.id,
           trigger_channel_id: message.channelId,
           reply_message_id: reply.id,
           reply_channel_id: message.channelId,
+          reply_mode: replyModeRecord,
+          latch_state: latched ? "latched" : "unlatched",
+          latch_key: `${message.guildId}:${message.channelId}:${userId}`,
         },
       });
 
       // Observability: log usage with persona + mindspace
-      const db = getDb();
       db.prepare(`
         INSERT INTO meep_usages (id, session_id, message_id, guild_id, channel_id, triggered_at_ms, response_tokens, used_memories, persona_id, mindspace, created_at_ms)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -749,4 +817,4 @@ client.on("messageCreate", async (message: any) => {
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(cfg.discord.token);

@@ -145,7 +145,7 @@ function main() {
   const isAllSessions = !args.sessionLabel;
   const events = isAllSessions
     ? loadAllEvents()
-    : loadEventsBySession(getSession(args.sessionLabel).session_id);
+    : loadEventsBySession(getSession(args.sessionLabel as string).session_id);
 
   if (events.length === 0) {
     console.log("No events found for the specified scope.");

@@ -4,9 +4,22 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test:smoke": "vitest run src/tests/smoke/test-megameecap-fixture.ts src/tests/smoke/test-silver-seq-fixture.ts src/tests/voice/test-voice-interrupt.ts",
+    "test": "vitest run",
+    "ci:verify": "npm run typecheck && npm run lint && npm run test:smoke && npm run test && npm run stopline:no-getdb-runtime && npm run stopline:no-raw-env && npm run stopline:repo-hygiene",
     "dev:deploy": "tsx src/commands/deploy-dev.ts",
-    "dev:bot": "tsx src/bot.ts"
+    "dev:bot": "tsx src/bot.ts",
+    "doctor": "tsx src/tools/doctor.ts",
+    "stopline:no-raw-env": "powershell -ExecutionPolicy Bypass -File tools/stopline-no-raw-env.ps1",
+    "stopline:no-getdb-runtime": "powershell -ExecutionPolicy Bypass -File tools/stopline-no-getdb-runtime.ps1",
+    "stopline:repo-hygiene": "powershell -ExecutionPolicy Bypass -File tools/stopline-repo-hygiene.ps1",
+    "docs:skeleton": "powershell -ExecutionPolicy Bypass -File tools/write-repo-skeleton.ps1",
+    "gold:pull": "tsx src/tools/gold/pull-gold-memories.ts",
+    "gold:push": "tsx src/tools/gold/push-gold-memories.ts",
+    "gold:push-candidates": "tsx src/tools/gold/push-gold-candidates.ts",
+    "gold:review": "tsx src/tools/gold/review-gold-candidates.ts"
   },
   "keywords": [],
   "author": "",
@@ -28,13 +41,17 @@
     "yaml": "^2.8.2"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.46.1",
+    "@typescript-eslint/parser": "^8.46.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^4.17.21",
     "@types/luxon": "^3.7.1",
     "@types/node": "^25.2.2",
     "@types/ws": "^8.5.10",
+    "eslint": "^9.39.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   }
 }

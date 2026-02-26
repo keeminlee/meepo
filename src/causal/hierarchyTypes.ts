@@ -5,7 +5,7 @@ import type { LinkLinkCandidate } from "./linkLinksKernel.js";
 export type RoundPhase = "link" | "anneal";
 
 export type RoundMetrics = {
-  round: 1 | 2 | 3;
+  round: number;
   phase: RoundPhase;
   label: string;
   timestamp_ms: number;
@@ -14,7 +14,7 @@ export type RoundMetrics = {
 };
 
 export type RoundPhaseState = {
-  round: 1 | 2 | 3;
+  round: number;
   phase: RoundPhase;
   nodes: CausalLink[];
   neighborEdges: NeighborEdgeTrace[];

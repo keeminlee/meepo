@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
+import { resolveCampaignSlug } from "../campaign/guildConfig.js";
 import { getSanitizedSpeakerName } from "./speakerSanitizer.js";
+import { cfg } from "../config/env.js";
 
 /**
  * Ledger: Omniscient append-only event log (MVP Day 8 - Phase 0)
@@ -53,6 +55,11 @@ export type LedgerEntry = {
   confidence: number | null;       // STT confidence (0.0-1.0)
 };
 
+function getLedgerDbForGuild(guildId: string) {
+  const campaignSlug = resolveCampaignSlug({ guildId });
+  return getDbForCampaign(campaignSlug);
+}
+
 export function appendLedgerEntry(
   e: Omit<LedgerEntry, "id" | "tags" | "source" | "narrative_weight" | "speaker_id" | "audio_chunk_path" | "t_start_ms" | "t_end_ms" | "confidence" | "content_norm" | "session_id"> & {
     tags?: string;
@@ -67,7 +74,7 @@ export function appendLedgerEntry(
     confidence?: number | null;
   }
 ) {
-  const db = getDb();
+  const db = getLedgerDbForGuild(e.guild_id);
   const id = randomUUID();
   const tags = e.tags ?? "public";
   const source = e.source ?? "text";
@@ -122,7 +129,7 @@ export function getLedgerContentByMessage(opts: {
   channelId: string;
   messageId: string;
 }): { content: string; author_id: string } | null {
-  const db = getDb();
+  const db = getLedgerDbForGuild(opts.guildId);
   const row = db
     .prepare(
       "SELECT content, author_id FROM ledger_entries WHERE guild_id = ? AND channel_id = ? AND message_id = ? LIMIT 1"
@@ -136,7 +143,7 @@ export function getRecentLedgerText(opts: {
   channelId: string;
   limit?: number;
 }): string {
-  const db = getDb();
+  const db = getLedgerDbForGuild(opts.guildId);
   const limit = opts.limit ?? 20;
 
   // Include text messages only (human and NPC) for conversational coherence
@@ -163,7 +170,7 @@ export function getLedgerInRange(opts: {
   limit?: number;
   primaryOnly?: boolean; // Filter to narrative_weight IN ('primary', 'elevated')
 }): LedgerEntry[] {
-  const db = getDb();
+  const db = getLedgerDbForGuild(opts.guildId);
   const endMs = opts.endMs ?? Date.now();
   const limit = opts.limit ?? 500;
   const primaryOnly = opts.primaryOnly ?? false;
@@ -184,8 +191,9 @@ export function getLedgerInRange(opts: {
 export function getLedgerForSession(opts: {
   sessionId: string;
   primaryOnly?: boolean; // Filter to narrative_weight IN ('primary', 'elevated')
+  db: any;
 }): LedgerEntry[] {
-  const db = getDb();
+  const db = opts.db;
   const primaryOnly = opts.primaryOnly ?? false;
 
   let query = "SELECT * FROM ledger_entries WHERE session_id = ?";
@@ -217,9 +225,9 @@ export function getVoiceAwareContext(opts: {
   windowMs?: number; // Time window (default: LLM_VOICE_CONTEXT_MS env or 120s)
   limit?: number;    // Max entries to return (default: 20)
 }): { context: string; hasVoice: boolean } {
-  const db = getDb();
+  const db = getLedgerDbForGuild(opts.guildId);
   const now = Date.now();
-  const windowMs = opts.windowMs ?? Number(process.env.LLM_VOICE_CONTEXT_MS ?? "120000");
+  const windowMs = opts.windowMs ?? cfg.llm.voiceContextMs;
   const limit = opts.limit ?? 20;
   const startMs = now - windowMs;
 
@@ -278,8 +286,9 @@ export function getVoiceAwareContext(opts: {
 export function getSliceByLedgerIdRange(opts: {
   startId: string;
   endId: string;
+  db: any;
 }): LedgerEntry[] {
-  const db = getDb();
+  const db = opts.db;
   const { startId, endId } = opts;
 
   // First pass: find the position of start and end entries

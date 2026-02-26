@@ -170,8 +170,20 @@ function buildAnnealTrace(
     .sort((a, b) => (b.mass ?? 0) - (a.mass ?? 0))
     .slice(0, 20);
 
+  const linkToLineLabel = (l: CausalLink): string => {
+    const cause = l.cause_anchor_index ?? l.intent_anchor_index;
+    const effect = l.effect_anchor_index ?? l.consequence_anchor_index;
+    if (typeof cause !== "number") return "L?";
+    if (typeof effect === "number" && effect !== cause) return `L${cause}–L${effect}`;
+    return `L${cause}`;
+  };
+
   const renderLink = (link: CausalLink, depth: number, indent: string, visited: Set<string>) => {
-    lines.push(`${indent}- ${renderLinkSummary(link)}`);
+    const mass = link.mass ?? link.link_mass ?? link.mass_base ?? 0;
+    const massBase = link.mass_base ?? link.link_mass ?? mass;
+    const lineLabel = linkToLineLabel(link);
+    const annealedPhrase = mass !== massBase ? ` annealed to ${mass.toFixed(2)}` : "";
+    lines.push(`${indent}- ${lineLabel}${annealedPhrase}`);
 
     const context = contextByLinkId.get(link.id) ?? [];
     if (context.length > 0 && contextMaxLines > 0) {
@@ -188,19 +200,22 @@ function buildAnnealTrace(
       .slice(0, traceTopK);
 
     if (neighbors.length > 0) {
-      lines.push(`${indent}  - Neighbors (top contributors)`);
+      const neighborLines = neighbors
+        .map((edge) => {
+          const n = linksById.get(edge.from_link_id);
+          return n ? linkToLineLabel(n) : edge.from_link_id;
+        })
+        .filter(Boolean);
+      lines.push(`${indent}  - neighbors: ${neighborLines.join(", ")}`);
     }
 
     for (const edge of neighbors) {
-      lines.push(
-        `${indent}    - +${edge.contrib.toFixed(2)} from ${edge.from_link_id} (strength_ll=${edge.strength_ll.toFixed(2)}, dist=${edge.distance})`,
-      );
       if (visited.has(edge.from_link_id)) continue;
       const neighbor = linksById.get(edge.from_link_id);
       if (neighbor) {
         const nextVisited = new Set(visited);
         nextVisited.add(edge.from_link_id);
-        renderLink(neighbor, depth + 1, `${indent}      `, nextVisited);
+        renderLink(neighbor, depth + 1, `${indent}  `, nextVisited);
       }
     }
   };

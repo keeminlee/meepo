@@ -7,6 +7,18 @@
 
 import { NoopSttProvider } from "./noop.js";
 import { DebugSttProvider } from "./debug.js";
+import { cfg } from "../../config/env.js";
+
+export type SttTranscriptionMeta = {
+  noSpeechProb?: number;
+  avgLogprob?: number;
+};
+
+export type SttTranscriptionResult = {
+  text: string;
+  confidence?: number;
+  meta?: SttTranscriptionMeta;
+};
 
 export interface SttProvider {
   /**
@@ -18,17 +30,14 @@ export interface SttProvider {
   transcribePcm(
     pcm: Buffer,
     sampleRate: number
-  ): Promise<{
-    text: string;
-    confidence?: number;
-  }>;
+  ): Promise<SttTranscriptionResult>;
 }
 
 /**
  * Get provider info for user-facing messages.
  */
 export function getSttProviderInfo(): { name: string; description: string } {
-  const provider = process.env.STT_PROVIDER ?? "noop";
+  const provider = cfg.stt.provider;
   
   switch (provider) {
     case "noop":
@@ -36,7 +45,7 @@ export function getSttProviderInfo(): { name: string; description: string } {
     case "debug":
       return { name: "debug", description: "emits test transcripts for development" };
     case "openai": {
-      const model = process.env.STT_OPENAI_MODEL ?? "gpt-4o-mini-transcribe";
+      const model = cfg.stt.model;
       return {
         name: "openai",
         description: `real transcripts via OpenAI Audio API (${model})`,
@@ -60,7 +69,7 @@ export async function getSttProvider(): Promise<SttProvider> {
   // Return cached promise if already initialized
   if (providerPromise) return providerPromise;
 
-  const provider = process.env.STT_PROVIDER ?? "noop";
+  const provider = cfg.stt.provider;
 
   // Create the promise and cache it
   providerPromise = (async () => {

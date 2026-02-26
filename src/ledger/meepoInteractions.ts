@@ -4,7 +4,8 @@
  * Upgrade: quoted snippets (resolve from ledger), last-direct-convo lock, Tier A cap.
  */
 
-import { getDb } from "../db.js";
+import { getDbForCampaign } from "../db.js";
+import { resolveCampaignSlug } from "../campaign/guildConfig.js";
 import { randomUUID } from "node:crypto";
 import { getLedgerContentByMessage } from "./ledger.js";
 import { buildTranscript } from "./transcripts.js";
@@ -43,6 +44,11 @@ export type MeepoInteractionRow = {
   meta_json: string | null;
 };
 
+function getInteractionsDbForGuild(guildId: string) {
+  const campaignSlug = resolveCampaignSlug({ guildId });
+  return getDbForCampaign(campaignSlug);
+}
+
 export function recordMeepoInteraction(opts: {
   guildId: string;
   sessionId: string | null;
@@ -56,7 +62,7 @@ export function recordMeepoInteraction(opts: {
 }): void {
   // Normalize trigger for DB (latched_followup is valid)
   const trigger = opts.trigger as string;
-  const db = getDb();
+  const db = getInteractionsDbForGuild(opts.guildId);
   const id = randomUUID();
   const now = Date.now();
   db.prepare(
@@ -94,11 +100,12 @@ export function trimToSnippet(text: string, maxChars: number = MAX_SNIPPET_CHARS
 function getTriggerContentFromTranscript(
   sessionId: string | null,
   startLine: number | null,
-  endLine: number | null
+  endLine: number | null,
+  db?: any
 ): string {
   if (sessionId == null || startLine == null || endLine == null) return "";
   try {
-    const transcript = buildTranscript(sessionId, true);
+    const transcript = buildTranscript(sessionId, true, db);
     const start = Math.max(0, Math.min(startLine, endLine));
     const end = Math.min(transcript.length - 1, Math.max(startLine, endLine));
     const parts: string[] = [];
@@ -134,6 +141,7 @@ export function getInteractionSnippets(
     resolution: "message_id" | "transcript" | "fallback";
     summary?: string;
   }> = [];
+  const db = getInteractionsDbForGuild(guildId);
   for (const row of rows) {
     const meta = row.meta_json ? (JSON.parse(row.meta_json) as Record<string, string>) : null;
     const tChannel = meta?.trigger_channel_id;
@@ -156,7 +164,8 @@ export function getInteractionSnippets(
       triggerContent = getTriggerContentFromTranscript(
         row.session_id,
         row.start_line_index,
-        row.end_line_index
+        row.end_line_index,
+        db
       );
       if (triggerContent) resolution = "transcript";
     }
@@ -189,7 +198,7 @@ export function findRelevantMeepoInteractions(opts: {
   limitS?: number;
   limitA?: number;
 }): MeepoInteractionRow[] {
-  const db = getDb();
+  const db = getInteractionsDbForGuild(opts.guildId);
   const limitS = opts.limitS ?? 3;
   const limitA = Math.min(opts.limitA ?? 2, 2); // Cap Tier A at 2
 

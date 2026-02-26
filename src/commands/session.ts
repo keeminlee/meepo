@@ -1,11 +1,14 @@
-import { SlashCommandBuilder, AttachmentBuilder } from "discord.js";
+import { SlashCommandBuilder, AttachmentBuilder, GuildMember } from "discord.js";
 import { startSession, getActiveSession, getLatestIngestedSession, getLatestSessionForLabel } from "../sessions/sessions.js";
+import { getGuildMode, sessionKindForMode } from "../sessions/sessionRuntime.js";
 import { getLedgerInRange, getLedgerForSession } from "../ledger/ledger.js";
 import type { LedgerEntry } from "../ledger/ledger.js";
 import { chat } from "../llm/client.js";
 import { buildBeatsJsonFromNarrative, generateMeecapStub, validateMeecapV1 } from "../sessions/meecap.js";
-import { getDb } from "../db.js";
+import { cfg } from "../config/env.js";
 import { loadRegistry } from "../registry/loadRegistry.js";
+import { isElevated } from "../security/isElevated.js";
+import type { CommandCtx } from "./index.js";
 import path from "path";
 import fs from "fs";
 
@@ -60,10 +63,11 @@ function wordWrap(text: string, maxWidth: number = 100): string {
 function getLedgerSlice(opts: { 
   guildId: string; 
   range: string;
+  db: any;
   primaryOnly?: boolean;
   sessionLabel?: string | null;  // Optional: filter "recording" range by label
 }): LedgerEntry[] | { error: string } {
-  const { guildId, range, primaryOnly, sessionLabel } = opts;
+  const { guildId, range, db, primaryOnly, sessionLabel } = opts;
   const now = Date.now();
   let entries: LedgerEntry[] | null = null;
 
@@ -78,7 +82,7 @@ function getLedgerSlice(opts: {
     
     if (sessionLabel) {
       // If label provided, use latest session with that label
-      ingestedSession = getLatestSessionForLabel(sessionLabel);
+      ingestedSession = getLatestSessionForLabel(sessionLabel, guildId);
       if (!ingestedSession) {
         return { error: `No sessions found with label: ${sessionLabel}` };
       }
@@ -91,7 +95,7 @@ function getLedgerSlice(opts: {
     }
     
     // Query by session_id for bulletproof slicing (no time-window ambiguity)
-    entries = getLedgerForSession({ sessionId: ingestedSession.session_id, primaryOnly });
+    entries = getLedgerForSession({ sessionId: ingestedSession.session_id, primaryOnly, db });
   } else if (range === "last_5h") {
     entries = getLedgerInRange({ guildId, startMs: now - 5 * 60 * 60 * 1000, endMs: now, primaryOnly });
   } else if (range === "today") {
@@ -246,23 +250,19 @@ export const session = {
         )
     ),
 
-  async execute(interaction: any) {
+  async execute(interaction: any, ctx: CommandCtx | null) {
     const guildId = interaction.guildId as string | null;
 
-    if (!guildId) {
+    if (!guildId || !ctx?.db) {
       await interaction.reply({ content: "Sessions only work in a server (not DMs).", ephemeral: true });
       return;
     }
 
-    // DM-only enforcement
-    const dmRoleId = process.env.DM_ROLE_ID;
-    if (dmRoleId) {
-      const member = interaction.member;
-      const hasDmRole = member?.roles?.cache?.has(dmRoleId) ?? false;
-      if (!hasDmRole) {
-        await interaction.reply({ content: "This command is DM-only.", ephemeral: true });
-        return;
-      }
+    const db = ctx.db;
+
+    if (!isElevated(interaction.member as GuildMember | null)) {
+      await interaction.reply({ content: "Not authorized.", ephemeral: true });
+      return;
     }
 
     const sub = interaction.options.getSubcommand();
@@ -272,7 +272,7 @@ export const session = {
       const range = interaction.options.getString("range") ?? (label ? "recording" : "since_start");
       const primaryOnly = interaction.options.getBoolean("primary") ?? false;
       
-      const result = getLedgerSlice({ guildId, range, primaryOnly, sessionLabel: label });
+      const result = getLedgerSlice({ guildId, range, db, primaryOnly, sessionLabel: label });
 
       if ("error" in result) {
         await interaction.reply({ content: result.error, ephemeral: true });
@@ -328,7 +328,7 @@ export const session = {
       
       if (label) {
         // If label provided, use latest session with that label
-        session = getLatestSessionForLabel(label);
+        session = getLatestSessionForLabel(label, guildId);
         if (!session) {
           await interaction.reply({
             content: `No sessions found with label: ${label}`,
@@ -352,7 +352,6 @@ export const session = {
       }
 
       // Check if meecap exists for this session
-      const db = getDb();
       const meecapRow = db
         .prepare("SELECT meecap_narrative FROM meecaps WHERE session_id = ?")
         .get(session.session_id) as { meecap_narrative?: string } | undefined;
@@ -479,13 +478,12 @@ This recap should feel like:
       const label = interaction.options.getString("label") ?? null;
       const primaryOnly = source === "primary";
 
-      const db = getDb();
-      const meecapMode = process.env.MEECAP_MODE ?? "narrative";
+      const meecapMode = cfg.session.meecapMode;
       const columns = db.pragma("table_info(meecaps)") as any[];
       const hasNarrativeCol = columns.some((col: any) => col.name === "meecap_narrative");
 
       const deriveBeatsJson = async (session: any, narrative: string) => {
-        const entries = getLedgerForSession({ sessionId: session.session_id, primaryOnly });
+        const entries = getLedgerForSession({ sessionId: session.session_id, primaryOnly, db });
         if (!entries || entries.length === 0) {
           return { ok: false, message: `No ledger entries found for session ${session.session_id}` };
         }
@@ -557,7 +555,7 @@ This recap should feel like:
 
           // Generate and persist beats if enabled
           if (!noJson && meecapResult.narrative) {
-            const entries = getLedgerForSession({ sessionId: session.session_id, primaryOnly });
+            const entries = getLedgerForSession({ sessionId: session.session_id, primaryOnly, db });
             if (entries && entries.length > 0) {
               buildBeatsJsonFromNarrative({
                 sessionId: session.session_id,
@@ -670,14 +668,15 @@ This recap should feel like:
             FROM sessions s
             LEFT JOIN meecaps m ON m.session_id = s.session_id
             LEFT JOIN meecap_beats b ON b.session_id = s.session_id
-            WHERE s.label IS NOT NULL
+            WHERE s.guild_id = ?
+              AND s.label IS NOT NULL
               AND trim(s.label) <> ''
-              AND lower(s.label) NOT LIKE '%test%'
-              AND lower(s.label) NOT LIKE '%chat%'
+              AND s.kind = 'canon'
+              AND s.mode_at_start <> 'lab'
               AND (m.session_id IS NULL OR m.meecap_narrative IS NULL OR b.session_id IS NULL)
             ORDER BY s.created_at_ms DESC
           `)
-          .all() as Array<{
+          .all(guildId) as Array<{
             session_id: string;
             label: string | null;
             created_at_ms: number;
@@ -723,7 +722,7 @@ This recap should feel like:
             continue;
           }
 
-          const entries = getLedgerForSession({ sessionId: s.session_id, primaryOnly });
+          const entries = getLedgerForSession({ sessionId: s.session_id, primaryOnly, db });
           if (!entries || entries.length === 0) {
             skipped++;
             continue;
@@ -758,7 +757,7 @@ This recap should feel like:
       
       if (label) {
         // If label provided, use latest session with that label
-        session = getLatestSessionForLabel(label);
+        session = getLatestSessionForLabel(label, guildId);
         if (!session) {
           await interaction.reply({
             content: `No sessions found with label: ${label}`,
@@ -821,7 +820,7 @@ This recap should feel like:
       }
 
       // Fetch ledger entries for session
-      const entries = getLedgerForSession({ sessionId: session.session_id, primaryOnly });
+      const entries = getLedgerForSession({ sessionId: session.session_id, primaryOnly, db });
       if (!entries || entries.length === 0) {
         await interaction.reply({
           content: `No ledger entries found for session ${session.session_id}`,
@@ -851,11 +850,9 @@ This recap should feel like:
 
     if (sub === "view") {
       const scope = interaction.options.getString("scope", true);
-      const db = getDb();
-
       const whereClause = scope === "unlabeled"
-        ? "WHERE label IS NULL OR label = ''"
-        : "";
+        ? "WHERE guild_id = ? AND (label IS NULL OR label = '')"
+        : "WHERE guild_id = ?";
 
       const sessions = db
         .prepare(
@@ -865,7 +862,7 @@ This recap should feel like:
            ORDER BY created_at_ms DESC
            LIMIT 50`
         )
-        .all() as Array<{
+        .all(guildId) as Array<{
           session_id: string;
           guild_id: string;
           label: string | null;
@@ -925,8 +922,6 @@ This recap should feel like:
       const label = interaction.options.getString("label") ?? null;
       const userId = interaction.user?.id ?? null;
       const userName = interaction.user?.username ?? "unknown";
-      const db = getDb();
-
       // End any active session first
       const activeSession = getActiveSession(guildId);
       if (activeSession) {
@@ -936,10 +931,18 @@ This recap should feel like:
       }
 
       // Start new session
-      const session = startSession(guildId, userId, userName, { label, source: "live" });
+      const mode = getGuildMode(guildId);
+      const session = startSession(guildId, userId, userName, {
+        label,
+        source: "live",
+        modeAtStart: mode,
+        kind: sessionKindForMode(mode),
+      });
 
       await interaction.reply({
-        content: `✅ New session started: **${session.label || "(no label)"}** (id: ${session.session_id})`,
+        content:
+          `✅ New session started: **${session.label || "(no label)"}** (id: ${session.session_id})\n` +
+          `kind=${session.kind}, mode_at_start=${session.mode_at_start}`,
         ephemeral: true,
       });
       return;
@@ -948,12 +951,10 @@ This recap should feel like:
     if (sub === "label") {
       const label = interaction.options.getString("label", true);
       const sessionId = interaction.options.getString("session_id");
-      const db = getDb();
-
       if (sessionId) {
         const existing = db
-          .prepare("SELECT session_id FROM sessions WHERE session_id = ?")
-          .get(sessionId) as { session_id: string } | undefined;
+          .prepare("SELECT session_id FROM sessions WHERE session_id = ? AND guild_id = ?")
+          .get(sessionId, guildId) as { session_id: string } | undefined;
 
         if (!existing) {
           await interaction.reply({
@@ -989,11 +990,11 @@ This recap should feel like:
         .prepare(
           `SELECT session_id, created_at_ms, started_at_ms, source
            FROM sessions
-           WHERE label IS NULL OR label = ''
+           WHERE guild_id = ? AND (label IS NULL OR label = '')
            ORDER BY created_at_ms DESC
            LIMIT 10`
         )
-        .all() as Array<{
+        .all(guildId) as Array<{
           session_id: string;
           created_at_ms: number;
           started_at_ms: number;
