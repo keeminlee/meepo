@@ -17,7 +17,7 @@ function stableHash(value: unknown): string {
 }
 
 function fixtureRoot(): string {
-  return path.join(process.cwd(), "data", "fixtures", "sessions", "fixture_v1");
+  return path.join(process.cwd(), "src", "tests", "fixtures", "sessions", "fixture_v1");
 }
 
 function loadFixtureSession(): FixtureSession {

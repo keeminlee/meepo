@@ -29,7 +29,7 @@ This checklist is the source of truth for shipping `v1.0.0`.
 
 Fixture root:
 
-- `data/fixtures/sessions/fixture_v1/`
+- `src/tests/fixtures/sessions/fixture_v1/`
 
 ## 3) Manual Checks (Required)
 
