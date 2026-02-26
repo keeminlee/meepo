@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { expect, test } from "vitest";
 import Database from "better-sqlite3";
@@ -9,6 +10,8 @@ import { getSilverEligibilityMasks } from "../silver/seq/getSilverEligibilityMas
 const CAMPAIGN = "homebrew_campaign_2";
 const SESSION_LABEL = "C2E20";
 const MAX_MISMATCH_DIAGNOSTICS = 20;
+const CAMPAIGN_DB_PATH = path.join(process.cwd(), "data", "campaigns", CAMPAIGN, "db.sqlite");
+const HAS_CAMPAIGN_SNAPSHOT = fs.existsSync(CAMPAIGN_DB_PATH);
 
 type TranscriptEntry = {
   line_index: number;
@@ -24,8 +27,7 @@ function stableHash(value: unknown): string {
 }
 
 async function loadCampaignContext() {
-  const dbPath = path.join(process.cwd(), "data", "campaigns", CAMPAIGN, "db.sqlite");
-  const db = new Database(dbPath, { readonly: true });
+  const db = new Database(CAMPAIGN_DB_PATH, { readonly: true });
   const session = getSessionByLabel(db, SESSION_LABEL);
   const transcript = loadBronzeTranscript(db, session.session_id);
   const chunks = loadScaffoldChunks(db, session.session_id);
@@ -163,7 +165,7 @@ function buildMismatchDiagnostics(
   return `${label} mismatches=${mismatchIndices.length}\n${lines.join("\n")}`;
 }
 
-test("C2E20 prune eligibility masks are bit-identical between causal and silver wrappers", async () => {
+test.skipIf(!HAS_CAMPAIGN_SNAPSHOT)("C2E20 prune eligibility masks are bit-identical between causal and silver wrappers", async () => {
   const { db, transcript, chunks } = await loadCampaignContext();
   try {
     expect(transcript.length).toBeGreaterThan(0);
@@ -188,7 +190,7 @@ test("C2E20 prune eligibility masks are bit-identical between causal and silver 
   }
 });
 
-test("C2E20 prune eligibility masks are deterministic across 3 runs", async () => {
+test.skipIf(!HAS_CAMPAIGN_SNAPSHOT)("C2E20 prune eligibility masks are deterministic across 3 runs", async () => {
   const { db, transcript, chunks } = await loadCampaignContext();
   try {
     const causalHashes: string[] = [];
