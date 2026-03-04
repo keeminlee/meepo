@@ -26,7 +26,7 @@ export type ResolveSessionSelectionResult = {
   displayName: string;
 };
 
-function getDb(args: { guildId: string; guildName?: string | null; db?: any }): any {
+function requireDb(args: { guildId: string; guildName?: string | null; db?: any }): any {
   if (args.db) return args.db;
   throw new Error("sessionResolve requires args.db");
 }
@@ -116,7 +116,7 @@ export function resolveSessionSelection(args: {
   sessionOpt?: string | null;
   db?: any;
 }): ResolveSessionSelectionResult | null {
-  const db = getDb(args);
+  const db = requireDb(args);
   const rows = fetchSessionRows(db, args.guildId, 100);
   const hasChannelColumn = hasSessionChannelColumn(db);
 
@@ -161,7 +161,7 @@ export function listSessionsForAutocomplete(args: {
   query?: string;
   db?: any;
 }): CommandChoice[] {
-  const db = getDb(args);
+  const db = requireDb(args);
   const rows = fetchSessionRows(db, args.guildId, 60);
   const query = (args.query ?? "").trim().toLowerCase();
 
@@ -206,7 +206,7 @@ export function resolveLatestUserAnchorLedgerId(args: {
   sessionId: string;
   db?: any;
 }): string | null {
-  const db = getDb(args);
+  const db = requireDb(args);
   const row = fetchUserAnchorRows(db, args.guildId, args.sessionId, 1)[0];
   return row?.id ?? null;
 }
@@ -218,7 +218,7 @@ export function listAnchorsForAutocomplete(args: {
   query?: string;
   db?: any;
 }): CommandChoice[] {
-  const db = getDb(args);
+  const db = requireDb(args);
   const query = (args.query ?? "").trim().toLowerCase();
   const rows = fetchUserAnchorRows(db, args.guildId, args.sessionId, 80);
 
