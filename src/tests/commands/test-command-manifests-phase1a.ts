@@ -18,14 +18,14 @@ describe("Phase 1A command manifests", () => {
 
     const options = (data.options ?? []) as any[];
     const optionNames = options.map((option) => option.name).sort();
-    expect(optionNames).toEqual(["doctor", "hush", "sessions", "settings", "sleep", "status", "talk", "wake"]);
+    expect(optionNames).toEqual(["doctor", "help", "hush", "sessions", "settings", "sleep", "status", "talk", "wake"]);
 
     const settingsGroup = options.find((option) => option.name === "settings") as any;
     expect(settingsGroup).toBeTruthy();
     expect(settingsGroup.type).toBe(2);
 
     const settingsSubcommands = (settingsGroup.options ?? []).map((option: any) => option.name).sort();
-    expect(settingsSubcommands).toEqual(["set", "view"]);
+    expect(settingsSubcommands).toEqual(["clear", "set", "show"]);
   });
 
   test("/lab exists and contains legacy families", async () => {
@@ -35,7 +35,7 @@ describe("Phase 1A command manifests", () => {
 
     const groups = (data.options ?? []) as any[];
     const groupNames = groups.map((group: any) => group.name).sort();
-    expect(groupNames).toEqual(["goldmem", "meepo", "meeps", "missions", "session"]);
+    expect(groupNames).toEqual(["actions", "goldmem", "meepo", "meeps", "missions", "prompt", "session", "wake"]);
 
     for (const group of groups) {
       expect(group.type).toBe(2);

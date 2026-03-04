@@ -4,6 +4,7 @@ import {
   getGuildCanonPersonaId,
   getGuildCanonPersonaMode,
   getGuildConfig,
+  getGuildDmUserId,
   getGuildDefaultRecapStyle,
   getGuildHomeTextChannelId,
   getGuildHomeVoiceChannelId,
@@ -12,12 +13,13 @@ import {
   setGuildCanonPersonaId,
   setGuildCanonPersonaMode,
   setGuildDefaultRecapStyle,
+  setGuildDmUserId,
   setGuildHomeTextChannelId,
   setGuildHomeVoiceChannelId,
 } from "../campaign/guildConfig.js";
 import { ensureGuildSetup, type SetupReport } from "../campaign/ensureGuildSetup.js";
 import { cfg } from "../config/env.js";
-import { getPersona } from "../personas/index.js";
+import { getAvailablePersonaIds, getPersona } from "../personas/index.js";
 import { logSystemEvent } from "../ledger/system.js";
 import { wakeMeepo, getActiveMeepo, sleepMeepo } from "../meepo/state.js";
 import { getEffectivePersonaId } from "../meepo/personaState.js";
@@ -53,6 +55,7 @@ import {
 import { getSttProviderInfo } from "../voice/stt/provider.js";
 import { getTtsProviderInfo } from "../voice/tts/provider.js";
 import { voicePlaybackController } from "../voice/voicePlaybackController.js";
+import { getMeepoContextWorkerStatus } from "../ledger/meepoContextWorker.js";
 import { metaMeepoVoice, type DoctorCheck } from "../ui/metaMeepoVoice.js";
 import type { CommandCtx } from "./index.js";
 import { PermissionFlagsBits } from "discord.js";
@@ -60,7 +63,7 @@ import { PermissionFlagsBits } from "discord.js";
 type SessionRow = {
   session_id: string;
   label: string | null;
-  kind: "canon" | "chat";
+  kind: "canon" | "noncanon" | "chat";
   mode_at_start: "canon" | "ambient" | "lab" | "dormant";
   started_at_ms: number;
   ended_at_ms: number | null;
@@ -250,6 +253,15 @@ async function runDoctorChecks(interaction: any, ctx: CommandCtx): Promise<Docto
     );
   }
 
+  if (cfg.logging.level === "debug" || cfg.logging.level === "trace") {
+    const worker = getMeepoContextWorkerStatus(guildId);
+    checks.push({
+      icon: "✅",
+      label: `Context queue q=${worker.queue.queuedCount} l=${worker.queue.leasedCount} f=${worker.queue.failedCount}`,
+      action: `worker=${worker.enabled ? "enabled" : "disabled"}/${worker.running ? "running" : "stopped"}`,
+    });
+  }
+
   return checks;
 }
 
@@ -339,6 +351,7 @@ async function handleWake(interaction: any, ctx: CommandCtx): Promise<void> {
     guildId,
     guildName: interaction.guild?.name ?? null,
     interaction,
+    canonicalWake: Boolean(requestedSessionLabel),
   });
 
   if (setupReport.errors.length > 0) {
@@ -768,7 +781,7 @@ async function handleSettings(interaction: any): Promise<void> {
   const guildId = interaction.guildId as string;
   const sub = interaction.options.getSubcommand();
 
-  if (sub === "view") {
+  if (sub === "show" || sub === "view") {
     const config = getGuildConfig(guildId);
     const homeText = getGuildHomeTextChannelId(guildId);
     const homeVoice = resolveGuildHomeVoiceChannelId(guildId, cfg.overlay.homeVoiceChannelId ?? null);
@@ -792,17 +805,49 @@ async function handleSettings(interaction: any): Promise<void> {
   }
 
   if (sub === "set") {
+    const key = interaction.options.getString("key");
+    const channel = interaction.options.getChannel("channel");
     const canonMode = interaction.options.getString("canon_mode") as "diegetic" | "meta" | null;
     const canonPersona = interaction.options.getString("canon_persona");
     const recapStyle = interaction.options.getString("recap_style") as RecapStrategy | null;
     const homeVoice = interaction.options.getChannel("home_voice");
+    const dmUser = interaction.options.getUser("dm_user");
 
-    const providedCount = [canonMode, canonPersona, recapStyle, homeVoice].filter(Boolean).length;
+    const keyOrChannelProvided = Boolean(key) || Boolean(channel);
+    const providedCount =
+      (keyOrChannelProvided ? 1 : 0) +
+      [canonMode, canonPersona, recapStyle, homeVoice, dmUser].filter(Boolean).length;
+
     if (providedCount !== 1) {
       await interaction.reply({
         content: metaMeepoVoice.settings.setExactlyOneOptionError(),
         ephemeral: true,
       });
+      return;
+    }
+
+    if (keyOrChannelProvided && (!key || !channel)) {
+      await interaction.reply({
+        content: metaMeepoVoice.settings.keyAndChannelMustBePaired(),
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (key && channel) {
+      if (key === "home_text_channel") {
+        setGuildHomeTextChannelId(guildId, channel.id);
+        await interaction.reply({ content: metaMeepoVoice.settings.updatedHomeText(formatChannel(channel.id)), ephemeral: true });
+        return;
+      }
+
+      if (key === "home_voice_channel") {
+        setGuildHomeVoiceChannelId(guildId, channel.id);
+        await interaction.reply({ content: metaMeepoVoice.settings.updatedHomeVoice(formatChannel(channel.id)), ephemeral: true });
+        return;
+      }
+
+      await interaction.reply({ content: metaMeepoVoice.settings.invalidChannelSettingKey(key), ephemeral: true });
       return;
     }
 
@@ -835,9 +880,44 @@ async function handleSettings(interaction: any): Promise<void> {
       await interaction.reply({ content: metaMeepoVoice.settings.updatedHomeVoice(formatChannel(homeVoice.id)), ephemeral: true });
       return;
     }
+
+    if (dmUser) {
+      setGuildDmUserId(guildId, dmUser.id);
+      await interaction.reply({ content: metaMeepoVoice.settings.updatedDmUser(`<@${dmUser.id}> (${dmUser.id})`), ephemeral: true });
+      return;
+    }
+  }
+
+  if (sub === "clear") {
+    const key = interaction.options.getString("key", true);
+
+    if (key === "home_text_channel") {
+      setGuildHomeTextChannelId(guildId, null);
+      await interaction.reply({ content: metaMeepoVoice.settings.clearedHomeText(), ephemeral: true });
+      return;
+    }
+
+    if (key === "home_voice_channel") {
+      setGuildHomeVoiceChannelId(guildId, null);
+      await interaction.reply({ content: metaMeepoVoice.settings.clearedHomeVoice(), ephemeral: true });
+      return;
+    }
+
+    if (key === "dm_user_id") {
+      setGuildDmUserId(guildId, null);
+      await interaction.reply({ content: metaMeepoVoice.settings.clearedDmUser(), ephemeral: true });
+      return;
+    }
+
+    await interaction.reply({ content: metaMeepoVoice.settings.invalidChannelSettingKey(key), ephemeral: true });
+    return;
   }
 
   await interaction.reply({ content: metaMeepoVoice.settings.unknownAction(), ephemeral: true });
+}
+
+async function handleHelp(interaction: any): Promise<void> {
+  await interaction.reply({ content: metaMeepoVoice.help.summary(), ephemeral: true });
 }
 
 async function handleDoctor(interaction: any, ctx: CommandCtx): Promise<void> {
@@ -855,6 +935,7 @@ async function handleStatus(interaction: any, ctx: CommandCtx): Promise<void> {
   const ttsInfo = getTtsProviderInfo();
   const effectiveMode = resolveEffectiveMode(guildId);
   const canonMode = getGuildCanonPersonaMode(guildId) ?? "meta";
+  const dmBinding = getGuildDmUserId(guildId);
   const configuredCanonPersona = getGuildCanonPersonaId(guildId) ?? "(auto)";
   const effectivePersonaId = getEffectivePersonaId(guildId);
   const effectivePersona = getPersona(effectivePersonaId);
@@ -906,6 +987,16 @@ async function handleStatus(interaction: any, ctx: CommandCtx): Promise<void> {
     ? new Date(recapFinal.created_at_ms).toISOString()
     : "(none)";
   const finalHash = recapFinal?.source_hash ? `${recapFinal.source_hash.slice(0, 12)}…` : "(none)";
+  const showInternalDebug = cfg.logging.level === "debug" || cfg.logging.level === "trace";
+  const workerStatus = showInternalDebug ? getMeepoContextWorkerStatus(guildId) : null;
+  const internalDebugLines = workerStatus
+    ? [
+        `Context worker: ${workerStatus.enabled ? "enabled" : "disabled"} (${workerStatus.running ? "running" : "stopped"})`,
+        `Queue: queued=${workerStatus.queue.queuedCount} leased=${workerStatus.queue.leasedCount} failed=${workerStatus.queue.failedCount}`,
+        `Oldest queued age: ${workerStatus.queue.oldestQueuedAgeMs == null ? "(none)" : `${workerStatus.queue.oldestQueuedAgeMs}ms`}`,
+        `Last action completed: ${workerStatus.queue.lastCompletedAtMs ? new Date(workerStatus.queue.lastCompletedAtMs).toISOString() : "(none)"}`,
+      ]
+    : undefined;
 
   await interaction.reply({
     content: metaMeepoVoice.status.snapshot({
@@ -914,6 +1005,7 @@ async function handleStatus(interaction: any, ctx: CommandCtx): Promise<void> {
       voiceMode,
       effectiveMode,
       canonMode,
+      dmBinding: dmBinding ? `<@${dmBinding}> (${dmBinding})` : "(unset)",
       configuredCanonPersona,
       effectivePersonaDisplayName: effectivePersona.displayName,
       effectivePersonaId,
@@ -933,6 +1025,7 @@ async function handleStatus(interaction: any, ctx: CommandCtx): Promise<void> {
       ttsAvailable: hasTtsAvailable(),
       ttsProviderName: ttsInfo.name,
       hints,
+      internalDebugLines,
     }),
     ephemeral: false,
   });
@@ -1015,6 +1108,7 @@ export const meepo = {
     )
     .addSubcommand((sub) => sub.setName("talk").setDescription("Enable voice replies (requires awake)."))
     .addSubcommand((sub) => sub.setName("hush").setDescription("Disable voice replies (requires awake)."))
+    .addSubcommand((sub) => sub.setName("help").setDescription("Show a command reference for /meepo."))
     .addSubcommand((sub) => sub.setName("status").setDescription("Show current Meepo state and diagnostics."))
     .addSubcommand((sub) => sub.setName("doctor").setDescription("Run deterministic diagnostics with next actions."))
     .addSubcommandGroup((group) =>
@@ -1025,19 +1119,59 @@ export const meepo = {
         .addSubcommand((sub) =>
           sub
             .setName("set")
-            .setDescription("Set a home channel.")
+            .setDescription("Set one Meepo setting.")
             .addStringOption((opt) =>
               opt
                 .setName("key")
-                .setDescription("Setting key")
-                .setRequired(true)
+                .setDescription("Channel setting key (requires channel)")
+                .setRequired(false)
                 .addChoices(
                   { name: "home_text_channel", value: "home_text_channel" },
                   { name: "home_voice_channel", value: "home_voice_channel" }
                 )
             )
             .addChannelOption((opt) =>
-              opt.setName("channel").setDescription("Channel value").setRequired(true)
+              opt.setName("channel").setDescription("Channel value for key").setRequired(false)
+            )
+            .addStringOption((opt) =>
+              opt
+                .setName("canon_mode")
+                .setDescription("Canon persona mode")
+                .setRequired(false)
+                .addChoices(
+                  { name: "diegetic", value: "diegetic" },
+                  { name: "meta", value: "meta" }
+                )
+            )
+            .addStringOption((opt) =>
+              opt
+                .setName("canon_persona")
+                .setDescription("Canon persona id")
+                .setAutocomplete(true)
+                .setRequired(false)
+            )
+            .addStringOption((opt) =>
+              opt
+                .setName("recap_style")
+                .setDescription("Default recap style")
+                .setRequired(false)
+                .addChoices(
+                  { name: "detailed", value: "detailed" },
+                  { name: "balanced", value: "balanced" },
+                  { name: "concise", value: "concise" }
+                )
+            )
+            .addChannelOption((opt) =>
+              opt
+                .setName("home_voice")
+                .setDescription("Set home voice channel directly")
+                .setRequired(false)
+            )
+            .addUserOption((opt) =>
+              opt
+                .setName("dm_user")
+                .setDescription("Bind canonical DM identity")
+                .setRequired(false)
             )
         )
         .addSubcommand((sub) =>
@@ -1051,27 +1185,46 @@ export const meepo = {
                 .setRequired(true)
                 .addChoices(
                   { name: "home_text_channel", value: "home_text_channel" },
-                  { name: "home_voice_channel", value: "home_voice_channel" }
+                  { name: "home_voice_channel", value: "home_voice_channel" },
+                  { name: "dm_user_id", value: "dm_user_id" }
                 )
             )
         )
     ),
 
   async autocomplete(interaction: any) {
+    const focused = interaction.options.getFocused(true);
+    const subGroup = interaction.options.getSubcommandGroup(false);
+    const sub = interaction.options.getSubcommand(false);
+
+    if (focused.name === "canon_persona" && subGroup === "settings" && sub === "set") {
+      const query = String(focused.value ?? "").trim().toLowerCase();
+      const options = getAvailablePersonaIds()
+        .map((id) => {
+          const persona = getPersona(id);
+          return {
+            name: `${persona.displayName} (${id})`.slice(0, 100),
+            value: id,
+          };
+        })
+        .filter((option) => (query ? option.value.toLowerCase().includes(query) || option.name.toLowerCase().includes(query) : true))
+        .slice(0, 25);
+
+      await interaction.respond(options);
+      return;
+    }
+
     const guildId = interaction.guildId as string | null;
     if (!guildId) {
       await interaction.respond([]);
       return;
     }
 
-    const focused = interaction.options.getFocused(true);
     if (focused.name !== "session") {
       await interaction.respond([]);
       return;
     }
 
-    const subGroup = interaction.options.getSubcommandGroup(false);
-    const sub = interaction.options.getSubcommand(false);
     const supportsAutocomplete =
       subGroup === "sessions" && (sub === "view" || sub === "recap");
 
@@ -1141,6 +1294,11 @@ export const meepo = {
 
     if (sub === "hush") {
       await handleHush(interaction, ctx);
+      return;
+    }
+
+    if (sub === "help") {
+      await handleHelp(interaction);
       return;
     }
 

@@ -87,7 +87,9 @@ export async function orchestrateMegaMeecap(
   input: OrchestrateInput,
   deps: { callLlm: LlmCall },
 ): Promise<OrchestrateOutput> {
-  const segments = segmentTranscriptLines(input.lines, input.segmentSize);
+  const segments = (input.segments && input.segments.length > 0)
+    ? input.segments
+    : segmentTranscriptLines(input.lines, input.segmentSize);
   const segmentLogs: SegmentCallLog[] = [];
   const segmentOutputs: Array<{ segment: Segment; linesSent: number; content: string }> = [];
 

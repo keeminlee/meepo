@@ -6,6 +6,7 @@ Primary documentation entrypoints for active architecture lanes.
 - [START_HERE.md](START_HERE.md) — first-time DM onboarding path
 - [MAP.md](MAP.md) — runtime and subsystem map
 - [CURRENT_STATE.md](CURRENT_STATE.md) — current implementation status
+- [MEGAMEECAP_WORKER.md](MEGAMEECAP_WORKER.md) — action contract + receipts + artifact triage
 
 Lane-specific references:
 

@@ -18,6 +18,7 @@ import {
 } from "../latch/latch.js";
 import { getActiveSession } from "../sessions/sessions.js";
 import { getGuildMode } from "../sessions/sessionRuntime.js";
+import { getGuildDmUserId } from "../campaign/guildConfig.js";
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -561,6 +562,12 @@ export async function processTranscribedVoiceText(opts: {
     const guildMode = getGuildMode(guildId);
     if (guildMode === "dormant") {
       voiceLog.debug(`🎯 VOICE GATE: guild mode dormant → ignore`);
+      return clipGate;
+    }
+
+    const dmUserId = getGuildDmUserId(guildId);
+    if (guildMode === "canon" && dmUserId && userId === dmUserId) {
+      voiceLog.debug(`🎯 VOICE GATE: canon DM firewall → no trigger`);
       return clipGate;
     }
 

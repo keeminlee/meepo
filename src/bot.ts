@@ -4,16 +4,18 @@ import { log } from "./utils/logger.js";
 import { registerHandlers } from "./commands/index.js";
 import { getActiveMeepo, wakeMeepo, transformMeepo } from "./meepo/state.js";
 import { getEffectivePersonaId, getMindspace, setActivePersonaId } from "./meepo/personaState.js";
-import { getGuildDefaultPersonaId, resolveCampaignSlug } from "./campaign/guildConfig.js";
+import { getGuildDefaultPersonaId, getGuildDmUserId, resolveCampaignSlug } from "./campaign/guildConfig.js";
 import { getPersona } from "./personas/index.js";
 import { autoJoinGeneralVoice } from "./meepo/autoJoinVoice.js";
 import { startAutoSleepChecker } from "./meepo/autoSleep.js";
 import { getActiveSession } from "./sessions/sessions.js";
 import { getGuildMode } from "./sessions/sessionRuntime.js";
-import { appendLedgerEntry, getVoiceAwareContext } from "./ledger/ledger.js";
+import { appendLedgerEntry } from "./ledger/ledger.js";
+import { startMeepoContextActionWorker } from "./ledger/meepoContextWorker.js";
 import { getSanitizedSpeakerName } from "./ledger/speakerSanitizer.js";
 import { logConvoTurn } from "./ledger/meepoConvo.js";
 import { buildConvoTailContext } from "./recall/buildConvoTailContext.js";
+import { loadMeepoContextSnapshot } from "./recall/loadMeepoContextSnapshot.js";
 import { isWakePhrase, isLatchAnchor, containsPersonaName } from "./meepo/wakePhrase.js";
 import {
   setLatch,
@@ -29,7 +31,8 @@ import { voicePlaybackController } from "./voice/voicePlaybackController.js";
 import { applyPostTtsFx } from "./voice/audioFx.js";
 import { recordMeepoInteraction, classifyTrigger } from "./ledger/meepoInteractions.js";
 import { chat } from "./llm/client.js";
-import { buildMeepoPrompt, buildUserMessage } from "./llm/prompts.js";
+import { buildUserMessage } from "./llm/prompts.js";
+import { buildMeepoPromptBundle } from "./llm/buildMeepoPromptBundle.js";
 import { setBotNicknameForPersona } from "./meepo/nickname.js";
 import { acquireLock } from "./pidlock.js";
 import { getDbForCampaign, seedMeepoMemories } from "./db.js";
@@ -137,6 +140,9 @@ client.once("ready", async () => {
 
   // Start auto-sleep checker for inactive Meepo instances
   startAutoSleepChecker();
+
+  // Start context action worker (separate from heartbeat enqueue path)
+  startMeepoContextActionWorker(guildId ?? null);
 
   // Auto-join overlay voice channel (for speaking detection, independent of Meepo sessions)
   // Configurable via OVERLAY_AUTOJOIN=true (disabled by default)
@@ -246,7 +252,7 @@ client.on("messageCreate", async (message: any) => {
     const activeSession = getActiveSession(message.guildId);
 
     // 1) LEDGER: log every message in the guild that Meepo can see
-    appendLedgerEntry({
+    const inboundLedgerId = appendLedgerEntry({
       guild_id: message.guildId,
       channel_id: message.channelId,
       message_id: message.id,
@@ -458,6 +464,12 @@ client.on("messageCreate", async (message: any) => {
     const isAnchor = isWakePhrase(content, personaId, { mentioned: mentionedMeepo, prefix });
     const hasMeepo = containsPersonaName(content, personaId) || mentionedMeepo;
     const inBoundChannel = active.channel_id === message.channelId;
+    const dmUserId = getGuildDmUserId(message.guildId);
+
+    if (guildMode === "canon" && dmUserId && userId === dmUserId) {
+      bootLog.debug(`🎯 TEXT GATE: canon DM firewall → no trigger`);
+      return;
+    }
 
     if (isLatchAnchor(content, personaId)) {
       setLatch(message.guildId, message.channelId, userId, DEFAULT_LATCH_SECONDS, DEFAULT_MAX_LATCH_TURNS);
@@ -511,9 +523,10 @@ client.on("messageCreate", async (message: any) => {
 
     try {
       // Task 4.7: Use voice-aware context (prefers voice, falls back to text)
-      const { context: recentContext, hasVoice } = getVoiceAwareContext({
+      const { context: recentContext, hasVoice } = await loadMeepoContextSnapshot({
         guildId: message.guildId,
-        channelId: message.channelId,
+        sessionId: activeSession?.session_id ?? null,
+        anchorLedgerId: inboundLedgerId ?? message.id,
       });
 
       // Task 9: Run recall pipeline for party memory injection
@@ -630,8 +643,8 @@ client.on("messageCreate", async (message: any) => {
       }
 
       // Layer 0: Build conversation tail context (session-scoped)
-      const activeSession = getActiveSession(message.guildId);
-      const { tailBlock } = buildConvoTailContext(activeSession?.session_id ?? null, message.guildId);
+      const activeSessionForPrompt = getActiveSession(message.guildId);
+      const { tailBlock } = buildConvoTailContext(activeSessionForPrompt?.session_id ?? null, message.guildId);
 
       const mindspace = getMindspace(message.guildId, personaId);
 
@@ -653,21 +666,29 @@ client.on("messageCreate", async (message: any) => {
         return;
       }
 
-      const promptResult = await buildMeepoPrompt({
-        personaId,
-        mindspace,
-        meepo: active,
-        recentContext,
-        hasVoiceContext: hasVoice,
-        partyMemory,
-        convoTail: tailBlock || undefined,
-        guildId: message.guildId,
-        sessionId: activeSession?.session_id ?? null,
-        speakerId: message.author.id,
+      const persona = getPersona(personaId);
+      const promptBundle = buildMeepoPromptBundle({
+        guild_id: message.guildId,
+        campaign_slug: campaignSlug,
+        session_id: activeSessionForPrompt?.session_id ?? "__ambient__",
+        anchor_ledger_id: inboundLedgerId ?? message.id,
+        user_text: content,
+        meepo_context_snapshot: {
+          context: recentContext || undefined,
+          hasVoice,
+          partyMemory,
+          convoTail: tailBlock || undefined,
+        },
+        persona,
+        meepo_persona_seed: active.persona_seed,
       });
 
+      const memoryRefCount =
+        (promptBundle.retrieval?.core_memories.length ?? 0)
+        + (promptBundle.retrieval?.relevant_memories.length ?? 0);
+
       textReplyLog.info(
-        `persona_id=${promptResult.personaId} mindspace=${promptResult.mindspace ?? "n/a"} memory_refs=${promptResult.memoryRefs.length}`
+        `persona_id=${personaId} mindspace=${mindspace ?? "n/a"} memory_refs=${memoryRefCount}`
       );
 
       const sanitizedAuthorName = getSanitizedSpeakerName(
@@ -682,10 +703,10 @@ client.on("messageCreate", async (message: any) => {
       });
 
       // Layer 0: Log player message before LLM call
-      if (activeSession) {
+      if (activeSessionForPrompt) {
         logConvoTurn({
           guild_id: message.guildId,
-          session_id: activeSession.session_id,
+          session_id: activeSessionForPrompt.session_id,
           channel_id: message.channelId,
           message_id: message.id,
           speaker_id: message.author.id,
@@ -696,15 +717,15 @@ client.on("messageCreate", async (message: any) => {
       }
 
       const response = await chat({
-        systemPrompt: promptResult.systemPrompt,
+        systemPrompt: promptBundle.system,
         userMessage,
       });
 
       // Layer 0: Log Meepo's response after LLM call
-      if (activeSession) {
+      if (activeSessionForPrompt) {
         logConvoTurn({
           guild_id: message.guildId,
-          session_id: activeSession.session_id,
+          session_id: activeSessionForPrompt.session_id,
           channel_id: message.channelId,
           message_id: null, // Will be set once reply is sent
           speaker_id: client.user?.id ?? null,
@@ -749,7 +770,7 @@ client.on("messageCreate", async (message: any) => {
       const trigger = classifyTrigger(content, baseTrigger);
       recordMeepoInteraction({
         guildId: message.guildId,
-        sessionId: activeSession?.session_id ?? null,
+        sessionId: activeSessionForPrompt?.session_id ?? null,
         personaId,
         tier,
         trigger,
@@ -771,15 +792,18 @@ client.on("messageCreate", async (message: any) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         randomUUID(),
-        activeSession?.session_id ?? null,
+        activeSessionForPrompt?.session_id ?? null,
         message.id,
         message.guildId,
         message.channelId,
         message.createdTimestamp,
         null,
-        JSON.stringify(promptResult.memoryRefs),
-        promptResult.personaId,
-        promptResult.mindspace ?? null,
+        JSON.stringify([
+          ...(promptBundle.retrieval?.core_memories.map((m) => m.memory_id) ?? []),
+          ...(promptBundle.retrieval?.relevant_memories.map((m) => m.memory_id) ?? []),
+        ]),
+        personaId,
+        mindspace ?? null,
         Date.now()
       );
 

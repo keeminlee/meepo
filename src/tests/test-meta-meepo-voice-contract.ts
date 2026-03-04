@@ -17,6 +17,7 @@ describe("metaMeepoVoice contract", () => {
       voiceMode: "hush",
       effectiveMode: "ambient",
       canonMode: "meta",
+      dmBinding: "<@dm-1> (dm-1)",
       configuredCanonPersona: "(auto)",
       effectivePersonaDisplayName: "Meta Meepo",
       effectivePersonaId: "meta_meepo",

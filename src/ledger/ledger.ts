@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { getDbForCampaign } from "../db.js";
 import { resolveCampaignSlug } from "../campaign/guildConfig.js";
-import { getSanitizedSpeakerName } from "./speakerSanitizer.js";
+import { getGuildMode } from "../sessions/sessionRuntime.js";
+import { formatSpeakerLine, resolveSpeakerAttribution, type SpeakerKind } from "./speakerLabel.js";
+import { runHeartbeatAfterLedgerWrite } from "./meepoContextHeartbeat.js";
 import { cfg } from "../config/env.js";
 
 /**
@@ -73,7 +75,7 @@ export function appendLedgerEntry(
     t_end_ms?: number | null;
     confidence?: number | null;
   }
-) {
+): string | null {
   const db = getLedgerDbForGuild(e.guild_id);
   const id = randomUUID();
   const tags = e.tags ?? "public";
@@ -111,11 +113,18 @@ export function appendLedgerEntry(
       e.t_end_ms ?? null,
       e.confidence ?? null
     );
+
+    runHeartbeatAfterLedgerWrite(db, {
+      guildId: e.guild_id,
+      sessionId: e.session_id ?? null,
+      ledgerEntryId: id,
+    });
+    return id;
   } catch (err: any) {
     // Silently ignore duplicate message_id for text messages (unique constraint scoped to source='text')
     // Voice/system entries use synthetic UUIDs and won't trigger this
     if (err.code === "SQLITE_CONSTRAINT_UNIQUE" || err.message?.includes("UNIQUE constraint")) {
-      return;
+      return null;
     }
     throw err;
   }
@@ -219,12 +228,12 @@ export function getLedgerForSession(opts: {
  * 
  * Designed for use in buildMeepoPrompt() to make personas aware of spoken conversation.
  */
-export function getVoiceAwareContext(opts: {
+export async function getVoiceAwareContext(opts: {
   guildId: string;
   channelId: string;
   windowMs?: number; // Time window (default: LLM_VOICE_CONTEXT_MS env or 120s)
   limit?: number;    // Max entries to return (default: 20)
-}): { context: string; hasVoice: boolean } {
+}): Promise<{ context: string; hasVoice: boolean; speakerKinds: SpeakerKind[] }> {
   const db = getLedgerDbForGuild(opts.guildId);
   const now = Date.now();
   const windowMs = opts.windowMs ?? cfg.llm.voiceContextMs;
@@ -253,22 +262,28 @@ export function getVoiceAwareContext(opts: {
   ) as { author_id: string; author_name: string; content: string; source: string; timestamp_ms: number }[];
 
   if (rows.length === 0) {
-    return { context: "", hasVoice: false };
+    return { context: "", hasVoice: false, speakerKinds: [] };
   }
 
   // Check if any voice entries exist
   const hasVoice = rows.some((r) => r.source === "voice");
 
-  // Format entries with sanitized speaker names and source indicator
-  const formatted = rows
-    .map((r) => {
-      const sanitizedName = getSanitizedSpeakerName(opts.guildId, r.author_id, r.author_name);
-      const sourceTag = r.source === "voice" ? " (voice)" : "";
-      return `${sanitizedName}${sourceTag}: ${r.content}`;
-    })
-    .join("\n");
+  const canonMode = getGuildMode(opts.guildId) === "canon";
+  const speakerKinds: SpeakerKind[] = [];
+  const formattedLines: string[] = [];
+  for (const row of rows) {
+    const attribution = await resolveSpeakerAttribution({
+      guildId: opts.guildId,
+      authorId: row.author_id,
+      discordDisplayName: row.author_name,
+      canonMode,
+    });
+    speakerKinds.push(attribution.kind);
+    formattedLines.push(formatSpeakerLine(attribution.label, row.content));
+  }
+  const formatted = formattedLines.join("\n");
 
-  return { context: formatted, hasVoice };
+  return { context: formatted, hasVoice, speakerKinds };
 }
 
 /**

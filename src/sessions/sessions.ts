@@ -8,12 +8,14 @@ import type { MeepoMode } from "../config/types.js";
 import { resolveEffectiveMode, sessionKindForMode } from "./sessionRuntime.js";
 import { logRuntimeContextBanner } from "../runtime/runtimeContextBanner.js";
 
-export type SessionKind = "canon" | "chat";
+export type SessionKind = "canon" | "noncanon";
+
+export type SessionKindStored = SessionKind | "chat";
 
 export type Session = {
   session_id: string;
   guild_id: string;
-  kind: SessionKind;
+  kind: SessionKindStored;
   mode_at_start: MeepoMode;
   label: string | null;             // User-provided label (e.g., "C2E03") for reference
   created_at_ms: number;            // When session record was created (immutable, for ordering)

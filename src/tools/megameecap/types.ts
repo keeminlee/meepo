@@ -82,6 +82,7 @@ export type OrchestrateInput = {
   campaign: string;
   segmentSize: number;
   maxLlmLines: number;
+  segments?: Segment[];
   carryConfig: CarryConfig;
   style: FinalStyle;
   noFinalPass: boolean;

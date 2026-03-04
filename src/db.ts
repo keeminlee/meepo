@@ -1355,6 +1355,7 @@ function applyMigrations(db: Database.Database) {
       CREATE TABLE guild_config (
         guild_id TEXT PRIMARY KEY,
         campaign_slug TEXT NOT NULL,
+        dm_user_id TEXT,
         dm_role_id TEXT,
         default_persona_id TEXT,
         setup_version INTEGER,
@@ -1368,6 +1369,12 @@ function applyMigrations(db: Database.Database) {
   }
 
   const guildConfigColumns = db.pragma("table_info(guild_config)") as any[];
+  const hasDmUserId = guildConfigColumns.some((c: any) => c.name === "dm_user_id");
+  if (!hasDmUserId) {
+    console.log("Migrating: Adding dm_user_id to guild_config");
+    db.exec("ALTER TABLE guild_config ADD COLUMN dm_user_id TEXT");
+  }
+
   const hasSetupVersion = guildConfigColumns.some((c: any) => c.name === "setup_version");
   if (!hasSetupVersion) {
     console.log("Migrating: Adding setup_version to guild_config");
@@ -1409,6 +1416,122 @@ function applyMigrations(db: Database.Database) {
     SET default_recap_style = 'balanced'
     WHERE default_recap_style IS NULL OR TRIM(default_recap_style) = ''
   `);
+
+  // Migration: MeepoContext substrate tables (Sprint 1)
+  const tablesForMeepoContext = db.pragma("table_list") as any[];
+  const hasMeepoContext = tablesForMeepoContext.some((t: any) => t.name === "meepo_context");
+  if (!hasMeepoContext) {
+    console.log("Migrating: Creating meepo_context table (Sprint 1)");
+    db.exec(`
+      CREATE TABLE meepo_context (
+        guild_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'canon',
+        revision_id INTEGER NOT NULL DEFAULT 0,
+        ledger_cursor_id TEXT,
+        canon_line_cursor_total INTEGER NOT NULL DEFAULT 0,
+        canon_line_cursor_watermark INTEGER NOT NULL DEFAULT 0,
+        token_estimate INTEGER NOT NULL DEFAULT 0,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, scope, session_id)
+      );
+
+      CREATE INDEX idx_meepo_context_cursor
+      ON meepo_context(guild_id, scope, session_id, ledger_cursor_id);
+    `);
+  } else {
+    const meepoContextColumns = db.pragma("table_info(meepo_context)") as any[];
+    const hasScope = meepoContextColumns.some((c: any) => c.name === "scope");
+    if (!hasScope) {
+      console.log("Migrating: Adding scope to meepo_context");
+      db.exec("ALTER TABLE meepo_context ADD COLUMN scope TEXT NOT NULL DEFAULT 'canon'");
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_meepo_context_pk_compat
+        ON meepo_context(guild_id, scope, session_id)
+      `);
+    }
+
+    const hasCanonLineCursorTotal = meepoContextColumns.some((c: any) => c.name === "canon_line_cursor_total");
+    if (!hasCanonLineCursorTotal) {
+      console.log("Migrating: Adding canon_line_cursor_total to meepo_context");
+      db.exec("ALTER TABLE meepo_context ADD COLUMN canon_line_cursor_total INTEGER NOT NULL DEFAULT 0");
+    }
+
+    const hasCanonLineCursorWatermark = meepoContextColumns.some((c: any) => c.name === "canon_line_cursor_watermark");
+    if (!hasCanonLineCursorWatermark) {
+      console.log("Migrating: Adding canon_line_cursor_watermark to meepo_context");
+      db.exec("ALTER TABLE meepo_context ADD COLUMN canon_line_cursor_watermark INTEGER NOT NULL DEFAULT 0");
+    }
+  }
+
+  const tablesForMeepoContextBlocks = db.pragma("table_list") as any[];
+  const hasMeepoContextBlocks = tablesForMeepoContextBlocks.some((t: any) => t.name === "meepo_context_blocks");
+  if (!hasMeepoContextBlocks) {
+    console.log("Migrating: Creating meepo_context_blocks table (Sprint 1)");
+    db.exec(`
+      CREATE TABLE meepo_context_blocks (
+        id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'canon',
+        kind TEXT NOT NULL DEFAULT 'raw_lines',
+        seq INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        token_estimate INTEGER NOT NULL DEFAULT 0,
+        source_range_json TEXT,
+        superseded_at_ms INTEGER,
+        UNIQUE(guild_id, scope, session_id, kind, seq)
+      );
+
+      CREATE INDEX idx_meepo_context_blocks_scope
+      ON meepo_context_blocks(guild_id, scope, session_id, kind, superseded_at_ms, seq);
+    `);
+  } else {
+    const blockColumns = db.pragma("table_info(meepo_context_blocks)") as any[];
+    const hasBlockScope = blockColumns.some((c: any) => c.name === "scope");
+    if (!hasBlockScope) {
+      console.log("Migrating: Adding scope to meepo_context_blocks");
+      db.exec("ALTER TABLE meepo_context_blocks ADD COLUMN scope TEXT NOT NULL DEFAULT 'canon'");
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_meepo_context_blocks_compat
+        ON meepo_context_blocks(guild_id, scope, session_id, kind, seq)
+      `);
+    }
+  }
+
+  // Migration: Meepo action queue (Sprint 2)
+  const tablesForMeepoActions = db.pragma("table_list") as any[];
+  const hasMeepoActions = tablesForMeepoActions.some((t: any) => t.name === "meepo_actions");
+  if (!hasMeepoActions) {
+    console.log("Migrating: Creating meepo_actions table (Sprint 2)");
+    db.exec(`
+      CREATE TABLE meepo_actions (
+        id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'canon',
+        session_id TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        lease_owner TEXT,
+        lease_until_ms INTEGER,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        completed_at_ms INTEGER,
+        UNIQUE(dedupe_key)
+      );
+
+      CREATE INDEX idx_meepo_actions_pending
+      ON meepo_actions(status, lease_until_ms, created_at_ms);
+
+      CREATE INDEX idx_meepo_actions_scope
+      ON meepo_actions(guild_id, scope, session_id, action_type, status);
+    `);
+  }
 
   // Migration: Latches per (guild, channel, user) — drop old key-based table if present
   const tableListForLatches = db.pragma("table_list") as any[];

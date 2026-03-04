@@ -13,6 +13,7 @@ const campaignLog = log.withScope("campaign");
 export type GuildConfigRow = {
   guild_id: string;
   campaign_slug: string;
+  dm_user_id: string | null;
   dm_role_id: string | null;
   default_persona_id: string | null;
   setup_version: number | null;
@@ -32,7 +33,7 @@ export function getGuildConfig(guildId: string): GuildConfigRow | null {
   const db = getControlDb();
   const row = db
     .prepare(
-      "SELECT guild_id, campaign_slug, dm_role_id, default_persona_id, setup_version, home_text_channel_id, home_voice_channel_id, canon_persona_mode, canon_persona_id, default_recap_style FROM guild_config WHERE guild_id = ? LIMIT 1"
+      "SELECT guild_id, campaign_slug, dm_user_id, dm_role_id, default_persona_id, setup_version, home_text_channel_id, home_voice_channel_id, canon_persona_mode, canon_persona_id, default_recap_style FROM guild_config WHERE guild_id = ? LIMIT 1"
     )
     .get(guildId) as GuildConfigRow | undefined;
   return row ?? null;
@@ -52,6 +53,7 @@ export function ensureGuildConfig(guildId: string, guildName?: string | null): G
     `INSERT INTO guild_config (
       guild_id,
       campaign_slug,
+      dm_user_id,
       dm_role_id,
       default_persona_id,
       setup_version,
@@ -61,7 +63,7 @@ export function ensureGuildConfig(guildId: string, guildName?: string | null): G
       canon_persona_id,
       default_recap_style
     )
-     VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`
+      VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`
   ).run(guildId, slug);
   campaignLog.info(`Created guild_config for guild=${guildId} campaign_slug=${slug}`);
   row = getGuildConfig(guildId)!;
@@ -103,6 +105,18 @@ export function setGuildCampaignSlug(guildId: string, campaignSlug: string): voi
   ensureGuildConfig(guildId, null);
   db.prepare("UPDATE guild_config SET campaign_slug = ? WHERE guild_id = ?").run(campaignSlug, guildId);
   campaignLog.info(`Set campaign_slug=${campaignSlug} for guild=${guildId}`);
+}
+
+export function getGuildDmUserId(guildId: string): string | null {
+  const config = getGuildConfig(guildId);
+  return config?.dm_user_id ?? null;
+}
+
+export function setGuildDmUserId(guildId: string, dmUserId: string | null): void {
+  const db = getControlDb();
+  ensureGuildConfig(guildId, null);
+  db.prepare("UPDATE guild_config SET dm_user_id = ? WHERE guild_id = ?").run(dmUserId, guildId);
+  campaignLog.info(`Set dm_user_id=${dmUserId ?? "null"} for guild=${guildId}`);
 }
 
 /**

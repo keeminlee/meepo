@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.2 - 2026-03-04
+
+### Added
+
+- Heartbeat context substrate and action queue pipeline for canon/ambient ingestion.
+- Context action worker + deterministic offline replay tooling for queue drain and artifact regeneration.
+- Meepo action observability artifacts (`*.jsonl` + merged `*.log`) and prompt/context/retrieval telemetry events.
+- `/lab` UX updates for session/anchor resolution and new `/lab wake run [kind] [label]` flow.
+
+### Changed
+
+- Normalized session kind write semantics to `canon|noncanon` (legacy `chat` rows remain read-compatible).
+- Improved overlay startup safety by handling `EADDRINUSE` without crashing bot startup.
+
+### Fixed
+
+- CI stability: `src/tests/test-meepo-context-worker.ts` now mocks env/bootstrap dependencies to avoid `DISCORD_TOKEN` hard-require during test load.
+- Replay artifact test reliability: `src/tools/heartbeat/replay.test.ts` now explicitly enables meepo action logging gates for offline artifact assertions.
+
 ## v1.1-rc1 - 2026-03-03
 
 ### Added

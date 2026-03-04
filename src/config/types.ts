@@ -102,6 +102,23 @@ export interface Config {
     memoryEnabled: boolean;
     goldMemoryEnabled: boolean;
     labCommandsEnabled: boolean;
+    contextMiniFirst: boolean;
+    contextInlineActionsDev: boolean;
+    contextWorkerEnabled: boolean;
+  };
+
+  meepoContextActions: {
+    pollMs: number;
+    maxActionsPerTick: number;
+    maxTotalRuntimeMs: number;
+    leaseTtlMs: number;
+    maxAttempts: number;
+    retryBaseMs: number;
+  };
+
+  meepoActionLogging: {
+    enabled: boolean;
+    includePromptBodies: boolean;
   };
 
   access: {

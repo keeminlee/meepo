@@ -17,9 +17,11 @@ import { log } from "../utils/logger.js";
 import { getVoiceState } from "./state.js";
 import { isMeepoSpeaking, speakInGuild } from "./speaker.js";
 import { getTtsProvider } from "./tts/provider.js";
-import { buildMeepoPrompt, buildUserMessage } from "../llm/prompts.js";
+import { getPersona } from "../personas/index.js";
+import { buildUserMessage } from "../llm/prompts.js";
+import { buildMeepoPromptBundle } from "../llm/buildMeepoPromptBundle.js";
 import { chat } from "../llm/client.js";
-import { getLedgerInRange, getVoiceAwareContext } from "../ledger/ledger.js";
+import { loadMeepoContextSnapshot } from "../recall/loadMeepoContextSnapshot.js";
 import { getSanitizedSpeakerName } from "../ledger/speakerSanitizer.js";
 import { logSystemEvent } from "../ledger/system.js";
 import { applyPostTtsFx } from "./audioFx.js";
@@ -118,10 +120,21 @@ export async function respondToVoiceUtterance(
   guildLastVoiceReply.set(guildId, now);
 
   try {
+    const activeSession = getActiveSession(guildId);
+    const db = getDbForCampaign(campaignSlug);
+    const anchorLedgerRow = db.prepare(
+      `SELECT id
+       FROM ledger_entries
+       WHERE guild_id = ? AND session_id = ?
+       ORDER BY timestamp_ms DESC, id DESC
+       LIMIT 1`
+    ).get(guildId, activeSession?.session_id ?? null) as { id: string } | undefined;
+
     // Task 4.7: Use shared voice-aware context function
-    const { context: recentContext, hasVoice } = getVoiceAwareContext({
+    const { context: recentContext, hasVoice } = await loadMeepoContextSnapshot({
       guildId,
-      channelId,
+      sessionId: activeSession?.session_id ?? null,
+      anchorLedgerId: anchorLedgerRow?.id ?? null,
     });
 
     // Task 9: Run recall pipeline for party memory injection
@@ -236,7 +249,6 @@ export async function respondToVoiceUtterance(
     }
 
     // Layer 0: Build conversation tail context (session-scoped)
-    const activeSession = getActiveSession(guildId);
     const { tailBlock } = buildConvoTailContext(activeSession?.session_id ?? null, guildId);
 
     const personaId = getEffectivePersonaId(guildId);
@@ -247,21 +259,30 @@ export async function respondToVoiceUtterance(
       return false;
     }
 
-    const promptResult = await buildMeepoPrompt({
-      personaId,
-      mindspace,
-      meepo: active,
-      recentContext: recentContext || undefined,
-      hasVoiceContext: hasVoice,
-      partyMemory,
-      convoTail: tailBlock || undefined,
-      guildId,
-      sessionId: activeSession?.session_id ?? null,
-      speakerId,
+    const persona = getPersona(personaId);
+
+    const promptBundle = buildMeepoPromptBundle({
+      guild_id: guildId,
+      campaign_slug: campaignSlug,
+      session_id: activeSession?.session_id ?? "__ambient__",
+      anchor_ledger_id: anchorLedgerRow?.id ?? `voice:${now}`,
+      user_text: utterance,
+      meepo_context_snapshot: {
+        context: recentContext || undefined,
+        hasVoice,
+        partyMemory,
+        convoTail: tailBlock || undefined,
+      },
+      persona,
+      meepo_persona_seed: active.persona_seed,
     });
 
+    const memoryRefCount =
+      (promptBundle.retrieval?.core_memories.length ?? 0)
+      + (promptBundle.retrieval?.relevant_memories.length ?? 0);
+
     voiceReplyLog.debug(
-      `persona_id=${promptResult.personaId} mindspace=${promptResult.mindspace ?? "n/a"} memory_refs=${promptResult.memoryRefs.length}`
+      `persona_id=${personaId} mindspace=${mindspace ?? "n/a"} memory_refs=${memoryRefCount}`
     );
 
     // Build user message with sanitized speaker name
@@ -287,12 +308,11 @@ export async function respondToVoiceUtterance(
 
     // Call LLM to generate response (shorter tokens for voice)
     const responseText = await chat({
-      systemPrompt: promptResult.systemPrompt,
+      systemPrompt: promptBundle.system,
       userMessage,
       maxTokens: 100, // Shorter responses for voice
     });
 
-    const db = getDbForCampaign(campaignSlug);
     db.prepare(`
       INSERT INTO meep_usages (id, session_id, message_id, guild_id, channel_id, triggered_at_ms, response_tokens, used_memories, persona_id, mindspace, created_at_ms)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -304,9 +324,12 @@ export async function respondToVoiceUtterance(
       channelId,
       now,
       null,
-      JSON.stringify(promptResult.memoryRefs),
-      promptResult.personaId,
-      promptResult.mindspace ?? null,
+      JSON.stringify([
+        ...(promptBundle.retrieval?.core_memories.map((m) => m.memory_id) ?? []),
+        ...(promptBundle.retrieval?.relevant_memories.map((m) => m.memory_id) ?? []),
+      ]),
+      personaId,
+      mindspace ?? null,
       Date.now()
     );
 
@@ -333,7 +356,7 @@ export async function respondToVoiceUtterance(
       recordMeepoInteraction({
         guildId,
         sessionId: activeSession?.session_id ?? null,
-        personaId: promptResult.personaId,
+        personaId,
         tier: tierForRecord,
         trigger: resolvedTrigger,
         speakerId,

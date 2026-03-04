@@ -15,6 +15,7 @@ let recapArtifact: any | null = null;
 vi.mock("../campaign/guildConfig.js", () => ({
   getGuildCanonPersonaId: vi.fn(() => null),
   getGuildCanonPersonaMode: vi.fn(() => "meta"),
+  getGuildDmUserId: vi.fn(() => null),
   getGuildConfig: vi.fn(() => ({ campaign_slug: "default" })),
   getGuildDefaultRecapStyle: vi.fn(() => "balanced"),
   getGuildHomeTextChannelId: vi.fn(() => "text-1"),
@@ -26,6 +27,7 @@ vi.mock("../campaign/guildConfig.js", () => ({
   setGuildCanonPersonaId: vi.fn(),
   setGuildCanonPersonaMode: vi.fn(),
   setGuildDefaultRecapStyle: vi.fn(),
+  setGuildDmUserId: vi.fn(),
 }));
 
 vi.mock("../campaign/ensureGuildSetup.js", () => ({
@@ -133,6 +135,20 @@ vi.mock("../voice/tts/provider.js", () => ({
 
 vi.mock("../voice/voicePlaybackController.js", () => ({
   voicePlaybackController: { abort: vi.fn() },
+}));
+
+vi.mock("../ledger/meepoContextWorker.js", () => ({
+  getMeepoContextWorkerStatus: vi.fn(() => ({
+    enabled: true,
+    running: true,
+    queue: {
+      queuedCount: 0,
+      leasedCount: 0,
+      failedCount: 0,
+      oldestQueuedAgeMs: null,
+      lastCompletedAtMs: null,
+    },
+  })),
 }));
 
 afterEach(() => {

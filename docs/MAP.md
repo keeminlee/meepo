@@ -249,6 +249,7 @@ Artifact location:
 ## 8. Docs Index and Deprecation Rules
 
 - Operational snapshot: `docs/CURRENT_STATE.md`
+- MegaMeecap worker ops: `docs/MEGAMEECAP_WORKER.md`
 - Philosophy / north star: `docs/Project_Meepo.md`
 - System map (this file): `docs/MAP.md`
 

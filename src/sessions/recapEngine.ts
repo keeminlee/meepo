@@ -3,12 +3,15 @@ import fs from "node:fs";
 import { cfg } from "../config/env.js";
 import { chat } from "../llm/client.js";
 import { buildTranscript } from "../ledger/transcripts.js";
+import type { TranscriptEntry } from "../ledger/transcripts.js";
 import { getDbForCampaign } from "../db.js";
 import { resolveCampaignSlug } from "../campaign/guildConfig.js";
 import { getSessionArtifact, getSessionById, upsertSessionArtifact } from "./sessions.js";
 import { orchestrateMegaMeecap } from "../tools/megameecap/orchestrate.js";
 import { runFinalPassOnly } from "../tools/megameecap/orchestrate.js";
 import type { FinalStyle, LlmCall, TranscriptLine } from "../tools/megameecap/types.js";
+import { segmentTranscript } from "../silver/seq/segmentTranscript.js";
+import type { Segment as MegameecapSegment } from "../tools/megameecap/types.js";
 import {
   getBaseStatus,
   getFinalStatus,
@@ -24,6 +27,10 @@ const MEGAMEECAP_BASE_VERSION = "megameecap-base-v1";
 const MEGAMEECAP_FINAL_VERSION = "megameecap-final-v1";
 const RECAP_LLM_MAX_TOKENS = 1600;
 const RECAP_CONTINUATION_MAX_TOKENS = 1000;
+const SILVER_TARGET_NARRATIVE_LINES = 250;
+const SILVER_MIN_NARRATIVE_LINES = 200;
+const SILVER_MAX_NARRATIVE_LINES = 313;
+const SILVER_SNAP_WINDOW = 25;
 
 export type RecapStrategy = RecapPassStrategy;
 
@@ -95,6 +102,34 @@ function looksLikeIncompleteRecap(text: string): boolean {
   return !/[.!?)]$/.test(trimmed);
 }
 
+function buildSilverSegmentsForMegameecap(args: {
+  transcriptEntries: TranscriptEntry[];
+  lines: TranscriptLine[];
+}): MegameecapSegment[] {
+  const segmented = segmentTranscript({
+    lines: args.transcriptEntries,
+    targetNarrativeLines: SILVER_TARGET_NARRATIVE_LINES,
+    minNarrativeLines: SILVER_MIN_NARRATIVE_LINES,
+    maxNarrativeLines: SILVER_MAX_NARRATIVE_LINES,
+    snapWindow: SILVER_SNAP_WINDOW,
+    combatMode: "prune",
+  });
+
+  const out: MegameecapSegment[] = [];
+  for (const segment of segmented.segments) {
+    const segmentLines = args.lines.slice(segment.startLineIndex, segment.endLineIndex + 1);
+    if (segmentLines.length === 0) continue;
+    out.push({
+      segmentId: segment.id,
+      startLine: segmentLines[0]?.lineIndex ?? segment.startLineIndex,
+      endLine: segmentLines[segmentLines.length - 1]?.lineIndex ?? segment.endLineIndex,
+      lines: segmentLines,
+    });
+  }
+
+  return out;
+}
+
 export async function generateSessionRecap(
   args: GenerateSessionRecapArgs,
   deps?: { callLlm?: LlmCall; now?: () => number }
@@ -139,6 +174,7 @@ export async function generateSessionRecap(
     },
     {
       lines,
+      transcriptEntries: transcript,
       campaignSlug,
       sessionLabel: session.label ?? args.sessionId,
       callLlm: llmCall,
@@ -221,6 +257,7 @@ export async function ensureMegameecapBase(
   args: { guildId: string; sessionId: string; forceBase?: boolean },
   deps: {
     lines: TranscriptLine[];
+    transcriptEntries: TranscriptEntry[];
     campaignSlug: string;
     sessionLabel: string;
     callLlm: LlmCall;
@@ -278,8 +315,12 @@ export async function ensureMegameecapBase(
     {
       sessionLabel: deps.sessionLabel,
       campaign: deps.campaignSlug,
-      segmentSize: 120,
-      maxLlmLines: 120,
+      segmentSize: SILVER_TARGET_NARRATIVE_LINES,
+      maxLlmLines: SILVER_MAX_NARRATIVE_LINES,
+      segments: buildSilverSegmentsForMegameecap({
+        transcriptEntries: deps.transcriptEntries,
+        lines: deps.lines,
+      }),
       carryConfig: {
         maxCarryChars: 8000,
         maxCarrySegments: 3,

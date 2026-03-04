@@ -120,6 +120,14 @@ function setupWebSocket() {
   if (!httpServer) return;
 
   wss = new WebSocketServer({ server: httpServer });
+  wss.on('error', (error: any) => {
+    const code = String(error?.code ?? '');
+    if (code === 'EADDRINUSE') {
+      overlayLog.warn(`Overlay WebSocket disabled: port ${overlayPort} already in use`);
+      return;
+    }
+    overlayLog.error(`WebSocket server error: ${error}`);
+  });
 
   wss.on('connection', (ws: WebSocket) => {
     activeBroadcasters.add(ws);
@@ -150,9 +158,45 @@ function setupWebSocket() {
  * Call this early in bot startup (before Discord init, independent)
  */
 export async function startOverlayServer() {
-  return new Promise<void>((resolve) => {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const settleResolve = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const settleReject = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
     httpServer = createServer(app);
     const router = Router();
+
+    httpServer.once('error', (error: any) => {
+      const code = String(error?.code ?? '');
+      if (code === 'EADDRINUSE') {
+        overlayLog.warn(`Overlay disabled: http://localhost:${overlayPort}/overlay already bound by another process`);
+        try {
+          if (wss) {
+            wss.close();
+            wss = null;
+          }
+          if (httpServer) {
+            httpServer.close();
+            httpServer = null;
+          }
+        } catch {
+          // ignore cleanup errors on startup collision path
+        }
+        settleResolve();
+        return;
+      }
+
+      overlayLog.error(`Overlay startup failed: ${error}`);
+      settleReject(error);
+    });
 
     setupRoutes(router);
     setupWebSocket();
@@ -180,7 +224,7 @@ export async function startOverlayServer() {
 
     httpServer.listen(overlayPort, () => {
       overlayLog.info(`http://localhost:${overlayPort}/overlay`);
-      resolve();
+      settleResolve();
     });
   });
 }
@@ -215,8 +259,10 @@ export async function stopOverlayServer() {
   if (wss) {
     wss.clients.forEach((client) => client.close());
     wss.close();
+    wss = null;
   }
   if (httpServer) {
     httpServer.close();
+    httpServer = null;
   }
 }

@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveMegameecapOutputDir } from "../tools/megameecap/io.js";
+import { buildSessionArtifactStem } from "../dataPaths.js";
+
+export { buildSessionArtifactStem } from "../dataPaths.js";
 
 export type RecapPassStrategy = "detailed" | "balanced" | "concise";
 
@@ -35,21 +38,6 @@ export type FinalStatus = {
   createdAtMs: number | null;
   paths: RecapArtifactPaths | null;
 };
-
-function sanitizeSessionLabelForFilename(sessionLabel: string): string {
-  const trimmed = sessionLabel.trim();
-  if (!trimmed) return "";
-  return trimmed
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-export function buildSessionArtifactStem(sessionId: string, sessionLabel?: string | null): string {
-  const safeLabel = sessionLabel ? sanitizeSessionLabelForFilename(sessionLabel) : "";
-  const identity = safeLabel.length > 0 ? safeLabel : sessionId;
-  return `session-${identity}`;
-}
 
 function readJsonFile(filePath: string): Record<string, unknown> | null {
   if (!fs.existsSync(filePath)) return null;

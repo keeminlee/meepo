@@ -49,6 +49,67 @@ ON ledger_entries(message_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_session
 ON ledger_entries(session_id);
 
+-- MeepoContext substrate (Sprint 1)
+-- Canon contexts are keyed by session_id; ambient/system ingestion uses scope='ambient' and session_id='__ambient__'.
+CREATE TABLE IF NOT EXISTS meepo_context (
+  guild_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'canon',      -- 'canon' | 'ambient'
+  revision_id INTEGER NOT NULL DEFAULT 0,
+  ledger_cursor_id TEXT,
+  canon_line_cursor_total INTEGER NOT NULL DEFAULT 0,
+  canon_line_cursor_watermark INTEGER NOT NULL DEFAULT 0,
+  token_estimate INTEGER NOT NULL DEFAULT 0,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, scope, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_meepo_context_cursor
+ON meepo_context(guild_id, scope, session_id, ledger_cursor_id);
+
+CREATE TABLE IF NOT EXISTS meepo_context_blocks (
+  id TEXT PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'canon',      -- 'canon' | 'ambient'
+  kind TEXT NOT NULL DEFAULT 'raw_lines',
+  seq INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  token_estimate INTEGER NOT NULL DEFAULT 0,
+  source_range_json TEXT,
+  superseded_at_ms INTEGER,
+  UNIQUE(guild_id, scope, session_id, kind, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_meepo_context_blocks_scope
+ON meepo_context_blocks(guild_id, scope, session_id, kind, superseded_at_ms, seq);
+
+CREATE TABLE IF NOT EXISTS meepo_actions (
+  id TEXT PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'canon',      -- 'canon' | 'ambient'
+  session_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',   -- 'pending' | 'processing' | 'done' | 'failed'
+  lease_owner TEXT,
+  lease_until_ms INTEGER,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  completed_at_ms INTEGER,
+  UNIQUE(dedupe_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_meepo_actions_pending
+ON meepo_actions(status, lease_until_ms, created_at_ms);
+
+CREATE INDEX IF NOT EXISTS idx_meepo_actions_scope
+ON meepo_actions(guild_id, scope, session_id, action_type, status);
+
 -- Latches v2: per (guild, channel, user) for Tier S/A reply gating
 CREATE TABLE IF NOT EXISTS latches (
   guild_id TEXT NOT NULL,
@@ -78,7 +139,7 @@ ON latches(guild_id, channel_id);
 CREATE TABLE IF NOT EXISTS sessions (
   session_id TEXT PRIMARY KEY,
   guild_id TEXT NOT NULL,
-  kind TEXT NOT NULL DEFAULT 'canon',         -- 'canon' | 'chat'
+  kind TEXT NOT NULL DEFAULT 'canon',         -- 'canon' | 'noncanon' (legacy rows may contain 'chat')
   mode_at_start TEXT NOT NULL DEFAULT 'ambient', -- 'canon' | 'ambient' | 'lab' | 'dormant'
   label TEXT,                              -- User-provided label (e.g., "C2E03") for reference
   created_at_ms INTEGER NOT NULL,          -- When this session record was created (immutable timestamp)

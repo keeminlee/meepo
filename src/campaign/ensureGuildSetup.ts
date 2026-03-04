@@ -3,16 +3,19 @@ import {
   ensureGuildConfig,
   getGuildCanonPersonaMode,
   getGuildConfig,
+  getGuildDmUserId,
   getGuildHomeTextChannelId,
   getGuildHomeVoiceChannelId,
   getGuildSetupVersion,
   resolveCampaignSlug,
   setGuildCanonPersonaMode,
   setGuildDefaultRecapStyle,
+  setGuildDmUserId,
   setGuildHomeTextChannelId,
   setGuildHomeVoiceChannelId,
   setGuildSetupVersion,
 } from "./guildConfig.js";
+import { logSystemEvent } from "../ledger/system.js";
 
 export type SetupReport = {
   applied: string[];
@@ -26,6 +29,7 @@ export async function ensureGuildSetup(args: {
   guildId: string;
   guildName?: string | null;
   interaction: any;
+  canonicalWake?: boolean;
 }): Promise<SetupReport> {
   const applied: string[] = [];
   const warnings: string[] = [];
@@ -62,6 +66,39 @@ export async function ensureGuildSetup(args: {
   if (!getGuildCanonPersonaMode(args.guildId)) {
     setGuildCanonPersonaMode(args.guildId, "meta");
     applied.push("Initialized canon persona mode to meta");
+  }
+
+  if (args.canonicalWake) {
+    const existingDmUserId = getGuildDmUserId(args.guildId);
+    if (!existingDmUserId) {
+      const invokerId = args.interaction.user?.id as string | undefined;
+      if (invokerId && invokerId.trim().length > 0) {
+        setGuildDmUserId(args.guildId, invokerId);
+        applied.push(`Bound canonical DM identity to <@${invokerId}>`);
+        try {
+          logSystemEvent({
+            guildId: args.guildId,
+            channelId: invocationChannelId,
+            eventType: "CANON_DM_AUTOBIND",
+            content: JSON.stringify({
+              dm_user_id: invokerId,
+              source: "first_canonical_wake",
+            }),
+            authorId: invokerId,
+            authorName: args.interaction.user?.username ?? "unknown",
+            narrativeWeight: "secondary",
+          });
+        } catch {
+          // Do not block setup if telemetry logging fails.
+        }
+      } else {
+        errors.push("Canonical wake requires DM identity binding, but invoker identity is unavailable");
+      }
+    }
+
+    if (!getGuildDmUserId(args.guildId)) {
+      errors.push("Canonical wake blocked: dm_user_id is not configured");
+    }
   }
 
   const cfgNow = getGuildConfig(args.guildId);

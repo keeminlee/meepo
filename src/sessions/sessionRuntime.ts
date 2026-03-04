@@ -29,7 +29,7 @@ function getRuntimeDbForGuild(guildId: string) {
 }
 
 export function sessionKindForMode(mode: MeepoMode): SessionKind {
-  if (mode === "ambient") return "chat";
+  if (mode === "ambient") return "noncanon";
   return "canon";
 }
 

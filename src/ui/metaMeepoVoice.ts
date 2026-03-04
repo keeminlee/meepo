@@ -32,6 +32,7 @@ type StatusSnapshotInput = {
   voiceMode: string;
   effectiveMode: string;
   canonMode: CanonPersonaMode;
+  dmBinding: string;
   configuredCanonPersona: string;
   effectivePersonaDisplayName: string;
   effectivePersonaId: string;
@@ -51,6 +52,7 @@ type StatusSnapshotInput = {
   ttsAvailable: boolean;
   ttsProviderName: string;
   hints: string[];
+  internalDebugLines?: string[];
 };
 
 type SessionViewLinesInput = {
@@ -128,6 +130,8 @@ export const metaMeepoVoice = {
         "Something in setup is blocking me, meep. Fix these and try `/meepo wake` again:",
         setupSummaryLines.length ? indent(bullets(setupSummaryLines, "•")) : indent("• (no details provided)"),
         "",
+        "Quick command reference: `/meepo help`.",
+        "",
         "If you want a full checklist, run `/meepo doctor`.",
       ]);
       return lines.join("\n");
@@ -150,7 +154,7 @@ export const metaMeepoVoice = {
     },
 
     voiceConnectSkipped(): string {
-      return "🎧 I’m staying out of voice for now, meep... I don’t have Connect/Speak permission in the home voice channel. Fix that, then run `/meepo wake` again.";
+      return "🎧 I’m staying out of voice for now, meep... I don’t have Connect/Speak permission in the home voice channel. Fix that, then run `/meepo wake` again. Quick reference: `/meepo help`.";
     },
 
     stayPutNotice(channelRef: string): string {
@@ -158,7 +162,11 @@ export const metaMeepoVoice = {
     },
 
     notInVoiceNotice(): string {
-      return "Join a voice channel and run /meepo wake again if you want me to connect, meep.";
+      return "Join a voice channel and run /meepo wake again if you want me to connect, meep. Need the full command map? Run /meepo help.";
+    },
+
+    talkTip(): string {
+      return "💬 Tip: after wake, run /meepo talk if you want voice replies, meep.";
     },
 
     replyLines(input: WakeReplyInput): string[] {
@@ -203,6 +211,7 @@ export const metaMeepoVoice = {
       if (input.setupSummaryLines.length > 0) {
         lines.push("");
         lines.push(...input.setupSummaryLines);
+        lines.push(metaMeepoVoice.wake.talkTip());
       }
 
       // Gentle nudge (only if there were setup issues)
@@ -236,6 +245,7 @@ export const metaMeepoVoice = {
         "",
         header("Persona"),
         `Canon persona mode: ${input.canonMode}`,
+        `DM binding: ${input.dmBinding}`,
         `Configured canon persona: ${input.configuredCanonPersona}`,
         `Effective persona: ${input.effectivePersonaDisplayName} (${input.effectivePersonaId})`,
         "",
@@ -262,12 +272,17 @@ export const metaMeepoVoice = {
         `Available: ${input.ttsAvailable ? "yes" : "no"} (${input.ttsProviderName})`,
       ];
 
+      const internalDebug =
+        input.internalDebugLines && input.internalDebugLines.length > 0
+          ? ["", header("Internal Debug"), ...input.internalDebugLines]
+          : [];
+
       const hints =
         input.hints.length > 0
           ? [header("Hints"), bullets(input.hints, "•")]
           : [header("Hints"), "Fix hints: none. I’m almost suspicious."];
 
-      return [...core, "", ...sassyNudge(hints)].join("\n");
+      return [...core, ...internalDebug, "", ...sassyNudge(hints)].join("\n");
     },
   },
 
@@ -436,7 +451,11 @@ export const metaMeepoVoice = {
     },
 
     setExactlyOneOptionError(): string {
-      return "Pick **exactly one** thing to change per call (canon_mode, canon_persona, recap_style, or home_voice). I’m good, but I’m not telepathic, meep!";
+      return "Pick **exactly one** thing to change per call (key+channel, canon_mode, canon_persona, recap_style, home_voice, or dm_user). I’m good, but I’m not telepathic, meep!";
+    },
+
+    keyAndChannelMustBePaired(): string {
+      return "When using `key`, you must also provide `channel` (and vice versa).";
     },
 
     unknownPersona(personaId: string): string {
@@ -461,8 +480,56 @@ export const metaMeepoVoice = {
       return `Home voice set to ${channelRef}. I’ll meet you there when you wake me, meep!`;
     },
 
+    updatedHomeText(channelRef: string): string {
+      return `Home text set to ${channelRef}. I’ll report there when you wake me, meep!`;
+    },
+
+    clearedHomeText(): string {
+      return "Cleared home text channel.";
+    },
+
+    clearedHomeVoice(): string {
+      return "Cleared home voice channel.";
+    },
+
+    updatedDmUser(dmUserRef: string): string {
+      return `Canonical DM identity set to ${dmUserRef}.`;
+    },
+
+    clearedDmUser(): string {
+      return "Cleared canonical DM identity (dm_user_id).";
+    },
+
+    invalidChannelSettingKey(key: string): string {
+      return `Unknown settings key: **${key}**. Use "home_text_channel" or "home_voice_channel".`;
+    },
+
     unknownAction(): string {
       return "Unknown settings action.";
+    },
+  },
+
+  help: {
+    summary(): string {
+      const lines = [
+        header("/meepo Command Help"),
+        "`/meepo wake [session]` — Wake Meepo, run setup checks, and optionally start a canon session.",
+        "`/meepo sleep` — Put Meepo to sleep and end the active session.",
+        "`/meepo talk` — Enable voice replies (requires awake + connected voice + TTS).",
+        "`/meepo hush` — Disable voice replies (listen-only mode).",
+        "`/meepo status` — Show state snapshot (mode, persona, voice, recap, hints).",
+        "`/meepo doctor` — Run deterministic diagnostics and suggested fixes.",
+        "`/meepo sessions list [limit]` — List recent sessions.",
+        "`/meepo sessions view <session>` — View session details and cached artifacts.",
+        "`/meepo sessions recap <session> [style] [force]` — Generate/regenerate a canon recap.",
+        "`/meepo settings show` — Show saved home channel settings.",
+        "`/meepo settings set key:<key> channel:<channel>` — Set `home_text_channel` or `home_voice_channel`.",
+        "`/meepo settings set canon_mode:<meta|diegetic>` — Set canon persona mode.",
+        "`/meepo settings set canon_persona:<id>` — Set explicit canon persona id.",
+        "`/meepo settings set dm_user:<user>` — Bind canonical DM identity.",
+        "`/meepo settings clear <key>` — Clear `home_text_channel`, `home_voice_channel`, or `dm_user_id`.",
+      ];
+      return lines.join("\n");
     },
   },
 

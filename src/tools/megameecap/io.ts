@@ -63,3 +63,15 @@ export function writeMegameecapOutputs(args: {
 export function readBaselineInput(inputPath: string): string {
   return fs.readFileSync(path.resolve(inputPath), "utf-8");
 }
+
+export function writeFileAtomic(filePath: string, content: string): void {
+  const absPath = path.resolve(filePath);
+  const dir = path.dirname(absPath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmpPath = path.join(
+    dir,
+    `.${path.basename(absPath)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+  );
+  fs.writeFileSync(tmpPath, content, "utf-8");
+  fs.renameSync(tmpPath, absPath);
+}

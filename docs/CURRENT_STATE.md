@@ -176,6 +176,10 @@ Recap      Emotion Beats         LLM Response
 
 #### Commands
 - `/meepo wake|sleep|talk|hush|status` — Phase 1A clean Meepo surface
+- `/meepo status` + `/meepo doctor` internal debug/trace view includes Meepo context queue telemetry:
+  - counts: `queued`, `leased`, `failed`
+  - `oldest queued age`
+  - `last completed timestamp`
 - `/meepo settings show|set|clear` — Persisted home channel config (`home_text_channel_id`, `home_voice_channel_id`)
 - `/meepo sessions list|view|recap` — Session hub + canon-gated recap generation under one surface
   - Recap styles: `detailed | balanced | concise`
@@ -202,6 +206,7 @@ Recap      Emotion Beats         LLM Response
 
 #### Tools (CLI)
 - `tools/ingest-media.ts` — Offline media ingestion (extract audio, transcribe, generate session)
+- `src/tools/heartbeat/replay.ts` — Deterministic offline heartbeat/action replay (`--campaign`, `--session <id_or_label>`) with optional worker execution
 - `src/tools/compile-and-export-events.ts` — Bronze → Silver event compilation
 - `src/tools/compile-and-export-events-batch.ts` — Batch compile multiple sessions
 - `src/tools/regenerate-meecap-beats.ts` — Regenerate beats table from existing narratives (no LLM)
@@ -381,6 +386,27 @@ STT_SAVE_AUDIO=false                # Save audio chunks to disk
 AUDIO_FX_ENABLED=false              # Audio effects (pitch, reverb)
 MEEPO_CONFIG_GUILD_ID=<guild_id>    # For multi-guild setup
 ```
+
+### Meepo Context Worker Knobs (Sprint 2)
+
+Worker scheduling + throughput controls:
+
+```env
+MEEPO_ACTION_WORKER_ENABLED=true
+MEEPO_ACTION_WORKER_MAX_PER_TICK=2
+MEEPO_ACTION_WORKER_MAX_RUNTIME_MS=300
+MEEPO_ACTION_WORKER_LEASE_TTL_MS=3000
+MEEPO_ACTION_WORKER_MAX_ATTEMPTS=3
+```
+
+- Backoff policy: failed actions are re-queued with exponential delay (`retry_base_ms * 2^(attempt-1)`) until max attempts; once max is reached they move to `failed`.
+- `MEEPO_CONTEXT_MINI_FIRST`: when enabled, context snapshot loading prefers latest `mini_meecap` block first.
+- Dev inline gate: heartbeat inline action execution is dev-only and controlled by `MEEPO_CONTEXT_INLINE_ACTIONS_DEV`; production path remains enqueue-first with worker execution.
+- Runtime note: current code-level env names are `MEEPO_CONTEXT_WORKER_ENABLED`, `MEEPO_CONTEXT_MAX_ACTIONS_PER_TICK`, `MEEPO_CONTEXT_MAX_TOTAL_RUNTIME_MS`, `MEEPO_CONTEXT_LEASE_TTL_MS`, `MEEPO_CONTEXT_MAX_ATTEMPTS`, and `MEEPO_CONTEXT_RETRY_BASE_MS`.
+- Meepo action artifacts:
+  - `MEEPO_ACTION_LOGGING_ENABLED=true` writes structured `meepo_actions` JSONL + merged `.log` artifacts.
+  - `MEEPO_ACTION_LOGGING_INCLUDE_PROMPTS=false` keeps prompt bodies out of artifact logs by default.
+  - Online logging writes canon session artifacts only; offline replay writes `offline_replay` variants.
 
 ---
 

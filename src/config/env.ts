@@ -189,6 +189,23 @@ export function loadConfig(): Config {
       memoryEnabled: optBool("MEEPO_MEMORY_ENABLED", true),
       goldMemoryEnabled: optBool("GOLD_MEMORY_ENABLED", false),
       labCommandsEnabled: optBool("ENABLE_LAB_COMMANDS", false),
+      contextMiniFirst: optBool("MEEPO_CONTEXT_MINI_FIRST", false),
+      contextInlineActionsDev: optBool("MEEPO_CONTEXT_INLINE_ACTIONS_DEV", process.env.NODE_ENV !== "production"),
+      contextWorkerEnabled: optBool("MEEPO_CONTEXT_WORKER_ENABLED", true),
+    },
+
+    meepoContextActions: {
+      pollMs: Math.max(50, optInt("MEEPO_CONTEXT_ACTIONS_POLL_MS", 500)),
+      maxActionsPerTick: Math.max(1, optInt("MEEPO_CONTEXT_MAX_ACTIONS_PER_TICK", 2)),
+      maxTotalRuntimeMs: Math.max(50, optInt("MEEPO_CONTEXT_MAX_TOTAL_RUNTIME_MS", 300)),
+      leaseTtlMs: Math.max(5_000, optInt("MEEPO_CONTEXT_LEASE_TTL_MS", 30_000)),
+      maxAttempts: Math.max(1, optInt("MEEPO_CONTEXT_MAX_ATTEMPTS", 4)),
+      retryBaseMs: Math.max(100, optInt("MEEPO_CONTEXT_RETRY_BASE_MS", 500)),
+    },
+
+    meepoActionLogging: {
+      enabled: optBool("MEEPO_ACTION_LOGGING_ENABLED", true),
+      includePromptBodies: optBool("MEEPO_ACTION_LOGGING_INCLUDE_PROMPTS", false),
     },
 
     access: {
@@ -272,6 +289,17 @@ export function printConfigSnapshot(cfg: Config): void {
     MEEPO_MEMORY_ENABLED: cfg.features.memoryEnabled,
     GOLD_MEMORY_ENABLED: cfg.features.goldMemoryEnabled,
     ENABLE_LAB_COMMANDS: cfg.features.labCommandsEnabled,
+    MEEPO_CONTEXT_MINI_FIRST: cfg.features.contextMiniFirst,
+    MEEPO_CONTEXT_INLINE_ACTIONS_DEV: cfg.features.contextInlineActionsDev,
+    MEEPO_CONTEXT_WORKER_ENABLED: cfg.features.contextWorkerEnabled,
+    MEEPO_CONTEXT_ACTIONS_POLL_MS: cfg.meepoContextActions.pollMs,
+    MEEPO_CONTEXT_MAX_ACTIONS_PER_TICK: cfg.meepoContextActions.maxActionsPerTick,
+    MEEPO_CONTEXT_MAX_TOTAL_RUNTIME_MS: cfg.meepoContextActions.maxTotalRuntimeMs,
+    MEEPO_CONTEXT_LEASE_TTL_MS: cfg.meepoContextActions.leaseTtlMs,
+    MEEPO_CONTEXT_MAX_ATTEMPTS: cfg.meepoContextActions.maxAttempts,
+    MEEPO_CONTEXT_RETRY_BASE_MS: cfg.meepoContextActions.retryBaseMs,
+    MEEPO_ACTION_LOGGING_ENABLED: cfg.meepoActionLogging.enabled,
+    MEEPO_ACTION_LOGGING_INCLUDE_PROMPTS: cfg.meepoActionLogging.includePromptBodies,
     DEV_USER_IDS: cfg.access.devUserIds.join(","),
     DEV_GUILD_IDS: cfg.access.devGuildIds.join(","),
     LOG_LEVEL: cfg.logging.level,
