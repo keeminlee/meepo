@@ -453,7 +453,7 @@ describe("/meepo sessions recap contract", () => {
     sessionById = { ...baseSession, session_id: "session-cap-1", label: "Arc Cap" };
 
     const { generateSessionRecap } = await import("../sessions/recapEngine.js");
-    let releaseRecap: ((value: any) => void) | null = null;
+    let releaseRecap!: (value: any) => void;
     const blockedRecap = new Promise<any>((resolve) => {
       releaseRecap = resolve;
     });
@@ -514,7 +514,7 @@ describe("/meepo sessions recap contract", () => {
     const payload = secondReply.mock.calls.at(0)?.[0];
     expect(payload?.content).toContain("at capacity");
 
-    releaseRecap?.({
+    releaseRecap({
       text: "# Recap\n\nGenerated recap",
       createdAtMs: Date.now(),
       strategy: "balanced",

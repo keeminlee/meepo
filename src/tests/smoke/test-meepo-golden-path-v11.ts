@@ -97,6 +97,21 @@ vi.mock("../../sessions/sessions.js", () => ({
   }),
   getSessionArtifact: vi.fn((_guildId: string, _sessionId: string, artifactType: string) => {
     if (artifactType === "recap_final") return recapArtifact;
+    if (artifactType === "transcript_export" && activeSession) {
+      return {
+        id: "artifact-transcript-1",
+        session_id: activeSession.session_id,
+        artifact_type: "transcript_export",
+        created_at_ms: Date.now(),
+        source_hash: "tx-hash-123",
+        strategy: null,
+        strategy_version: null,
+        meta_json: "{}",
+        content_text: "",
+        file_path: "mock-transcript.log",
+        size_bytes: 1,
+      };
+    }
     return null;
   }),
   getSessionArtifactMap: vi.fn(() => {

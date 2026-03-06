@@ -11,6 +11,10 @@ vi.mock("../ledger/meepoContextActions.js", () => ({
   enqueueMeepoMindRetrieveIfNeeded: enqueueSpy,
 }));
 
+vi.mock("../ledger/meepoActionLogging.js", () => ({
+  appendMeepoActionLogEvent: vi.fn(),
+}));
+
 vi.mock("../ledger/meepoMindRetrievalArtifacts.js", () => ({
   computeRetrievalQueryHash: (queryText?: string) =>
     createHash("sha256").update((queryText ?? "").trim().toLowerCase(), "utf8").digest("hex"),

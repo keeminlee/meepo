@@ -10,6 +10,10 @@ vi.mock("../ledger/meepoContextActions.js", () => ({
   enqueueMeepoMindRetrieveIfNeeded: enqueueSpy,
 }));
 
+vi.mock("../ledger/meepoActionLogging.js", () => ({
+  appendMeepoActionLogEvent: vi.fn(),
+}));
+
 vi.mock("../ledger/meepoMindRetrievalArtifacts.js", () => ({
   computeRetrievalQueryHash: vi.fn(() => "hash1234abcd"),
   buildRetrievalArtifactPath: vi.fn(() => "retrieval.json"),

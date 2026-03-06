@@ -30,7 +30,7 @@ vi.mock("../config/env.js", () => ({
 }));
 
 vi.mock("../registry/loadRegistry.js", () => ({
-  loadRegistry: vi.fn(() => ({
+  loadRegistryForScope: vi.fn(() => ({
     characters: [
       { canonical_name: "Louis" },
       { canonical_name: "minx" },
