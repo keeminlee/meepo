@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { AttachmentBuilder, GuildMember, InteractionType, SlashCommandBuilder } from "discord.js";
+import { AttachmentBuilder, GuildMember, SlashCommandBuilder } from "discord.js";
 import {
   getGuildCanonPersonaId,
   getGuildCanonPersonaMode,
@@ -1070,10 +1070,6 @@ export async function executeLabAwakenRespond(interaction: any, ctx: CommandCtx,
 }
 
 async function handleAwaken(interaction: any, ctx: CommandCtx): Promise<void> {
-  if (interaction?.type === InteractionType.ApplicationCommand && typeof interaction?.showModal === "function") {
-    throw new Error("Invariant violation: slash command interactions must not render modal UI directly.");
-  }
-
   const guildId = interaction.guildId as string;
   if (ctx?.db && typeof ctx.db.exec === "function") {
     const script = await loadAwakenScript("meepo_awaken");

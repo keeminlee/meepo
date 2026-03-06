@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { InteractionType } from "discord.js";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 const runWakeMock = vi.fn(async (interaction: any) => {
@@ -107,6 +108,7 @@ describe("/meepo awaken ordering", () => {
     }, { db });
 
     const interaction: any = {
+      type: InteractionType.ApplicationCommand,
       guildId: "guild-1",
       channelId: "channel-1",
       guild: {},
