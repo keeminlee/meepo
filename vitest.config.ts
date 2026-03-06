@@ -7,6 +7,7 @@ export default defineConfig({
     include: [
       "src/tests/test-campaign-db-isolation.ts",
       "src/tests/test-guild-mapping-auto-create.ts",
+      "src/tests/test-db-bootstrap-legacy-index-compat.ts",
       "src/tests/test-stopline-no-getdb-runtime.ts",
       "src/tests/test-stopline-active-session-boundary.ts",
       "src/tests/test-stopline-runtime-scope-fallbacks.ts",

@@ -155,4 +155,57 @@ describe("/meepo awaken ordering", () => {
 
     db.close();
   });
+
+  test("resets stale onboarding scene before run to avoid ERR_UNKNOWN", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-awaken-order-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const { meepo } = await import("../commands/meepo.js");
+    const { getDbForCampaign } = await import("../db.js");
+    const { initState, loadState } = await import("../ledger/awakeningStateRepo.js");
+
+    const db = getDbForCampaign("default");
+    initState("guild-1", "meepo_awaken", 1, "deleted_scene", { db });
+
+    const interaction: any = {
+      type: InteractionType.ApplicationCommand,
+      guildId: "guild-1",
+      channelId: "channel-1",
+      guild: {},
+      member: {},
+      memberPermissions: { has: vi.fn(() => true) },
+      user: { id: "dm-user", username: "DM" },
+      deferred: false,
+      replied: false,
+      followUp: vi.fn(async () => undefined),
+      editReply: vi.fn(async () => undefined),
+      showModal: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined),
+      options: {
+        getSubcommandGroup: () => null,
+        getSubcommand: () => "awaken",
+        getString: () => null,
+      },
+    };
+
+    const deferReply = vi.fn(async () => {
+      interaction.deferred = true;
+      return undefined;
+    });
+    interaction.deferReply = deferReply;
+
+    await meepo.execute(interaction, {
+      guildId: "guild-1",
+      campaignSlug: "default",
+      dbPath: "test.sqlite",
+      db,
+    });
+
+    const stateAfter = loadState("guild-1", "meepo_awaken", { db });
+    expect(stateAfter?.current_scene).toBe("ask_dm_name");
+    expect(runWakeMock).toHaveBeenCalled();
+
+    db.close();
+  });
 });

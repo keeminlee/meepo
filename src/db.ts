@@ -68,12 +68,57 @@ function getSchemaSql(): string {
   return schemaSqlCache;
 }
 
+function applySchemaCompat(db: Database.Database, schemaSql: string): void {
+  const indexStatementRegex = /CREATE\s+(?:UNIQUE\s+)?INDEX[\s\S]*?;/gi;
+  const indexStatements = schemaSql.match(indexStatementRegex) ?? [];
+  const schemaWithoutIndexes = schemaSql.replace(indexStatementRegex, "\n");
+
+  // Pass 1: create/upgrade tables without index DDL that may reference columns introduced by migrations.
+  db.exec(schemaWithoutIndexes);
+
+  // Pass 2: apply index DDL opportunistically; skip only legacy missing-column cases.
+  for (const statement of indexStatements) {
+    try {
+      db.exec(statement);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/no such column/i.test(message)) {
+        dbLog.warn("schema_compat_skip_index", {
+          event: "schema_compat_skip_index",
+          reason: message,
+          statement: statement.trim().slice(0, 220),
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+function applySchema(db: Database.Database): void {
+  const schemaSql = getSchemaSql();
+  try {
+    db.exec(schemaSql);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/no such column/i.test(message)) {
+      throw error;
+    }
+
+    dbLog.warn("schema_compat_fallback", {
+      event: "schema_compat_fallback",
+      reason: message,
+    });
+    applySchemaCompat(db, schemaSql);
+  }
+}
+
 function bootstrapDbAtPath(dbPath: string): Database.Database {
   assertTestDbPathSafety(dbPath);
   ensureDirFor(dbPath);
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
-  db.exec(getSchemaSql());
+  applySchema(db);
   runMigrationsWithSummary(db, dbPath);
   return db;
 }

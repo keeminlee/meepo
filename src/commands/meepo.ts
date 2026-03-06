@@ -1094,7 +1094,22 @@ async function handleAwaken(interaction: any, ctx: CommandCtx): Promise<void> {
       scriptId: script.id,
     });
 
-    const refreshedState = loadState(guildId, script.id, { db: ctx.db });
+    let refreshedState = loadState(guildId, script.id, { db: ctx.db });
+    const hasValidScene = refreshedState ? Boolean(script.scenes[refreshedState.current_scene]) : true;
+    const needsStateReset = Boolean(
+      refreshedState
+      && (!hasValidScene || refreshedState.script_version !== script.version)
+    );
+
+    if (needsStateReset) {
+      // Old onboarding rows can reference scenes removed by script updates.
+      // Reset to script start so /meepo awaken recovers instead of bubbling ERR_UNKNOWN.
+      ctx.db
+        .prepare("DELETE FROM guild_onboarding_state WHERE guild_id = ? AND script_id = ?")
+        .run(guildId, script.id);
+      refreshedState = null;
+    }
+
     if (refreshedState?.completed) {
       await interaction.reply({
         content: "Meepo is already awake in this world, meep.",
