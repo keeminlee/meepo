@@ -1,0 +1,7 @@
+{
+  "/_not-found/page": "/_not-found",
+  "/dashboard/page": "/dashboard",
+  "/page": "/",
+  "/sessions/[sessionId]/page": "/sessions/[sessionId]",
+  "/campaigns/[campaignSlug]/page": "/campaigns/[campaignSlug]"
+}
