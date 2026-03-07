@@ -301,6 +301,75 @@ test("regenerateSessionRecap overwrites safely and records regeneration reason",
   expect(loaded?.metaJson).toContain("manual_qc");
 });
 
+test("repeated generateSessionRecap preserves createdAt and overwrites stored views predictably", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-session-recaps-repeat-generate-"));
+  tempDirs.push(tempDir);
+  configureHermeticEnv(tempDir);
+
+  const guildId = "guild-recaps-repeat";
+  const sessionId = "session-recaps-repeat";
+  await seedSessionAndLedger(guildId, sessionId);
+
+  const {
+    generateSessionRecap,
+    getSessionRecap,
+  } = await import("../sessions/sessionRecaps.js");
+
+  const first = await generateSessionRecap(
+    { guildId, sessionId },
+    {
+      generateStyleRecap: async ({ strategy }) => ({
+        text: `first-${strategy}`,
+        createdAtMs: Date.now(),
+        strategy,
+        engine: "megameecap",
+        strategyVersion: "megameecap-final-v1",
+        baseVersion: "megameecap-base-v1",
+        finalVersion: "megameecap-final-v1",
+        sourceTranscriptHash: "hash-first",
+        cacheHit: false,
+        artifactPaths: {
+          recapPath: `${strategy}-first.md`,
+          metaPath: `${strategy}-first.json`,
+        },
+      }),
+    }
+  );
+
+  const second = await generateSessionRecap(
+    { guildId, sessionId },
+    {
+      generateStyleRecap: async ({ strategy }) => ({
+        text: `second-${strategy}`,
+        createdAtMs: Date.now() + 10,
+        strategy,
+        engine: "megameecap",
+        strategyVersion: "megameecap-final-v1",
+        baseVersion: "megameecap-base-v1",
+        finalVersion: "megameecap-final-v1",
+        sourceTranscriptHash: "hash-second",
+        cacheHit: false,
+        artifactPaths: {
+          recapPath: `${strategy}-second.md`,
+          metaPath: `${strategy}-second.json`,
+        },
+      }),
+    }
+  );
+
+  expect(second.createdAtMs).toBe(first.createdAtMs);
+  expect(second.updatedAtMs).toBeGreaterThanOrEqual(first.updatedAtMs);
+  expect(second.views.concise).toBe("second-concise");
+  expect(second.views.balanced).toBe("second-balanced");
+  expect(second.views.detailed).toBe("second-detailed");
+
+  const loaded = getSessionRecap(guildId, sessionId);
+  expect(loaded?.createdAtMs).toBe(first.createdAtMs);
+  expect(loaded?.views.concise).toBe("second-concise");
+  expect(loaded?.views.balanced).toBe("second-balanced");
+  expect(loaded?.views.detailed).toBe("second-detailed");
+});
+
 test("generateSessionRecap maps missing transcript and invalid output to typed recap-domain errors", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-session-recaps-errors-"));
   tempDirs.push(tempDir);
