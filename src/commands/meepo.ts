@@ -1521,7 +1521,7 @@ async function runDoctorChecks(interaction: any, ctx: CommandCtx): Promise<Docto
     checks.push({
       icon: "⚠️",
       label: "No session data yet",
-      action: "Run /meepo awaken then start a session and generate a recap",
+      action: "Run /meepo awaken once, then use /meepo showtime start and generate a recap",
     });
   } else {
     const baseStatus = getBaseStatus(guildId, ctx.campaignSlug, session.session_id, session.label);

@@ -68,6 +68,35 @@ Fixture root:
   - Manual checks pass
   - Known gaps are explicitly documented
 
+## 5.1) Deploy Workflow
+
+- GitHub deployment workflow exists at `.github/deploy.yml`.
+- Expected pipeline behavior:
+  - `verify` runs `npm run ci:verify`
+  - `deploy` runs on `main` after verify succeeds
+- Local command registration remains available via `npm run dev:deploy` and should use REST-only deploy path.
+
+## 5.2) Awakening Logging Note
+
+- Current awaken runtime includes extensive structured diagnostics for interaction lifecycle hardening.
+- During active `/meepo awaken` testing, logs are expected to be chatty; verify key error markers are preserved.
+- If terminal noise obscures signal, confirm noisy markers are at `debug` and stage/error signals remain visible.
+
+## 5.3) Lifecycle Contract Alignment (Run 3)
+
+- Runtime contract terms are used consistently in docs and operator notes:
+  - `Dormant`
+  - `Awakened`
+  - `Ambient` (behavior within awakened/no-session)
+  - `Showtime`
+- Command contract checks:
+  - `/meepo awaken` is one-time initialization and does not start a showtime session
+  - repeat `/meepo awaken` is harmless guidance
+  - `/meepo showtime start` rejects duplicate active-session starts
+  - `/meepo showtime end` succeeds independently from async artifact generation failures
+- Legacy wizard-flow checks:
+  - old awaken component interactions are unreachable in production flow and return migration guidance
+
 ## 6) GitHub Release Draft (v1.0.0)
 
 ### Release Title (Primary)

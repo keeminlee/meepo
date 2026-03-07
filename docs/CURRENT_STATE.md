@@ -18,7 +18,9 @@ npx tsc --noEmit      # Type-check code
 ### Test in Discord
 
 ```
-/meepo awaken                            # Begin awakening ritual + bind home channels
+/meepo awaken                            # One-time init (Dormant -> Awakened + Ambient)
+/meepo showtime start                    # Start canon showtime session (Awakened -> Showtime)
+/meepo showtime end                      # End active showtime session (Showtime -> Awakened Ambient)
 /meepo status                            # Public status + fix hints
 /lab doctor                              # Dev diagnostics + next actions (DEV_USER_IDS only)
 /meepo settings view                     # Show persisted setup/persona/recap defaults
@@ -34,6 +36,12 @@ meepo: hello                             # Auto-latch responds
 ```
 http://localhost:7777/overlay            # Browser Source for speaking indicators
 ```
+
+### Deployment Automation
+
+- GitHub Actions deployment workflow is now tracked at `.github/deploy.yml`.
+- Workflow flow: `verify` job runs `npm run ci:verify`, then `deploy` job runs remote EC2 deploy on `main`.
+- Command manifest deploy remains available locally via `npm run dev:deploy` (REST-only command registration).
 
 ---
 
@@ -91,6 +99,12 @@ Core guarantees:
 - resumable runtime checkpoints
 - engine-owned persistent mutation
 - nonce-validated interaction safety
+
+Awaken observability status (current):
+
+- `/meepo awaken` currently emits high-signal stage logs at `info` (`AWAKEN_STAGE`).
+- Error-path guardrails remain explicit (`AWAKEN_RESPONSE_GUARDRAIL`, `AWAKEN_PROMPT_RESPONSE_GUARDRAIL`).
+- Additional lifecycle markers exist for debugging and can be verbose during active awaken flows.
 
 Capabilities currently supported:
 
@@ -243,8 +257,10 @@ Recap      Emotion Beats         LLM Response
 #### Session Management
 - **Meepo State Persistence:** Active state (`is_active=1`) persists across bot restarts; Meepo auto-restores and rejoins voice
 - **Session Lifecycle:**
-  - **Auto-start:** `/meepo awaken` generates UUID session, auto-grouped text+voice
-  - **Manual start:** `/session new [--label C2E20]` starts a new session (ends active session first)
+  - **Dormant -> Awakened:** `/meepo awaken` performs one-time guild initialization and enables Ambient behavior
+  - **Awakened Ambient -> Showtime:** `/meepo showtime start` starts a canon live session
+  - **Showtime -> Awakened Ambient:** `/meepo showtime end` ends the active showtime session
+  - **Manual session tools:** `/session new [--label C2E20]` remains available for DM/admin workflows
   - **Auto-end:** `/meepo sleep` or inactivity timeout (`MEEPO_AUTO_SLEEP_MS`)
 - **Session Announcements:** `/meepo announce [--dry_run] [--timestamp] [--label] [--message]` posts Discord reminders with auto-incremented labels
 - **Labeling:** Optional user labels (e.g., "C2E06") for reference via `/session label`
@@ -289,7 +305,7 @@ Recap      Emotion Beats         LLM Response
 - **Disk Export:** JSON files for git diffing and Discord review
 
 #### Commands
-- `/meepo awaken|talk|hush|status` — Phase 1A clean Meepo surface
+- `/meepo awaken|showtime start|showtime end|status` — lifecycle contract surface
 - `/meepo status` internal debug/trace view includes Meepo context queue telemetry:
   - counts: `queued`, `leased`, `failed`
   - `oldest queued age`
@@ -410,7 +426,7 @@ latches
 - Text + voice I/O (STT+LLM+TTS loop)
 - Persona system (Meepo, Xoblob)
 - Natural conversation (address-triggered, persistent in bound channel)
-- Session tracking (auto-start on wake, UUID-based grouping, auto-sleep on inactivity)
+- Session tracking (explicit showtime start/end, UUID-based grouping, auto-sleep on inactivity)
 - Ledger-first architecture (omniscient + voice-primary)
 - Transcript + recap commands (DM-only, range filtering)
 - Character registry (YAML, with name discovery tools)

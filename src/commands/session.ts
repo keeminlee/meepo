@@ -74,7 +74,7 @@ function getLedgerSlice(opts: {
   if (range === "since_start") {
     const activeSession = getActiveSession(guildId);
     if (!activeSession) {
-      return { error: "No active session found. Use /meepo awaken to start one." };
+      return { error: "No active session found. Use /meepo showtime start to begin one." };
     }
     entries = getLedgerInRange({ guildId, startMs: activeSession.started_at_ms, endMs: now, primaryOnly });
   } else if (range === "recording") {
@@ -345,7 +345,7 @@ export const session = {
       
       if (!session) {
         await interaction.reply({
-          content: "No active or ingested session found. Use /meepo awaken to start one, or ingest a recording.",
+          content: "No active or ingested session found. Use /meepo showtime start to begin one, or ingest a recording.",
           ephemeral: true,
         });
         return;
@@ -774,7 +774,7 @@ This recap should feel like:
       
       if (!session) {
         await interaction.reply({
-          content: "No active or ingested session found. Use /meepo awaken to start one, or ingest a recording.",
+          content: "No active or ingested session found. Use /meepo showtime start to begin one, or ingest a recording.",
           ephemeral: true,
         });
         return;

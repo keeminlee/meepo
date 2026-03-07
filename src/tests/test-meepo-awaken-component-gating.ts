@@ -103,6 +103,36 @@ describe("run 2 authority enforcement", () => {
     db.close();
   });
 
+  test("legacy continue component interactions are also unreachable in production flow", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-awaken-component-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const { meepo } = await import("../commands/meepo.js");
+    const { getDbForCampaign } = await import("../db.js");
+    const { buildContinueCustomId } = await import("../awakening/prompts/continuePrompt.js");
+
+    const db = getDbForCampaign("default");
+    const interaction = buildLegacyButtonInteraction(
+      buildContinueCustomId({
+        nonce: "nonce-2",
+      })
+    );
+
+    const handled = await meepo.handleComponentInteraction(interaction, {
+      guildId: "guild-1",
+      campaignSlug: "default",
+      dbPath: "test.sqlite",
+      db,
+    });
+
+    expect(handled).toBe(true);
+    expect(interaction.reply).toHaveBeenCalledTimes(1);
+    const content = String(interaction.reply.mock.calls[0]?.[0]?.content ?? "");
+    expect(content).toContain("Awakening wizard prompts are retired");
+    db.close();
+  });
+
   test("showtime end rejects cleanly when no active session exists", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-awaken-component-"));
     tempDirs.push(tempDir);
