@@ -104,6 +104,13 @@ import { AWAKEN_MODAL_INPUT_ID, buildModalTextSubmitModal } from "../awakening/p
 import { AWAKEN_REGISTRY_NAME_INPUT_ID } from "../awakening/prompts/registryBuilderPrompt.js";
 import { AWAKEN_CONTINUE_KEY } from "../awakening/prompts/continuePrompt.js";
 import { log } from "../utils/logger.js";
+import {
+  getInteractionCallDiagnostics,
+  getInteractionSurface,
+  getPayloadDiagnostics,
+  serializeInteractionError,
+  shouldRetryAlternateResponsePath,
+} from "../utils/interactionDiagnostics.js";
 
 type SessionRow = {
   session_id: string;
@@ -143,6 +150,161 @@ const meepoCommandLog = log.withScope("meepo", {
   requireGuildContext: true,
   callsite: "commands/meepo.ts",
 });
+
+type AwakenBoundaryCode =
+  | "ERR_AWAKEN_MODEL"
+  | "ERR_AWAKEN_PROMPT"
+  | "ERR_AWAKEN_MODAL"
+  | "ERR_AWAKEN_STATE"
+  | "ERR_AWAKEN_RESUME"
+  | "ERR_AWAKEN_UNKNOWN";
+
+function inferAwakenBoundaryCode(error: unknown, fallbackCode: AwakenBoundaryCode): AwakenBoundaryCode {
+  if (error instanceof MeepoError && error.code.startsWith("ERR_AWAKEN_")) {
+    return error.code as AwakenBoundaryCode;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (/scene not found|state not found|invalid state|script/i.test(message)) {
+    return "ERR_AWAKEN_STATE";
+  }
+  if (/modal|showModal|Unknown interaction|already been acknowledged/i.test(message)) {
+    return "ERR_AWAKEN_MODAL";
+  }
+  return fallbackCode;
+}
+
+function toAwakenBoundaryError(args: {
+  error: unknown;
+  fallbackCode: AwakenBoundaryCode;
+  metadata?: Record<string, unknown>;
+  traceId?: string;
+  interactionId?: string;
+}): MeepoError {
+  const code = inferAwakenBoundaryCode(args.error, args.fallbackCode);
+  if (args.error instanceof MeepoError && args.error.code === code) {
+    return args.error;
+  }
+  const message = args.error instanceof Error ? args.error.message : String(args.error);
+  return new MeepoError(code, {
+    message,
+    cause: args.error,
+    metadata: args.metadata,
+    trace_id: args.traceId,
+    interaction_id: args.interactionId,
+  });
+}
+
+function getAwakenDiag(error: unknown): Record<string, unknown> | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const value = (error as { awakenDiag?: unknown }).awakenDiag;
+  if (!value || typeof value !== "object") return undefined;
+  return value as Record<string, unknown>;
+}
+
+function withAwakenPromptDiagnosticSuffix(content: string, metadata?: Record<string, unknown>): string {
+  if (process.env.NODE_ENV === "production") return content;
+  const origin = typeof metadata?.origin_branch === "string" ? metadata.origin_branch : undefined;
+  const op = typeof metadata?.selected_op === "string" ? metadata.selected_op : undefined;
+  const helper = typeof metadata?.helper_name === "string" ? metadata.helper_name : undefined;
+  if (!origin && !op && !helper) return content;
+
+  const suffix = ` [origin=${origin ?? "unknown"} op=${op ?? "unknown"} helper=${helper ?? "unknown"}]`;
+  return content.replace("(ERR_AWAKEN_PROMPT)", `(ERR_AWAKEN_PROMPT${suffix})`);
+}
+
+function logAwakenStage(args: {
+  level: "info" | "error";
+  stage: string;
+  label: string;
+  interaction: any;
+  ctx: CommandCtx;
+  script?: { id?: string; version?: number } | null;
+  state?: any;
+  pending?: { key?: string; nonce?: string; kind?: string } | null;
+  awakenedFlag?: number | null;
+  extra?: Record<string, unknown>;
+}): void {
+  const payload = {
+    event_type: "AWAKEN_STAGE",
+    stage: args.stage,
+    interaction_id: args.ctx.interaction_id ?? args.interaction?.id,
+    user_id: args.interaction?.user?.id,
+    campaign_slug: args.ctx.campaignSlug,
+    scene_id: args.state?.current_scene,
+    script_id: args.script?.id,
+    script_version: args.script?.version,
+    onboarding_state_exists: Boolean(args.state),
+    awakened_flag_set: args.awakenedFlag === 1,
+    pending_prompt_key: args.pending?.key,
+    pending_prompt_nonce: args.pending?.nonce,
+    pending_prompt_kind: args.pending?.kind,
+    interaction_surface: getInteractionSurface(args.interaction),
+    ...args.extra,
+  };
+
+  if (args.level === "error") {
+    meepoCommandLog.error(args.label, payload, {
+      guild_id: args.ctx.guildId,
+      campaign_slug: args.ctx.campaignSlug,
+      interaction_id: args.ctx.interaction_id,
+      trace_id: args.ctx.trace_id,
+      session_id: undefined,
+    });
+    return;
+  }
+
+  meepoCommandLog.info(args.label, payload, {
+    guild_id: args.ctx.guildId,
+    campaign_slug: args.ctx.campaignSlug,
+    interaction_id: args.ctx.interaction_id,
+    trace_id: args.ctx.trace_id,
+    session_id: undefined,
+  });
+}
+
+function logAwakenResponseLifecycle(args: {
+  marker: string;
+  interaction: any;
+  ctx?: CommandCtx;
+  operation?: string;
+  helperName?: string;
+  extra?: Record<string, unknown>;
+  level?: "info" | "error";
+  error?: unknown;
+}): void {
+  const payload = {
+    event_type: "AWAKEN_RESPONSE_GUARDRAIL",
+    marker: args.marker,
+    command_name: "meepo",
+    subcommand_name: "awaken",
+    helper_name: args.helperName,
+    operation: args.operation,
+    trace_id: args.ctx?.trace_id,
+    pid: process.pid,
+    error: args.error ? serializeInteractionError(args.error) : undefined,
+    ...getInteractionCallDiagnostics(args.interaction),
+    ...args.extra,
+  };
+
+  if (args.level === "error") {
+    meepoCommandLog.error("Awakening response lifecycle", payload, {
+      guild_id: args.ctx?.guildId ?? args.interaction?.guildId,
+      campaign_slug: args.ctx?.campaignSlug,
+      interaction_id: args.ctx?.interaction_id,
+      trace_id: args.ctx?.trace_id,
+      session_id: undefined,
+    });
+    return;
+  }
+
+  meepoCommandLog.debug("Awakening response lifecycle", payload, {
+    guild_id: args.ctx?.guildId ?? args.interaction?.guildId,
+    campaign_slug: args.ctx?.campaignSlug,
+    interaction_id: args.ctx?.interaction_id,
+    trace_id: args.ctx?.trace_id,
+    session_id: undefined,
+  });
+}
 
 function buildRecapDedupeKey(args: {
   guildId: string;
@@ -276,12 +438,175 @@ function formatAwakenStatus(runResult: AwakenRunResult): string {
   return "Awakening state not found.";
 }
 
-async function replyEphemeral(interaction: any, content: string): Promise<void> {
-  if (interaction.deferred || interaction.replied) {
-    await interaction.followUp({ content, ephemeral: true }).catch(() => {});
-    return;
+async function replyEphemeral(
+  interaction: any,
+  content: string,
+  opts?: { ctx?: CommandCtx; marker?: string; originBranch?: string }
+): Promise<void> {
+  const markerBase = opts?.marker ?? "AWAKEN_REPLY_EPHEMERAL";
+  const payload = { content, ephemeral: true };
+  const payloadShape = getPayloadDiagnostics(payload);
+  const selectedOp = interaction.deferred && typeof interaction.editReply === "function"
+    ? "editReply"
+    : (interaction.deferred || interaction.replied) && typeof interaction.followUp === "function"
+      ? "followUp"
+      : "reply";
+
+  logAwakenResponseLifecycle({
+    marker: `${markerBase}_BEFORE_SELECT_OP`,
+    interaction,
+    ctx: opts?.ctx,
+    operation: "select-response-op",
+    helperName: "replyEphemeral",
+    extra: {
+      origin_branch: opts?.originBranch,
+      selected_op: selectedOp,
+      ...payloadShape,
+    },
+  });
+
+  const attempts: Array<{ op: "editReply" | "followUp" | "reply"; run: () => Promise<unknown> }> = [];
+  if (interaction.deferred && typeof interaction.editReply === "function") {
+    attempts.push({ op: "editReply", run: () => interaction.editReply({ content }) });
   }
-  await interaction.reply({ content, ephemeral: true }).catch(() => {});
+  if ((interaction.deferred || interaction.replied) && typeof interaction.followUp === "function") {
+    attempts.push({ op: "followUp", run: () => interaction.followUp(payload) });
+  }
+  if (typeof interaction.reply === "function") {
+    attempts.push({ op: "reply", run: () => interaction.reply(payload) });
+  }
+  if (typeof interaction.followUp === "function") {
+    attempts.push({ op: "followUp", run: () => interaction.followUp(payload) });
+  }
+  if (typeof interaction.editReply === "function") {
+    attempts.push({ op: "editReply", run: () => interaction.editReply({ content }) });
+  }
+
+  const seen = new Set<string>();
+  const orderedAttempts = attempts.filter((attempt) => {
+    if (seen.has(attempt.op)) return false;
+    seen.add(attempt.op);
+    return true;
+  });
+
+  try {
+    for (let idx = 0; idx < orderedAttempts.length; idx += 1) {
+      const attempt = orderedAttempts[idx]!;
+      logAwakenResponseLifecycle({
+        marker: `${markerBase}_BEFORE_${attempt.op.toUpperCase()}`,
+        interaction,
+        ctx: opts?.ctx,
+        operation: attempt.op,
+        helperName: "replyEphemeral",
+        extra: {
+          origin_branch: opts?.originBranch,
+          selected_op: attempt.op,
+          selected_op_rank: idx + 1,
+          selected_op_total: orderedAttempts.length,
+          ...payloadShape,
+        },
+      });
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_OP_BEFORE",
+        interaction,
+        ctx: opts?.ctx,
+        operation: attempt.op,
+        helperName: "replyEphemeral",
+        extra: {
+          origin_branch: opts?.originBranch,
+          selected_op: attempt.op,
+          selected_op_rank: idx + 1,
+          selected_op_total: orderedAttempts.length,
+          op_marker_source: markerBase,
+          ...payloadShape,
+        },
+      });
+      try {
+        await attempt.run();
+        logAwakenResponseLifecycle({
+          marker: `${markerBase}_AFTER_${attempt.op.toUpperCase()}`,
+          interaction,
+          ctx: opts?.ctx,
+          operation: attempt.op,
+          helperName: "replyEphemeral",
+          extra: {
+            origin_branch: opts?.originBranch,
+            selected_op: attempt.op,
+          },
+        });
+        logAwakenResponseLifecycle({
+          marker: "AWAKEN_OP_AFTER",
+          interaction,
+          ctx: opts?.ctx,
+          operation: attempt.op,
+          helperName: "replyEphemeral",
+          extra: {
+            origin_branch: opts?.originBranch,
+            selected_op: attempt.op,
+            selected_op_rank: idx + 1,
+            selected_op_total: orderedAttempts.length,
+            op_marker_source: markerBase,
+          },
+        });
+        return;
+      } catch (attemptError) {
+        logAwakenResponseLifecycle({
+          marker: `${markerBase}_${attempt.op.toUpperCase()}_ERROR`,
+          interaction,
+          ctx: opts?.ctx,
+          operation: attempt.op,
+          helperName: "replyEphemeral",
+          level: "error",
+          error: attemptError,
+          extra: {
+            origin_branch: opts?.originBranch,
+            selected_op: attempt.op,
+            selected_op_rank: idx + 1,
+            selected_op_total: orderedAttempts.length,
+            should_retry_alt_response_path: shouldRetryAlternateResponsePath(attemptError),
+            ...payloadShape,
+          },
+        });
+        logAwakenResponseLifecycle({
+          marker: "AWAKEN_OP_ERROR",
+          interaction,
+          ctx: opts?.ctx,
+          operation: attempt.op,
+          helperName: "replyEphemeral",
+          level: "error",
+          error: attemptError,
+          extra: {
+            origin_branch: opts?.originBranch,
+            selected_op: attempt.op,
+            selected_op_rank: idx + 1,
+            selected_op_total: orderedAttempts.length,
+            op_marker_source: markerBase,
+            should_retry_alt_response_path: shouldRetryAlternateResponsePath(attemptError),
+            ...payloadShape,
+          },
+        });
+        if (!shouldRetryAlternateResponsePath(attemptError)) {
+          throw attemptError;
+        }
+      }
+    }
+    throw new Error("No valid interaction response method available for replyEphemeral");
+  } catch (error) {
+    logAwakenResponseLifecycle({
+      marker: `${markerBase}_RESPONSE_ERROR`,
+      interaction,
+      ctx: opts?.ctx,
+      operation: "reply-path",
+      helperName: "replyEphemeral",
+      level: "error",
+      error,
+      extra: {
+        origin_branch: opts?.originBranch,
+        selected_op: selectedOp,
+        ...payloadShape,
+      },
+    });
+  }
 }
 
 function hasRoleOnInteractionMember(interaction: any, roleId: string): boolean {
@@ -321,8 +646,6 @@ type PromptTarget = {
   sceneId: string;
   key: string;
   nonce: string;
-  guildId?: string;
-  onboardingId?: string;
   source:
     | "continue"
     | "choice"
@@ -344,11 +667,9 @@ function parsePromptTargetFromInteraction(interaction: any): PromptTarget | null
   if (continueTarget) {
     return {
       kind: "continue",
-      sceneId: continueTarget.sceneId,
+      sceneId: "",
       key: AWAKEN_CONTINUE_KEY,
       nonce: continueTarget.nonce,
-      guildId: continueTarget.guildId,
-      onboardingId: continueTarget.onboardingId,
       source: "continue",
     };
   }
@@ -458,18 +779,26 @@ function parsePromptTargetFromInteraction(interaction: any): PromptTarget | null
 
 function currentPendingMatches(state: any, target: PromptTarget): boolean {
   const pending = getPendingPromptFromState(state);
-  const pendingMatch = Boolean(
+  return Boolean(
     pending
     && pending.kind === target.kind
     && pending.sceneId === target.sceneId
     && pending.key === target.key
     && pending.nonce === target.nonce
   );
+}
 
-  if (!pendingMatch) return false;
-  if (target.kind !== "continue") return true;
+function hydrateContinuePromptTargetFromPending(state: any, target: PromptTarget): PromptTarget {
+  if (target.kind !== "continue") return target;
 
-  return target.guildId === state.guild_id && target.onboardingId === state.script_id;
+  const pending = getPendingPromptFromState(state);
+  if (!pending || pending.kind !== "continue") return target;
+
+  return {
+    ...target,
+    sceneId: pending.sceneId,
+    key: pending.key,
+  };
 }
 
 async function resumeAwakeningAfterPromptSubmit(args: {
@@ -478,26 +807,124 @@ async function resumeAwakeningAfterPromptSubmit(args: {
   script: any;
   guildId: string;
   runtimeChannelId?: string;
+  source?: string;
 }): Promise<void> {
-  const runResult = await AwakenEngine.runWake(args.interaction, {
-    db: args.ctx.db,
-    script: args.script,
-    runtimeChannelId: args.runtimeChannelId,
-  });
+  const beforeState = loadState(args.guildId, args.script.id, { db: args.ctx.db });
+  const beforePending = getPendingPromptFromState(beforeState);
 
-  const refreshedState = loadState(args.guildId, args.script.id, { db: args.ctx.db });
-  const refreshedPending = getPendingPromptFromState(refreshedState);
-  if (refreshedState && refreshedPending) {
-    const rendered = await renderPendingAwakeningPrompt({
-      interaction: args.interaction,
-      script: args.script,
-      state: refreshedState,
-      pending: refreshedPending,
-    });
-    if (rendered) return;
+  if (!args.interaction.deferred && !args.interaction.replied && typeof args.interaction.deferReply === "function") {
+    await args.interaction.deferReply({ ephemeral: true });
   }
 
-  await args.interaction.editReply(formatAwakenStatus(runResult));
+  logAwakenStage({
+    level: "info",
+    stage: "resume_engine_start",
+    label: "Awakening resume engine start",
+    interaction: args.interaction,
+    ctx: args.ctx,
+    script: args.script,
+    state: beforeState,
+    pending: beforePending,
+    extra: {
+      resume_source: args.source ?? "unknown",
+      runtime_channel_id: args.runtimeChannelId,
+    },
+  });
+
+  try {
+    const runResult = await AwakenEngine.runWake(args.interaction, {
+      db: args.ctx.db,
+      script: args.script,
+      runtimeChannelId: args.runtimeChannelId,
+    });
+
+    logAwakenStage({
+      level: "info",
+      stage: "resume_engine_success",
+      label: "Awakening resume engine success",
+      interaction: args.interaction,
+      ctx: args.ctx,
+      script: args.script,
+      state: beforeState,
+      pending: beforePending,
+      extra: {
+        resume_source: args.source ?? "unknown",
+        run_status: runResult.status,
+        run_reason: (runResult as { reason?: string }).reason,
+      },
+    });
+
+    const refreshedState = loadState(args.guildId, args.script.id, { db: args.ctx.db });
+    const refreshedPending = getPendingPromptFromState(refreshedState);
+    if (refreshedState && refreshedPending) {
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_RENDER_PENDING_PROMPT_CALL",
+        interaction: args.interaction,
+        ctx: args.ctx,
+        extra: {
+          origin_branch: args.source === "modal_submit" ? "modal_submit" : "resume",
+          pending_kind: refreshedPending.kind,
+          pending_key: refreshedPending.key,
+          pending_nonce: refreshedPending.nonce,
+        },
+      });
+      const rendered = await renderPendingAwakeningPrompt({
+        interaction: args.interaction,
+        script: args.script,
+        state: refreshedState,
+        pending: refreshedPending,
+        originBranch: args.source === "modal_submit" ? "modal_submit" : "resume",
+      });
+      if (rendered) return;
+    }
+
+    await args.interaction.editReply(formatAwakenStatus(runResult));
+  } catch (error) {
+    const diag = getAwakenDiag(error);
+    const normalized = toAwakenBoundaryError({
+      error,
+      fallbackCode: "ERR_AWAKEN_RESUME",
+      traceId: args.ctx.trace_id,
+      interactionId: args.ctx.interaction_id,
+      metadata: {
+        stage: "resume_engine",
+        script_id: args.script?.id,
+        script_version: args.script?.version,
+        scene_id: beforeState?.current_scene,
+        pending_prompt_key: beforePending?.key,
+        pending_prompt_nonce: beforePending?.nonce,
+        resume_source: args.source ?? "unknown",
+        ...diag,
+      },
+    });
+
+    logAwakenStage({
+      level: "error",
+      stage: "resume_engine_error",
+      label: "Awakening resume engine failed",
+      interaction: args.interaction,
+      ctx: args.ctx,
+      script: args.script,
+      state: beforeState,
+      pending: beforePending,
+      extra: {
+        error_code: normalized.code,
+        failure_class: "internal",
+        error: normalized.message,
+        resume_source: args.source ?? "unknown",
+      },
+    });
+
+    const payload = formatUserFacingError(normalized, {
+      trace_id: args.ctx.trace_id,
+      interaction_id: args.ctx.interaction_id,
+    });
+    await replyEphemeral(args.interaction, payload.content, {
+      ctx: args.ctx,
+      marker: "AWAKEN_RESUME_ERROR",
+      originBranch: args.source === "modal_submit" ? "modal_submit" : "resume",
+    });
+  }
 }
 
 async function runChannelDriftBestEffort(args: {
@@ -558,8 +985,9 @@ async function runChannelDriftBestEffort(args: {
 }
 
 async function handleAwakeningChoicePromptInteraction(interaction: any, ctx: CommandCtx | null): Promise<boolean> {
-  const target = parsePromptTargetFromInteraction(interaction);
-  if (!target) return false;
+  const parsedTarget = parsePromptTargetFromInteraction(interaction);
+  if (!parsedTarget) return false;
+  let target: PromptTarget = parsedTarget;
 
   const guildId = interaction.guildId as string | null;
   if (!guildId || !ctx?.db) {
@@ -567,61 +995,106 @@ async function handleAwakeningChoicePromptInteraction(interaction: any, ctx: Com
     return true;
   }
 
-  const script = await loadAwakenScript("meepo_awaken");
-  const state = loadState(guildId, script.id, { db: ctx.db });
-  if (!state || !currentPendingMatches(state, target)) {
-    await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
-    return true;
-  }
-
-  if (!canAnswerAwakeningPrompt(guildId, interaction, state, target)) {
-    const denial = target.kind === "continue"
-      ? "Only the Dungeon Master may continue the ritual."
-      : "Only the Dungeon Master can answer this awakening prompt.";
-    await replyEphemeral(interaction, denial);
-    return true;
-  }
-
-  if (target.source === "continue") {
-    saveProgress(guildId, script.id, {
-      [AWAKEN_CONTINUE_KEY]: target.sceneId,
-      ...clearPendingPromptPatch(),
-    }, { db: ctx.db });
-
-    await resumeAwakeningAfterPromptSubmit({ interaction, ctx, script, guildId });
-    return true;
-  }
-
-  const scene = script.scenes[target.sceneId];
-  const prompt = scene?.prompt;
-  if (!scene || !prompt || prompt.key !== target.key) {
-    await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
-    return true;
-  }
-
-  if (target.source === "modal_open") {
-    if (prompt.type !== "modal_text") {
+  try {
+    const script = await loadAwakenScript("meepo_awaken");
+    const state = loadState(guildId, script.id, { db: ctx.db });
+    target = state ? hydrateContinuePromptTargetFromPending(state, parsedTarget) : parsedTarget;
+    if (!state || !currentPendingMatches(state, target)) {
       await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
       return true;
     }
-    if (typeof interaction.showModal !== "function") {
-      await replyEphemeral(interaction, "This client cannot open the text prompt. Use /lab awaken respond text:<text>.");
+
+    if (!canAnswerAwakeningPrompt(guildId, interaction, state, target)) {
+      const denial = target.kind === "continue"
+        ? "Only the Dungeon Master may continue the ritual."
+        : "Only the Dungeon Master can answer this awakening prompt.";
+      await replyEphemeral(interaction, denial);
       return true;
     }
-    await interaction.showModal(buildModalTextSubmitModal({
-      prompt,
-      sceneId: target.sceneId,
-      key: target.key,
-      nonce: target.nonce,
-    }));
-    return true;
-  }
 
-  if (!interaction.deferred && !interaction.replied && typeof interaction.deferReply === "function") {
-    await interaction.deferReply({ ephemeral: true });
-  }
+    if (target.source === "continue") {
+      saveProgress(guildId, script.id, {
+        [AWAKEN_CONTINUE_KEY]: target.sceneId,
+        ...clearPendingPromptPatch(),
+      }, { db: ctx.db });
 
-  if (target.source === "choice") {
+      await resumeAwakeningAfterPromptSubmit({ interaction, ctx, script, guildId, source: target.source });
+      return true;
+    }
+
+    const scene = script.scenes[target.sceneId];
+    const prompt = scene?.prompt;
+    if (!scene || !prompt || prompt.key !== target.key) {
+      await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
+      return true;
+    }
+
+    if (target.source === "modal_open") {
+      if (prompt.type !== "modal_text") {
+        await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
+        return true;
+      }
+      if (typeof interaction.showModal !== "function") {
+        await replyEphemeral(interaction, "This client cannot open the text prompt. Use /lab awaken respond text:<text>.");
+        return true;
+      }
+      const modal = buildModalTextSubmitModal({
+        prompt,
+        sceneId: target.sceneId,
+        key: target.key,
+        nonce: target.nonce,
+      });
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_MODAL_OPEN_BEFORE_SHOW_MODAL",
+        interaction,
+        ctx,
+        operation: "showModal",
+        helperName: "handleAwakeningChoicePromptInteraction",
+        extra: {
+          origin_branch: "modal_submit",
+          selected_op: "showModal",
+          prompt_kind: target.kind,
+          prompt_type: prompt.type,
+          ...getPayloadDiagnostics(modal),
+        },
+      });
+      try {
+        await interaction.showModal(modal);
+      } catch (showModalError) {
+        logAwakenResponseLifecycle({
+          marker: "AWAKEN_MODAL_OPEN_SHOW_MODAL_ERROR",
+          interaction,
+          ctx,
+          operation: "showModal",
+          helperName: "handleAwakeningChoicePromptInteraction",
+          level: "error",
+          error: showModalError,
+          extra: {
+            origin_branch: "modal_submit",
+            selected_op: "showModal",
+            prompt_kind: target.kind,
+            prompt_type: prompt.type,
+          },
+        });
+        throw showModalError;
+      }
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_MODAL_OPEN_AFTER_SHOW_MODAL",
+        interaction,
+        ctx,
+        operation: "showModal",
+        helperName: "handleAwakeningChoicePromptInteraction",
+        extra: {
+          origin_branch: "modal_submit",
+          selected_op: "showModal",
+          prompt_kind: target.kind,
+          prompt_type: prompt.type,
+        },
+      });
+      return true;
+    }
+
+    if (target.source === "choice") {
     if (prompt.type !== "choice") {
       await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
       return true;
@@ -635,11 +1108,11 @@ async function handleAwakeningChoicePromptInteraction(interaction: any, ctx: Com
       [prompt.key]: selectedValue,
       ...clearPendingPromptPatch(),
     }, { db: ctx.db });
-    await resumeAwakeningAfterPromptSubmit({ interaction, ctx, script, guildId });
-    return true;
-  }
+      await resumeAwakeningAfterPromptSubmit({ interaction, ctx, script, guildId, source: target.source });
+      return true;
+    }
 
-  if (target.source === "role_select") {
+    if (target.source === "role_select") {
     if (prompt.type !== "role_select") {
       await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
       return true;
@@ -655,11 +1128,11 @@ async function handleAwakeningChoicePromptInteraction(interaction: any, ctx: Com
       [prompt.key]: selectedRoleId,
       ...clearPendingPromptPatch(),
     }, { db: ctx.db });
-    await resumeAwakeningAfterPromptSubmit({ interaction, ctx, script, guildId });
-    return true;
-  }
+      await resumeAwakeningAfterPromptSubmit({ interaction, ctx, script, guildId, source: target.source });
+      return true;
+    }
 
-  if (target.source === "modal_submit") {
+    if (target.source === "modal_submit") {
     if (prompt.type !== "modal_text") {
       await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
       return true;
@@ -676,11 +1149,11 @@ async function handleAwakeningChoicePromptInteraction(interaction: any, ctx: Com
       [prompt.key]: normalized,
       ...clearPendingPromptPatch(),
     }, { db: ctx.db });
-    await resumeAwakeningAfterPromptSubmit({ interaction, ctx, script, guildId });
-    return true;
-  }
+      await resumeAwakeningAfterPromptSubmit({ interaction, ctx, script, guildId, source: target.source });
+      return true;
+    }
 
-  if (target.source === "channel_select") {
+    if (target.source === "channel_select") {
     if (prompt.type !== "channel_select") {
       await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
       return true;
@@ -717,34 +1190,81 @@ async function handleAwakeningChoicePromptInteraction(interaction: any, ctx: Com
       newChannelId: selectedChannelId,
     });
 
-    await resumeAwakeningAfterPromptSubmit({
-      interaction,
-      ctx,
-      script,
-      guildId,
-      runtimeChannelId: selectedChannelId,
-    });
-    return true;
-  }
-
-  if (target.source === "registry_add") {
-    if (prompt.type !== "registry_builder" || typeof interaction.showModal !== "function") {
-      await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
+      await resumeAwakeningAfterPromptSubmit({
+        interaction,
+        ctx,
+        script,
+        guildId,
+        runtimeChannelId: selectedChannelId,
+        source: target.source,
+      });
       return true;
     }
 
-    const modal = buildModalTextSubmitModal({
-      prompt: { ...prompt, label: "Character name" },
-      sceneId: target.sceneId,
-      key: target.key,
-      nonce: target.nonce,
-    });
-    modal.setCustomId(`awaken:rb:name:${encodeURIComponent(target.sceneId)}:${encodeURIComponent(target.key)}:${encodeURIComponent(target.nonce)}`);
-    await interaction.showModal(modal);
-    return true;
-  }
+    if (target.source === "registry_add") {
+      if (prompt.type !== "registry_builder" || typeof interaction.showModal !== "function") {
+        await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
+        return true;
+      }
 
-  if (target.source === "registry_name_modal") {
+      const modal = buildModalTextSubmitModal({
+        prompt: { ...prompt, label: "Character name" },
+        sceneId: target.sceneId,
+        key: target.key,
+        nonce: target.nonce,
+      });
+      modal.setCustomId(`awaken:rb:name:${encodeURIComponent(target.sceneId)}:${encodeURIComponent(target.key)}:${encodeURIComponent(target.nonce)}`);
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_REGISTRY_ADD_BEFORE_SHOW_MODAL",
+        interaction,
+        ctx,
+        operation: "showModal",
+        helperName: "handleAwakeningChoicePromptInteraction",
+        extra: {
+          origin_branch: "modal_submit",
+          selected_op: "showModal",
+          prompt_kind: target.kind,
+          prompt_type: prompt.type,
+          ...getPayloadDiagnostics(modal),
+        },
+      });
+      try {
+        await interaction.showModal(modal);
+      } catch (showModalError) {
+        logAwakenResponseLifecycle({
+          marker: "AWAKEN_REGISTRY_ADD_SHOW_MODAL_ERROR",
+          interaction,
+          ctx,
+          operation: "showModal",
+          helperName: "handleAwakeningChoicePromptInteraction",
+          level: "error",
+          error: showModalError,
+          extra: {
+            origin_branch: "modal_submit",
+            selected_op: "showModal",
+            prompt_kind: target.kind,
+            prompt_type: prompt.type,
+          },
+        });
+        throw showModalError;
+      }
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_REGISTRY_ADD_AFTER_SHOW_MODAL",
+        interaction,
+        ctx,
+        operation: "showModal",
+        helperName: "handleAwakeningChoicePromptInteraction",
+        extra: {
+          origin_branch: "modal_submit",
+          selected_op: "showModal",
+          prompt_kind: target.kind,
+          prompt_type: prompt.type,
+        },
+      });
+      return true;
+    }
+
+    if (target.source === "registry_name_modal") {
     if (prompt.type !== "registry_builder") {
       await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
       return true;
@@ -763,17 +1283,29 @@ async function handleAwakeningChoicePromptInteraction(interaction: any, ctx: Com
     const refreshed = loadState(guildId, script.id, { db: ctx.db });
     const refreshedPending = getPendingPromptFromState(refreshed);
     if (refreshed && refreshedPending) {
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_RENDER_PENDING_PROMPT_CALL",
+        interaction,
+        ctx,
+        extra: {
+          origin_branch: "modal_submit",
+          pending_kind: refreshedPending.kind,
+          pending_key: refreshedPending.key,
+          pending_nonce: refreshedPending.nonce,
+        },
+      });
       await renderPendingAwakeningPrompt({
         interaction,
         script,
         state: refreshed,
         pending: refreshedPending,
+        originBranch: "modal_submit",
       });
     }
-    return true;
-  }
+      return true;
+    }
 
-  if (target.source === "registry_user") {
+    if (target.source === "registry_user") {
     if (prompt.type !== "registry_builder") {
       await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
       return true;
@@ -796,17 +1328,29 @@ async function handleAwakeningChoicePromptInteraction(interaction: any, ctx: Com
     const refreshed = loadState(guildId, script.id, { db: ctx.db });
     const refreshedPending = getPendingPromptFromState(refreshed);
     if (refreshed && refreshedPending) {
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_RENDER_PENDING_PROMPT_CALL",
+        interaction,
+        ctx,
+        extra: {
+          origin_branch: "resume",
+          pending_kind: refreshedPending.kind,
+          pending_key: refreshedPending.key,
+          pending_nonce: refreshedPending.nonce,
+        },
+      });
       await renderPendingAwakeningPrompt({
         interaction,
         script,
         state: refreshed,
         pending: refreshedPending,
+        originBranch: "resume",
       });
     }
-    return true;
-  }
+      return true;
+    }
 
-  if (target.source === "registry_done") {
+    if (target.source === "registry_done") {
     if (prompt.type !== "registry_builder") {
       await replyEphemeral(interaction, "This awakening prompt is stale. Run /meepo awaken again.");
       return true;
@@ -815,11 +1359,68 @@ async function handleAwakeningChoicePromptInteraction(interaction: any, ctx: Com
       ...clearPendingPromptPatch(),
       _rb_pending_character_name: null,
     }, { db: ctx.db });
-    await resumeAwakeningAfterPromptSubmit({ interaction, ctx, script, guildId });
+      await resumeAwakeningAfterPromptSubmit({ interaction, ctx, script, guildId, source: target.source });
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    const fallbackCode: AwakenBoundaryCode = target.source.includes("modal") || target.source === "registry_add"
+      ? "ERR_AWAKEN_MODAL"
+      : "ERR_AWAKEN_PROMPT";
+    const diag = getAwakenDiag(error);
+    const normalized = toAwakenBoundaryError({
+      error,
+      fallbackCode,
+      traceId: ctx.trace_id,
+      interactionId: ctx.interaction_id,
+      metadata: {
+        stage: "prompt_interaction",
+        source: target.source,
+        scene_id: target.sceneId,
+        pending_prompt_key: target.key,
+        pending_prompt_nonce: target.nonce,
+        ...diag,
+      },
+    });
+    let content = formatUserFacingError(normalized, {
+      trace_id: ctx.trace_id,
+      interaction_id: ctx.interaction_id,
+    }).content;
+    if (normalized.code === "ERR_AWAKEN_PROMPT") {
+      content = withAwakenPromptDiagnosticSuffix(content, {
+        origin_branch: diag?.origin_branch ?? target.source,
+        selected_op: diag?.selected_op,
+        helper_name: diag?.helper_name,
+      });
+    }
+
+    logAwakenStage({
+      level: "error",
+      stage: "prompt_interaction_error",
+      label: "Awakening prompt interaction failed",
+      interaction,
+      ctx,
+      pending: {
+        key: target.key,
+        nonce: target.nonce,
+        kind: target.kind,
+      },
+      extra: {
+        source: target.source,
+        error_code: normalized.code,
+        error: normalized.message,
+        raw_error: serializeInteractionError(error),
+      },
+    });
+
+    await replyEphemeral(interaction, content, {
+      ctx,
+      marker: "AWAKEN_PROMPT_INTERACTION_ERROR",
+      originBranch: target.source === "modal_submit" || target.source.includes("modal") ? "modal_submit" : "resume",
+    });
     return true;
   }
-
-  return false;
 }
 
 async function runDoctorChecks(interaction: any, ctx: CommandCtx): Promise<DoctorCheck[]> {
@@ -1048,40 +1649,152 @@ export async function executeLabAwakenRespond(interaction: any, ctx: CommandCtx,
     await interaction.deferReply({ ephemeral: true });
   }
 
-  const result = await AwakenEngine.runWake(interaction, {
-    db: ctx.db,
+  const stateBeforeRun = loadState(guildId, script.id, { db: ctx.db });
+  const pendingBeforeRun = getPendingPromptFromState(stateBeforeRun);
+  logAwakenStage({
+    level: "info",
+    stage: "lab_respond_engine_start",
+    label: "Lab awaken respond engine start",
+    interaction,
+    ctx,
     script,
-    runtimeChannelId: interaction.channelId,
+    state: stateBeforeRun,
+    pending: pendingBeforeRun,
   });
 
-  const refreshedAfterRun = loadState(guildId, script.id, { db: ctx.db });
-  const refreshedPending = getPendingPromptFromState(refreshedAfterRun);
-  if (refreshedAfterRun && refreshedPending) {
-    const rendered = await renderPendingAwakeningPrompt({
-      interaction,
+  try {
+    const result = await AwakenEngine.runWake(interaction, {
+      db: ctx.db,
       script,
-      state: refreshedAfterRun,
-      pending: refreshedPending,
+      runtimeChannelId: interaction.channelId,
     });
-    if (rendered) return;
-  }
 
-  await interaction.editReply(formatAwakenStatus(result));
+    logAwakenStage({
+      level: "info",
+      stage: "lab_respond_engine_success",
+      label: "Lab awaken respond engine success",
+      interaction,
+      ctx,
+      script,
+      state: stateBeforeRun,
+      pending: pendingBeforeRun,
+      extra: {
+        run_status: result.status,
+        run_reason: (result as { reason?: string }).reason,
+      },
+    });
+
+    const refreshedAfterRun = loadState(guildId, script.id, { db: ctx.db });
+    const refreshedPending = getPendingPromptFromState(refreshedAfterRun);
+    if (refreshedAfterRun && refreshedPending) {
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_RENDER_PENDING_PROMPT_CALL",
+        interaction,
+        ctx,
+        extra: {
+          origin_branch: "lab_respond",
+          pending_kind: refreshedPending.kind,
+          pending_key: refreshedPending.key,
+          pending_nonce: refreshedPending.nonce,
+        },
+      });
+      const rendered = await renderPendingAwakeningPrompt({
+        interaction,
+        script,
+        state: refreshedAfterRun,
+        pending: refreshedPending,
+        originBranch: "lab_respond",
+      });
+      if (rendered) return;
+    }
+
+    await interaction.editReply(formatAwakenStatus(result));
+  } catch (error) {
+    const normalized = toAwakenBoundaryError({
+      error,
+      fallbackCode: "ERR_AWAKEN_MODEL",
+      traceId: ctx.trace_id,
+      interactionId: ctx.interaction_id,
+      metadata: {
+        stage: "lab_respond_engine",
+        scene_id: stateBeforeRun?.current_scene,
+        script_id: script.id,
+        script_version: script.version,
+        pending_prompt_key: pendingBeforeRun?.key,
+        pending_prompt_nonce: pendingBeforeRun?.nonce,
+      },
+    });
+
+    logAwakenStage({
+      level: "error",
+      stage: "lab_respond_engine_error",
+      label: "Lab awaken respond engine failed",
+      interaction,
+      ctx,
+      script,
+      state: stateBeforeRun,
+      pending: pendingBeforeRun,
+      extra: {
+        error_code: normalized.code,
+        error: normalized.message,
+      },
+    });
+
+    const payload = formatUserFacingError(normalized, {
+      trace_id: ctx.trace_id,
+      interaction_id: ctx.interaction_id,
+    });
+    await replyEphemeral(interaction, payload.content);
+  }
 }
 
 async function handleAwaken(interaction: any, ctx: CommandCtx): Promise<void> {
   const guildId = interaction.guildId as string;
+  logAwakenStage({
+    level: "info",
+    stage: "awaken_handler_enter",
+    label: "Awakening handler entered",
+    interaction,
+    ctx,
+    extra: {
+      marker: "awaken-hardening-v3-2026-03-06",
+      pid: process.pid,
+      deferred: Boolean(interaction?.deferred),
+      replied: Boolean(interaction?.replied),
+    },
+  });
+  const alreadyAwakeMessage = "Meepo is already awake in this world, meep. Use /lab awaken reset to run onboarding again.";
   if (ctx?.db && typeof ctx.db.exec === "function") {
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_DB_CONTEXT_BRANCH_ENTER",
+      interaction,
+      ctx,
+    });
     const script = await loadAwakenScript("meepo_awaken");
     const responseTextRaw = interaction.options.getString("response")?.trim() ?? "";
     const hasResponseText = responseTextRaw.length > 0;
 
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_DEV_FALLBACK_CHECK",
+      interaction,
+      ctx,
+      extra: {
+        has_response_text: hasResponseText,
+      },
+    });
+
     if (hasResponseText) {
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_DEV_FALLBACK_BRANCH_ENTER",
+        interaction,
+        ctx,
+      });
       if (!isDevUser(interaction.user?.id)) {
-        await interaction.reply({
-          content: "This fallback command has moved to /lab awaken respond.",
-          ephemeral: true,
-        });
+        await replyEphemeral(
+          interaction,
+          "This fallback command has moved to /lab awaken respond.",
+          { ctx, marker: "AWAKEN_DEV_FALLBACK_DENIED" }
+        );
         return;
       }
       await executeLabAwakenRespond(interaction, ctx, responseTextRaw);
@@ -1094,40 +1807,290 @@ async function handleAwaken(interaction: any, ctx: CommandCtx): Promise<void> {
       scriptId: script.id,
     });
 
-    const refreshedState = loadState(guildId, script.id, { db: ctx.db });
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_AWAKENED_STATE_READ_START",
+      interaction,
+      ctx,
+    });
+    const guildConfig = getGuildConfig(guildId);
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_AWAKENED_STATE_READ_RESULT",
+      interaction,
+      ctx,
+      extra: {
+        awakened_flag: guildConfig?.awakened ?? null,
+      },
+    });
+    if (guildConfig?.awakened === 1) {
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_ALREADY_AWAKENED_BRANCH_ENTER",
+        interaction,
+        ctx,
+      });
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_ALREADY_AWAKENED_BEFORE_REPLY",
+        interaction,
+        ctx,
+        operation: "replyEphemeral",
+      });
+      await replyEphemeral(interaction, alreadyAwakeMessage, {
+        ctx,
+        marker: "AWAKEN_ALREADY_AWAKENED",
+        originBranch: "already_awakened",
+      });
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_ALREADY_AWAKENED_AFTER_REPLY",
+        interaction,
+        ctx,
+        operation: "replyEphemeral",
+      });
+      return;
+    }
+
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_ONBOARDING_STATE_READ_START",
+      interaction,
+      ctx,
+      extra: {
+        script_id: script.id,
+      },
+    });
+    let refreshedState = loadState(guildId, script.id, { db: ctx.db });
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_ONBOARDING_STATE_READ_RESULT",
+      interaction,
+      ctx,
+      extra: {
+        state_exists: Boolean(refreshedState),
+        current_scene: refreshedState?.current_scene,
+        completed: Boolean(refreshedState?.completed),
+      },
+    });
+
+    const hasValidScene = refreshedState ? Boolean(script.scenes[refreshedState.current_scene]) : true;
+    const needsStateReset = Boolean(
+      refreshedState
+      && (!hasValidScene || refreshedState.script_version !== script.version)
+    );
+
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_STALE_STATE_CHECK",
+      interaction,
+      ctx,
+      extra: {
+        has_valid_scene: hasValidScene,
+        needs_state_reset: needsStateReset,
+        current_scene: refreshedState?.current_scene,
+        state_script_version: refreshedState?.script_version,
+        script_version: script.version,
+      },
+    });
+
+    if (needsStateReset) {
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_STALE_STATE_RESET_START",
+        interaction,
+        ctx,
+      });
+      // Old onboarding rows can reference scenes removed by script updates.
+      // Reset to script start so /meepo awaken recovers instead of bubbling ERR_UNKNOWN.
+      ctx.db
+        .prepare("DELETE FROM guild_onboarding_state WHERE guild_id = ? AND script_id = ?")
+        .run(guildId, script.id);
+      refreshedState = null;
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_STALE_STATE_RESET_DONE",
+        interaction,
+        ctx,
+      });
+    }
+
     if (refreshedState?.completed) {
-      await interaction.reply({
-        content: "Meepo is already awake in this world, meep.",
-        ephemeral: true,
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_ALREADY_AWAKENED_BRANCH_ENTER",
+        interaction,
+        ctx,
+        extra: {
+          source: "onboarding_state_completed",
+        },
+      });
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_ALREADY_AWAKENED_BEFORE_REPLY",
+        interaction,
+        ctx,
+      });
+      await replyEphemeral(interaction, alreadyAwakeMessage, {
+        ctx,
+        marker: "AWAKEN_ALREADY_AWAKENED",
+        originBranch: "already_awakened",
+      });
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_ALREADY_AWAKENED_AFTER_REPLY",
+        interaction,
+        ctx,
       });
       return;
     }
 
     if (!refreshedState) {
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_ONBOARDING_INIT_START",
+        interaction,
+        ctx,
+        extra: {
+          start_scene: script.start_scene,
+          script_version: script.version,
+        },
+      });
       initState(guildId, script.id, script.version, script.start_scene, { db: ctx.db });
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_ONBOARDING_INIT_DONE",
+        interaction,
+        ctx,
+      });
     }
 
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_ONBOARDING_PROGRESS_SAVE_START",
+      interaction,
+      ctx,
+    });
     saveProgress(guildId, script.id, {
       [AWAKEN_INVOKER_USER_ID_KEY]: interaction.user?.id ?? null,
     }, { db: ctx.db });
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_ONBOARDING_PROGRESS_SAVE_DONE",
+      interaction,
+      ctx,
+    });
 
     if (!interaction.deferred && !interaction.replied && typeof interaction.deferReply === "function") {
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_INITIAL_PROMPT_BEFORE_DEFER",
+        interaction,
+        ctx,
+        operation: "deferReply",
+      });
       await interaction.deferReply({ ephemeral: true });
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_INITIAL_PROMPT_AFTER_DEFER",
+        interaction,
+        ctx,
+        operation: "deferReply",
+      });
     }
 
-    const result = await AwakenEngine.runWake(interaction, {
-      db: ctx.db,
+    const stateBeforeRun = loadState(guildId, script.id, { db: ctx.db });
+    const pendingBeforeRun = getPendingPromptFromState(stateBeforeRun);
+    logAwakenStage({
+      level: "info",
+      stage: "initial_engine_start",
+      label: "Awakening initial engine start",
+      interaction,
+      ctx,
       script,
-      runtimeChannelId: interaction.channelId,
+      state: stateBeforeRun,
+      pending: pendingBeforeRun,
+      awakenedFlag: guildConfig?.awakened ?? null,
+    });
+
+    let result: AwakenRunResult;
+    try {
+      result = await AwakenEngine.runWake(interaction, {
+        db: ctx.db,
+        script,
+        runtimeChannelId: interaction.channelId,
+      });
+    } catch (error) {
+      const normalized = toAwakenBoundaryError({
+        error,
+        fallbackCode: "ERR_AWAKEN_MODEL",
+        traceId: ctx.trace_id,
+        interactionId: ctx.interaction_id,
+        metadata: {
+          stage: "initial_engine",
+          script_id: script.id,
+          script_version: script.version,
+          scene_id: stateBeforeRun?.current_scene,
+          pending_prompt_key: pendingBeforeRun?.key,
+          pending_prompt_nonce: pendingBeforeRun?.nonce,
+          awakened_flag: guildConfig?.awakened ?? null,
+        },
+      });
+      logAwakenStage({
+        level: "error",
+        stage: "initial_engine_error",
+        label: "Awakening initial engine failed",
+        interaction,
+        ctx,
+        script,
+        state: stateBeforeRun,
+        pending: pendingBeforeRun,
+        awakenedFlag: guildConfig?.awakened ?? null,
+        extra: {
+          error_code: normalized.code,
+          error: normalized.message,
+        },
+      });
+      const payload = formatUserFacingError(normalized, {
+        trace_id: ctx.trace_id,
+        interaction_id: ctx.interaction_id,
+      });
+      await replyEphemeral(interaction, payload.content, {
+        ctx,
+        marker: "AWAKEN_INITIAL_ENGINE_ERROR",
+        originBranch: "initial_prompt",
+      });
+      return;
+    }
+
+    logAwakenStage({
+      level: "info",
+      stage: "initial_engine_success",
+      label: "Awakening initial engine success",
+      interaction,
+      ctx,
+      script,
+      state: stateBeforeRun,
+      pending: pendingBeforeRun,
+      awakenedFlag: guildConfig?.awakened ?? null,
+      extra: {
+        run_status: result.status,
+        run_reason: (result as { reason?: string }).reason,
+      },
     });
 
     const editReply = async (content: string): Promise<void> => {
       if (typeof interaction.editReply === "function" && (interaction.deferred || interaction.replied)) {
+        logAwakenResponseLifecycle({
+          marker: "AWAKEN_HANDLE_AWAKEN_BEFORE_EDIT_REPLY",
+          interaction,
+          ctx,
+          operation: "editReply",
+        });
         await interaction.editReply(content);
+        logAwakenResponseLifecycle({
+          marker: "AWAKEN_HANDLE_AWAKEN_AFTER_EDIT_REPLY",
+          interaction,
+          ctx,
+          operation: "editReply",
+        });
         return;
       }
       if (typeof interaction.reply === "function" && !interaction.replied) {
+        logAwakenResponseLifecycle({
+          marker: "AWAKEN_HANDLE_AWAKEN_BEFORE_REPLY",
+          interaction,
+          ctx,
+          operation: "reply",
+        });
         await interaction.reply({ content, ephemeral: true });
+        logAwakenResponseLifecycle({
+          marker: "AWAKEN_HANDLE_AWAKEN_AFTER_REPLY",
+          interaction,
+          ctx,
+          operation: "reply",
+        });
       }
     };
 
@@ -1138,23 +2101,137 @@ async function handleAwaken(interaction: any, ctx: CommandCtx): Promise<void> {
     const stateAfterRun = loadState(guildId, script.id, { db: ctx.db });
     const pendingPrompt = getPendingPromptFromState(stateAfterRun);
     if (stateAfterRun && pendingPrompt) {
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_INITIAL_PROMPT_BRANCH_ENTER",
+        interaction,
+        ctx,
+        extra: {
+          pending_kind: pendingPrompt.kind,
+          pending_key: pendingPrompt.key,
+          pending_scene_id: pendingPrompt.sceneId,
+          pending_nonce: pendingPrompt.nonce,
+        },
+      });
       if (pendingPrompt.kind !== "continue") {
+        logAwakenResponseLifecycle({
+          marker: pendingPrompt.kind === "modal_text"
+            ? "AWAKEN_INITIAL_PROMPT_BEFORE_MODAL"
+            : "AWAKEN_INITIAL_PROMPT_BEFORE_REPLY",
+          interaction,
+          ctx,
+          operation: "edit-or-reply",
+        });
         await editReply(metaMeepoVoice.wake.pausedContinuePrompt());
+        logAwakenResponseLifecycle({
+          marker: pendingPrompt.kind === "modal_text"
+            ? "AWAKEN_INITIAL_PROMPT_AFTER_MODAL"
+            : "AWAKEN_INITIAL_PROMPT_AFTER_REPLY",
+          interaction,
+          ctx,
+          operation: "edit-or-reply",
+        });
         return;
       }
 
-      const rendered = await renderPendingAwakeningPrompt({
+      logAwakenResponseLifecycle({
+        marker: "AWAKEN_INITIAL_PROMPT_BEFORE_REPLY",
         interaction,
-        script,
-        state: stateAfterRun,
-        pending: pendingPrompt,
+        ctx,
+        operation: "renderPendingAwakeningPrompt",
       });
-      if (rendered) {
+      try {
+        logAwakenResponseLifecycle({
+          marker: "AWAKEN_RENDER_PENDING_PROMPT_CALL",
+          interaction,
+          ctx,
+          extra: {
+            origin_branch: "initial_prompt",
+            pending_kind: pendingPrompt.kind,
+            pending_key: pendingPrompt.key,
+            pending_nonce: pendingPrompt.nonce,
+          },
+        });
+        const rendered = await renderPendingAwakeningPrompt({
+          interaction,
+          script,
+          state: stateAfterRun,
+          pending: pendingPrompt,
+          originBranch: "initial_prompt",
+        });
+        logAwakenResponseLifecycle({
+          marker: "AWAKEN_INITIAL_PROMPT_AFTER_REPLY",
+          interaction,
+          ctx,
+          operation: "renderPendingAwakeningPrompt",
+          extra: {
+            rendered,
+            pending_kind: pendingPrompt.kind,
+          },
+        });
+        if (rendered) {
+          return;
+        }
+      } catch (error) {
+        const diag = getAwakenDiag(error);
+        const normalized = toAwakenBoundaryError({
+          error,
+          fallbackCode: "ERR_AWAKEN_PROMPT",
+          traceId: ctx.trace_id,
+          interactionId: ctx.interaction_id,
+          metadata: {
+            stage: "initial_prompt_render",
+            scene_id: pendingPrompt.sceneId,
+            pending_prompt_key: pendingPrompt.key,
+            pending_prompt_kind: pendingPrompt.kind,
+            pending_prompt_nonce: pendingPrompt.nonce,
+            ...diag,
+          },
+        });
+        logAwakenStage({
+          level: "error",
+          stage: "initial_prompt_render_error",
+          label: "Awakening initial prompt render failed",
+          interaction,
+          ctx,
+          script,
+          state: stateAfterRun,
+          pending: pendingPrompt,
+          extra: {
+            error_code: normalized.code,
+            error: normalized.message,
+          },
+        });
+        const payload = formatUserFacingError(normalized, {
+          trace_id: ctx.trace_id,
+          interaction_id: ctx.interaction_id,
+        });
+        const content = withAwakenPromptDiagnosticSuffix(payload.content, {
+          origin_branch: diag?.origin_branch ?? "initial_prompt",
+          selected_op: diag?.selected_op,
+          helper_name: diag?.helper_name,
+        });
+        await replyEphemeral(interaction, content, {
+          ctx,
+          marker: "AWAKEN_INITIAL_PROMPT_RENDER_ERROR",
+          originBranch: "initial_prompt",
+        });
         return;
       }
     }
 
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_INITIAL_PROMPT_BEFORE_REPLY",
+      interaction,
+      ctx,
+      operation: "final-status",
+    });
     await editReply(statusText(result));
+    logAwakenResponseLifecycle({
+      marker: "AWAKEN_INITIAL_PROMPT_AFTER_REPLY",
+      interaction,
+      ctx,
+      operation: "final-status",
+    });
     return;
   }
 

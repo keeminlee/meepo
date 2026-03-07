@@ -85,6 +85,16 @@ if (!acquireLock()) {
   process.exit(1);
 }
 
+bootLog.info("Process startup diagnostics", {
+  event_type: "PROCESS_STARTUP_DIAGNOSTICS",
+  pid: process.pid,
+  ppid: process.ppid,
+  node_version: process.version,
+  meepo_mode: cfg.mode,
+  build_marker: process.env.MEEPO_BUILD_ID ?? process.env.npm_package_version ?? "dev-local",
+  started_at_ms: Date.now(),
+});
+
 // Start overlay server early (independent of Discord)
 await startOverlayServer();
 

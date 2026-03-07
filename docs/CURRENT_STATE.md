@@ -115,8 +115,8 @@ Script/runtime features:
 
 State separation:
 
-- `onboarding_progress.progress_json` for prompt/runtime checkpoint state.
-- `memory` for canonical long-lived identity state.
+- `guild_onboarding_state.progress_json` for prompt/runtime checkpoint state.
+- `meepo_mind_memory` + `guild_config` for canonical long-lived identity state.
 
 Progress examples:
 
@@ -127,8 +127,8 @@ Progress examples:
 
 Memory examples:
 
-- `memory.dm_display_name`
-- `memory.dm_user_id`
+- `meepo_mind_memory(scope_kind='guild', key='dm_display_name')`
+- `guild_config.dm_user_id`
 
 Commit model:
 
@@ -316,7 +316,7 @@ Recap      Emotion Beats         LLM Response
 #### Dev-only Commands
 - `/lab ...` is development-only and normally hidden from production users.
 - Moved from public surface: `/meepo doctor`, `/meepo sleep`, `/goldmem`, `/meeps ...`, `/missions ...`.
-- Awakening fallback/debug: `/lab awaken respond text:<...>`, `/lab awaken status`.
+- Awakening fallback/debug: `/lab awaken respond text:<...>`, `/lab awaken status`, `/lab awaken reset confirm:RESET`.
 - Runtime allowlist gate: `DEV_USER_IDS=<comma-separated-user-ids>`
 - Deploy scope gate: `/lab` is deployed only to guilds listed in `DEV_GUILD_IDS=<comma-separated-guild-ids>`.
 - Product surface: `/meepo` remains global.

@@ -51,15 +51,15 @@ Awakening Script (YAML)
         ├── actions/*
         │
         ▼
- onboarding_progress
-        +
-      memory
+     guild_onboarding_state
+         +
+     meepo_mind_memory / guild_config
 
 ## State Model
 
 ### Progress State
 
-Stored in `onboarding_progress.progress_json`.
+Stored in `guild_onboarding_state.progress_json`.
 
 Used for:
 
@@ -78,14 +78,14 @@ Progress state is scene-driven and resumable.
 
 ### Memory State
 
-Stored in `memory`.
+Stored in `meepo_mind_memory` (for keyed identity text) and `guild_config` (for guild-scoped control flags/bindings).
 
 Used for canonical identity and long-lived values.
 
 Examples:
 
-- `memory.dm_display_name`
-- `memory.dm_user_id`
+- `meepo_mind_memory(scope_kind='guild', key='dm_display_name')`
+- `guild_config.dm_user_id`
 
 ### Example Flow
 
@@ -95,7 +95,14 @@ Examples:
 commit
         │
         ▼
-`memory.dm_display_name`
+`meepo_mind_memory(dm_display_name)`
+
+## Recovery and Reset
+
+- `/meepo awaken` checks `guild_config.awakened` and returns an explicit already-awakened message when setup is complete.
+- `/lab awaken reset confirm:RESET` is the sanctioned recovery path for rerunning onboarding.
+- Reset behavior clears onboarding rows (`guild_onboarding_state`, legacy `onboarding_progress` if present) and clears `guild_config.awakened`.
+- Reset behavior intentionally preserves sessions, transcripts, and artifacts.
 
 ## Commit Model
 

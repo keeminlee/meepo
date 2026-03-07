@@ -9,6 +9,7 @@ import { getDefaultCampaignSlug } from "./defaultCampaign.js";
 import { log } from "../utils/logger.js";
 
 const campaignLog = log.withScope("campaign");
+const seenNoGuildFallbackCampaigns = new Set<string>();
 
 export type GuildConfigRow = {
   guild_id: string;
@@ -27,6 +28,18 @@ export type GuildConfigRow = {
 };
 
 const envHomeVoiceIgnoredGuilds = new Set<string>();
+
+export function getNoGuildFallbackLogLevel(campaignSlug: string): "info" | "debug" {
+  if (!seenNoGuildFallbackCampaigns.has(campaignSlug)) {
+    seenNoGuildFallbackCampaigns.add(campaignSlug);
+    return "info";
+  }
+  return "debug";
+}
+
+export function resetNoGuildFallbackLogDedupeForTests(): void {
+  seenNoGuildFallbackCampaigns.clear();
+}
 
 /**
  * Get guild config if it exists.
@@ -112,7 +125,8 @@ export function resolveCampaignSlug(opts: {
   }
 
   const defaultSlug = getDefaultCampaignSlug();
-  campaignLog.info(`Campaign: ${defaultSlug} (no guild, using default)`);
+  const level = getNoGuildFallbackLogLevel(defaultSlug);
+  campaignLog[level](`Campaign: ${defaultSlug} (no guild, using default)`);
   return defaultSlug;
 }
 

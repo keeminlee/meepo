@@ -6,7 +6,9 @@ export default defineConfig({
     setupFiles: ["src/tests/setup.ts"],
     include: [
       "src/tests/test-campaign-db-isolation.ts",
+      "src/tests/test-campaign-fallback-log-dedupe.ts",
       "src/tests/test-guild-mapping-auto-create.ts",
+      "src/tests/test-db-bootstrap-legacy-index-compat.ts",
       "src/tests/test-stopline-no-getdb-runtime.ts",
       "src/tests/test-stopline-active-session-boundary.ts",
       "src/tests/test-stopline-runtime-scope-fallbacks.ts",
@@ -38,6 +40,7 @@ export default defineConfig({
       "src/tests/test-meepo-wake-response-gating.ts",
       "src/tests/test-meepo-awaken-ordering.ts",
       "src/tests/test-meepo-awaken-component-gating.ts",
+      "src/tests/test-awaken-continue-custom-id.ts",
       "src/tests/test-meepo-settings-awaken-params.ts",
       "src/tests/test-sessions-view-transcript-auto-cache.ts",
       "src/tests/test-meepo-sessions-recap-contract.ts",

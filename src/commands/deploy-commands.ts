@@ -19,6 +19,12 @@ function parseCsvIds(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function getDiscordErrorCode(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const value = (error as { code?: unknown }).code;
+  return typeof value === "number" ? value : null;
+}
+
 export async function main(): Promise<void> {
   const token = getEnv("DISCORD_TOKEN");
   if (!token) {
@@ -43,7 +49,16 @@ export async function main(): Promise<void> {
 
   console.log(`Deploying dev guild commands: count=${devGuildBody.length} to guilds=[${devGuildIds.join(",")}]`);
   for (const guildId of devGuildIds) {
-    await rest.put(Routes.applicationGuildCommands(applicationId, guildId), { body: devGuildBody });
+    try {
+      await rest.put(Routes.applicationGuildCommands(applicationId, guildId), { body: devGuildBody });
+    } catch (error) {
+      const discordCode = getDiscordErrorCode(error);
+      if (discordCode === 50001) {
+        console.warn(`[deploy-commands] guild=${guildId}: bot/app not installed in this guild (Discord code 50001) - skipping`);
+        continue;
+      }
+      throw error;
+    }
   }
 
   console.log("[deploy-commands] deployment complete");

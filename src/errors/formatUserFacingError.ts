@@ -85,6 +85,42 @@ const CODE_FAILURE_CONTRACTS: Partial<Record<MeepoErrorCode, FailureContract>> =
     retryable: false,
     correctiveActionRequired: false,
   },
+  ERR_AWAKEN_MODEL: {
+    message: "⚠️ Awakening failed while starting the scene engine.",
+    failureClass: "internal",
+    retryable: false,
+    correctiveActionRequired: false,
+  },
+  ERR_AWAKEN_PROMPT: {
+    message: "⚠️ Awakening prompt handling failed.",
+    failureClass: "corrective",
+    retryable: false,
+    correctiveActionRequired: true,
+  },
+  ERR_AWAKEN_MODAL: {
+    message: "⚠️ Awakening could not open or submit the modal prompt.",
+    failureClass: "corrective",
+    retryable: false,
+    correctiveActionRequired: true,
+  },
+  ERR_AWAKEN_STATE: {
+    message: "⚠️ Awakening state is invalid or stale.",
+    failureClass: "corrective",
+    retryable: false,
+    correctiveActionRequired: true,
+  },
+  ERR_AWAKEN_RESUME: {
+    message: "⚠️ Awakening resume failed after prompt submission.",
+    failureClass: "corrective",
+    retryable: false,
+    correctiveActionRequired: true,
+  },
+  ERR_AWAKEN_UNKNOWN: {
+    message: "⚠️ Awakening failed unexpectedly.",
+    failureClass: "internal",
+    retryable: false,
+    correctiveActionRequired: false,
+  },
 };
 
 export type UserFacingErrorContext = {

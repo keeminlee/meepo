@@ -33,6 +33,15 @@ import {
   buildRoleSelectPromptPayload,
   parseRoleSelectPromptCustomId,
 } from "./roleSelectPrompt.js";
+import { log } from "../../utils/logger.js";
+import { getObservabilityContext } from "../../observability/context.js";
+import {
+  getInteractionCallDiagnostics,
+  getInteractionSurface,
+  getPayloadDiagnostics,
+  serializeInteractionError,
+  shouldRetryAlternateResponsePath,
+} from "../../utils/interactionDiagnostics.js";
 
 type ReplyLike = {
   replied?: boolean;
@@ -40,41 +49,288 @@ type ReplyLike = {
   reply: (payload: unknown) => Promise<unknown>;
   editReply: (payload: unknown) => Promise<unknown>;
   followUp?: (payload: unknown) => Promise<unknown>;
+  customId?: string;
+  isModalSubmit?: () => boolean;
+  isStringSelectMenu?: () => boolean;
+  isButton?: () => boolean;
+  isChatInputCommand?: () => boolean;
+  guildId?: string;
+  id?: string;
 };
+
+export type PromptRenderOriginBranch =
+  | "already_awakened"
+  | "initial_prompt"
+  | "resume"
+  | "modal_submit"
+  | "lab_respond";
+
+const promptRenderLog = log.withScope("awaken-prompt-render", {
+  requireGuildContext: true,
+  callsite: "awakening/prompts/index.ts",
+});
+
+function logPromptResponseLifecycle(args: {
+  marker: string;
+  interaction: ReplyLike;
+  operation?: string;
+  helperName?: string;
+  level?: "info" | "error";
+  error?: unknown;
+  extra?: Record<string, unknown>;
+}): void {
+  const obs = getObservabilityContext();
+  const payload = {
+    event_type: "AWAKEN_PROMPT_RESPONSE_GUARDRAIL",
+    marker: args.marker,
+    helper_name: args.helperName,
+    command_name: "meepo",
+    subcommand_name: "awaken",
+    operation: args.operation,
+    trace_id: obs.trace_id,
+    pid: process.pid,
+    error: args.error ? serializeInteractionError(args.error) : undefined,
+    ...getInteractionCallDiagnostics(args.interaction),
+    ...args.extra,
+  };
+
+  if (args.level === "error") {
+    promptRenderLog.error("Awakening prompt response failed", payload, {
+      guild_id: (args.interaction as any)?.guildId ?? obs.guild_id,
+      campaign_slug: obs.campaign_slug,
+      interaction_id: obs.interaction_id,
+      trace_id: obs.trace_id,
+      session_id: undefined,
+    });
+    return;
+  }
+
+  promptRenderLog.debug("Awakening prompt response lifecycle", payload, {
+    guild_id: (args.interaction as any)?.guildId ?? obs.guild_id,
+    campaign_slug: obs.campaign_slug,
+    interaction_id: obs.interaction_id,
+    trace_id: obs.trace_id,
+    session_id: undefined,
+  });
+}
+
+async function sendPromptPayload(
+  interaction: ReplyLike,
+  payload: unknown,
+  markerBase: string,
+  originBranch: PromptRenderOriginBranch
+): Promise<void> {
+  const payloadShape = getPayloadDiagnostics(payload);
+  const selectedOp = interaction.deferred && typeof interaction.editReply === "function"
+    ? "editReply"
+    : interaction.replied && typeof interaction.followUp === "function"
+      ? "followUp"
+      : typeof interaction.reply === "function"
+        ? "reply"
+        : typeof interaction.followUp === "function"
+          ? "followUp"
+          : "none";
+
+  logPromptResponseLifecycle({
+    marker: `${markerBase}_BEFORE_SELECT_OP`,
+    interaction,
+    operation: "select-response-op",
+    helperName: "sendPromptPayload",
+    extra: {
+      origin_branch: originBranch,
+      selected_op: selectedOp,
+      ...payloadShape,
+    },
+  });
+
+  const attempts: Array<{ op: "editReply" | "followUp" | "reply"; run: () => Promise<unknown> }> = [];
+  if (interaction.deferred && typeof interaction.editReply === "function") {
+    attempts.push({ op: "editReply", run: () => interaction.editReply(payload) });
+  }
+  if (interaction.replied && typeof interaction.followUp === "function") {
+    attempts.push({ op: "followUp", run: () => interaction.followUp!(payload) });
+  }
+  if (typeof interaction.reply === "function") {
+    attempts.push({ op: "reply", run: () => interaction.reply(payload) });
+  }
+  if (typeof interaction.followUp === "function") {
+    attempts.push({ op: "followUp", run: () => interaction.followUp!(payload) });
+  }
+
+  const tried = new Set<string>();
+  const orderedAttempts = attempts.filter((entry) => {
+    if (tried.has(entry.op)) return false;
+    tried.add(entry.op);
+    return true;
+  });
+
+  try {
+    let lastError: unknown;
+    for (let idx = 0; idx < orderedAttempts.length; idx += 1) {
+      const attempt = orderedAttempts[idx]!;
+      const isFirstAttempt = idx === 0;
+      logPromptResponseLifecycle({
+        marker: `${markerBase}_BEFORE_${attempt.op.toUpperCase()}`,
+        interaction,
+        operation: attempt.op,
+        helperName: "sendPromptPayload",
+        extra: {
+          origin_branch: originBranch,
+          selected_op: attempt.op,
+          selected_op_rank: idx + 1,
+          selected_op_total: orderedAttempts.length,
+          selected_op_first_choice: isFirstAttempt,
+          ...payloadShape,
+        },
+      });
+      logPromptResponseLifecycle({
+        marker: "AWAKEN_OP_BEFORE",
+        interaction,
+        operation: attempt.op,
+        helperName: "sendPromptPayload",
+        extra: {
+          origin_branch: originBranch,
+          selected_op: attempt.op,
+          selected_op_rank: idx + 1,
+          selected_op_total: orderedAttempts.length,
+          op_marker_source: markerBase,
+          ...payloadShape,
+        },
+      });
+      try {
+        await attempt.run();
+        logPromptResponseLifecycle({
+          marker: `${markerBase}_AFTER_${attempt.op.toUpperCase()}`,
+          interaction,
+          operation: attempt.op,
+          helperName: "sendPromptPayload",
+          extra: {
+            origin_branch: originBranch,
+            selected_op: attempt.op,
+          },
+        });
+        logPromptResponseLifecycle({
+          marker: "AWAKEN_OP_AFTER",
+          interaction,
+          operation: attempt.op,
+          helperName: "sendPromptPayload",
+          extra: {
+            origin_branch: originBranch,
+            selected_op: attempt.op,
+            selected_op_rank: idx + 1,
+            selected_op_total: orderedAttempts.length,
+            op_marker_source: markerBase,
+          },
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        logPromptResponseLifecycle({
+          marker: `${markerBase}_${attempt.op.toUpperCase()}_ERROR`,
+          interaction,
+          operation: attempt.op,
+          helperName: "sendPromptPayload",
+          level: "error",
+          error,
+          extra: {
+            origin_branch: originBranch,
+            selected_op: attempt.op,
+            selected_op_rank: idx + 1,
+            selected_op_total: orderedAttempts.length,
+            should_retry_alt_response_path: shouldRetryAlternateResponsePath(error),
+            ...payloadShape,
+          },
+        });
+        logPromptResponseLifecycle({
+          marker: "AWAKEN_OP_ERROR",
+          interaction,
+          operation: attempt.op,
+          helperName: "sendPromptPayload",
+          level: "error",
+          error,
+          extra: {
+            origin_branch: originBranch,
+            selected_op: attempt.op,
+            selected_op_rank: idx + 1,
+            selected_op_total: orderedAttempts.length,
+            op_marker_source: markerBase,
+            should_retry_alt_response_path: shouldRetryAlternateResponsePath(error),
+            ...payloadShape,
+          },
+        });
+        if (!shouldRetryAlternateResponsePath(error)) {
+          throw error;
+        }
+      }
+    }
+
+    if (lastError) throw lastError;
+
+    throw new Error("No valid interaction response method available for prompt payload");
+  } catch (error) {
+    const enhancedError = error instanceof Error ? error : new Error(String(error));
+    (enhancedError as Error & { awakenDiag?: Record<string, unknown> }).awakenDiag = {
+      origin_branch: originBranch,
+      selected_op: selectedOp,
+      helper_name: "sendPromptPayload",
+      marker_base: markerBase,
+      ...payloadShape,
+    };
+    logPromptResponseLifecycle({
+      marker: `${markerBase}_ERROR`,
+      interaction,
+      operation: "response-path",
+      helperName: "sendPromptPayload",
+      level: "error",
+      error: enhancedError,
+      extra: {
+        origin_branch: originBranch,
+        selected_op: selectedOp,
+        ...payloadShape,
+      },
+    });
+    throw enhancedError;
+  }
+}
 
 export async function renderPendingAwakeningPrompt(args: {
   interaction: ReplyLike;
   script: AwakenScript;
   state: GuildOnboardingState;
   pending: PendingPromptState;
+  originBranch: PromptRenderOriginBranch;
 }): Promise<boolean> {
-  const scene = args.script.scenes[args.pending.sceneId];
-  if (!scene) return false;
-  if (args.pending.kind === "continue") {
-    if (args.pending.key !== AWAKEN_CONTINUE_KEY) return false;
+  let rendered = false;
+  logPromptResponseLifecycle({
+    marker: "AWAKEN_RENDER_PENDING_PROMPT_ENTRY",
+    interaction: args.interaction,
+    operation: "renderPendingAwakeningPrompt",
+    helperName: "renderPendingAwakeningPrompt",
+    extra: {
+      origin_branch: args.originBranch,
+      pending_kind: args.pending.kind,
+      pending_key: args.pending.key,
+      pending_nonce: args.pending.nonce,
+      pending_scene_id: args.pending.sceneId,
+    },
+  });
+  try {
+    const scene = args.script.scenes[args.pending.sceneId];
+    if (!scene) return false;
+    if (args.pending.kind === "continue") {
+      if (args.pending.key !== AWAKEN_CONTINUE_KEY) return false;
 
-    const payload = buildContinuePromptPayload({
-      guildId: args.state.guild_id,
-      onboardingId: args.state.script_id,
-      sceneId: args.pending.sceneId,
-      nonce: args.pending.nonce,
-    });
+      const payload = buildContinuePromptPayload({
+        nonce: args.pending.nonce,
+      });
 
-    if (typeof args.interaction.followUp === "function") {
-      await args.interaction.followUp(payload);
+      await sendPromptPayload(args.interaction, payload, `AWAKEN_${args.originBranch.toUpperCase()}_PROMPT_CONTINUE`, args.originBranch);
+      rendered = true;
       return true;
     }
 
-    if (args.interaction.deferred || args.interaction.replied) {
-      await args.interaction.editReply(payload);
-    } else {
-      await args.interaction.reply(payload);
-    }
-    return true;
-  }
-
-  const prompt = scene.prompt;
-  if (!prompt || prompt.key !== args.pending.key) return false;
+    const prompt = scene.prompt;
+    if (!prompt || prompt.key !== args.pending.key) return false;
 
   if (args.pending.kind === "choice") {
     if (prompt.type !== "choice") return false;
@@ -86,12 +342,21 @@ export async function renderPendingAwakeningPrompt(args: {
       nonce: args.pending.nonce,
     });
 
-    if (args.interaction.deferred || args.interaction.replied) {
-      await args.interaction.editReply(payload);
-    } else {
-      await args.interaction.reply(payload);
-    }
-    return true;
+    logPromptResponseLifecycle({
+      marker: "AWAKEN_RENDER_PROMPT_SHAPE",
+      interaction: args.interaction,
+      operation: "prompt-shape",
+      extra: {
+        origin_branch: args.originBranch,
+        prompt_kind: args.pending.kind,
+        prompt_type: prompt.type,
+        pending_key: args.pending.key,
+        pending_nonce: args.pending.nonce,
+      },
+    });
+      await sendPromptPayload(args.interaction, payload, `AWAKEN_${args.originBranch.toUpperCase()}_PROMPT_CHOICE`, args.originBranch);
+      rendered = true;
+      return true;
   }
 
   if (args.pending.kind === "role_select") {
@@ -110,11 +375,20 @@ export async function renderPendingAwakeningPrompt(args: {
       roles: guildRoles,
     });
 
-    if (args.interaction.deferred || args.interaction.replied) {
-      await args.interaction.editReply(payload);
-    } else {
-      await args.interaction.reply(payload);
-    }
+    logPromptResponseLifecycle({
+      marker: "AWAKEN_RENDER_PROMPT_SHAPE",
+      interaction: args.interaction,
+      operation: "prompt-shape",
+      extra: {
+        origin_branch: args.originBranch,
+        prompt_kind: args.pending.kind,
+        prompt_type: prompt.type,
+        pending_key: args.pending.key,
+        pending_nonce: args.pending.nonce,
+      },
+    });
+    await sendPromptPayload(args.interaction, payload, `AWAKEN_${args.originBranch.toUpperCase()}_PROMPT_ROLE_SELECT`, args.originBranch);
+    rendered = true;
     return true;
   }
 
@@ -128,11 +402,21 @@ export async function renderPendingAwakeningPrompt(args: {
       nonce: args.pending.nonce,
     });
 
-    if (args.interaction.deferred || args.interaction.replied) {
-      await args.interaction.editReply(payload);
-    } else {
-      await args.interaction.reply(payload);
-    }
+    logPromptResponseLifecycle({
+      marker: "AWAKEN_RENDER_PROMPT_SHAPE",
+      interaction: args.interaction,
+      operation: "prompt-shape",
+      extra: {
+        origin_branch: args.originBranch,
+        prompt_kind: args.pending.kind,
+        prompt_type: prompt.type,
+        pending_key: args.pending.key,
+        pending_nonce: args.pending.nonce,
+        modal_fields_present: true,
+      },
+    });
+    await sendPromptPayload(args.interaction, payload, `AWAKEN_${args.originBranch.toUpperCase()}_PROMPT_MODAL_TEXT`, args.originBranch);
+    rendered = true;
     return true;
   }
 
@@ -162,11 +446,20 @@ export async function renderPendingAwakeningPrompt(args: {
       pendingValue,
     });
 
-    if (args.interaction.deferred || args.interaction.replied) {
-      await args.interaction.editReply(payload);
-    } else {
-      await args.interaction.reply(payload);
-    }
+    logPromptResponseLifecycle({
+      marker: "AWAKEN_RENDER_PROMPT_SHAPE",
+      interaction: args.interaction,
+      operation: "prompt-shape",
+      extra: {
+        origin_branch: args.originBranch,
+        prompt_kind: args.pending.kind,
+        prompt_type: prompt.type,
+        pending_key: args.pending.key,
+        pending_nonce: args.pending.nonce,
+      },
+    });
+    await sendPromptPayload(args.interaction, payload, `AWAKEN_${args.originBranch.toUpperCase()}_PROMPT_CHANNEL_SELECT`, args.originBranch);
+    rendered = true;
     return true;
   }
 
@@ -197,11 +490,20 @@ export async function renderPendingAwakeningPrompt(args: {
         members,
       });
 
-      if (args.interaction.deferred || args.interaction.replied) {
-        await args.interaction.editReply(payload);
-      } else {
-        await args.interaction.reply(payload);
-      }
+      logPromptResponseLifecycle({
+        marker: "AWAKEN_RENDER_PROMPT_SHAPE",
+        interaction: args.interaction,
+        operation: "prompt-shape",
+        extra: {
+          origin_branch: args.originBranch,
+          prompt_kind: args.pending.kind,
+          prompt_type: prompt.type,
+          pending_key: args.pending.key,
+          pending_nonce: args.pending.nonce,
+        },
+      });
+      await sendPromptPayload(args.interaction, payload, `AWAKEN_${args.originBranch.toUpperCase()}_PROMPT_REGISTRY_USER`, args.originBranch);
+      rendered = true;
       return true;
     }
 
@@ -213,15 +515,52 @@ export async function renderPendingAwakeningPrompt(args: {
       playersCount: players.length,
     });
 
-    if (args.interaction.deferred || args.interaction.replied) {
-      await args.interaction.editReply(payload);
-    } else {
-      await args.interaction.reply(payload);
-    }
+    logPromptResponseLifecycle({
+      marker: "AWAKEN_RENDER_PROMPT_SHAPE",
+      interaction: args.interaction,
+      operation: "prompt-shape",
+      extra: {
+        origin_branch: args.originBranch,
+        prompt_kind: args.pending.kind,
+        prompt_type: prompt.type,
+        pending_key: args.pending.key,
+        pending_nonce: args.pending.nonce,
+      },
+    });
+    await sendPromptPayload(args.interaction, payload, `AWAKEN_${args.originBranch.toUpperCase()}_PROMPT_REGISTRY`, args.originBranch);
+    rendered = true;
     return true;
   }
 
-  return false;
+    return false;
+  } catch (error) {
+    logPromptResponseLifecycle({
+      marker: "AWAKEN_RENDER_PENDING_PROMPT_ERROR",
+      interaction: args.interaction,
+      operation: "renderPendingAwakeningPrompt",
+      helperName: "renderPendingAwakeningPrompt",
+      level: "error",
+      error,
+      extra: {
+        origin_branch: args.originBranch,
+        pending_kind: args.pending.kind,
+        pending_key: args.pending.key,
+        pending_nonce: args.pending.nonce,
+      },
+    });
+    throw error;
+  } finally {
+    logPromptResponseLifecycle({
+      marker: "AWAKEN_RENDER_PENDING_PROMPT_EXIT",
+      interaction: args.interaction,
+      operation: "renderPendingAwakeningPrompt",
+      helperName: "renderPendingAwakeningPrompt",
+      extra: {
+        origin_branch: args.originBranch,
+        rendered,
+      },
+    });
+  }
 }
 
 export {
