@@ -1,0 +1,174 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, expect, test, vi } from "vitest";
+
+const tempDirs: string[] = [];
+
+function configureHermeticEnv(tempDir: string): void {
+  vi.stubEnv("DATA_ROOT", tempDir);
+  vi.stubEnv("DATA_CAMPAIGNS_DIR", "campaigns");
+  vi.stubEnv("DATA_DB_FILENAME", "db.sqlite");
+  vi.stubEnv("DISCORD_TOKEN", "test-token");
+  vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.resetModules();
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup on Windows where sqlite WAL handles can linger briefly.
+      }
+    }
+  }
+});
+
+async function seedSessionAndLedger(guildId: string, sessionId: string): Promise<void> {
+  const { getDbForCampaign } = await import("../db.js");
+  const db = getDbForCampaign("default");
+  const now = Date.now();
+
+  db.prepare(
+    `
+      INSERT INTO sessions (
+        session_id, guild_id, kind, mode_at_start, status, label,
+        created_at_ms, started_at_ms, ended_at_ms, ended_reason,
+        started_by_id, started_by_name, source
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+  ).run(
+    sessionId,
+    guildId,
+    "canon",
+    "canon",
+    "completed",
+    "Recap API Test",
+    now - 10_000,
+    now - 9_000,
+    now - 1_000,
+    "test_end",
+    "user-1",
+    "Tester",
+    "live"
+  );
+
+  db.prepare(
+    `
+      INSERT INTO ledger_entries (
+        id, guild_id, channel_id, message_id, author_id, author_name,
+        timestamp_ms, content, content_norm, session_id, tags,
+        source, narrative_weight
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+  ).run(
+    `${sessionId}-entry-1`,
+    guildId,
+    "channel-1",
+    `${sessionId}-msg-1`,
+    "user-1",
+    "Player",
+    now - 8_000,
+    "We enter the keep.",
+    "We enter the keep.",
+    sessionId,
+    "human",
+    "text",
+    "primary"
+  );
+
+  db.prepare(
+    `
+      INSERT INTO ledger_entries (
+        id, guild_id, channel_id, message_id, author_id, author_name,
+        timestamp_ms, content, content_norm, session_id, tags,
+        source, narrative_weight
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+  ).run(
+    `${sessionId}-entry-2`,
+    guildId,
+    "channel-1",
+    `${sessionId}-msg-2`,
+    "user-2",
+    "DM",
+    now - 7_000,
+    "A hidden door opens.",
+    "A hidden door opens.",
+    sessionId,
+    "human",
+    "voice",
+    "primary"
+  );
+}
+
+test("sessionRecaps upsert/get round-trip preserves canonical three-view shape", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-session-recaps-api-"));
+  tempDirs.push(tempDir);
+  configureHermeticEnv(tempDir);
+
+  const guildId = "guild-recaps-api";
+  const sessionId = "session-recaps-api";
+  await seedSessionAndLedger(guildId, sessionId);
+
+  const { getSessionRecap, upsertSessionRecap } = await import("../sessions/sessionRecaps.js");
+
+  const before = getSessionRecap(guildId, sessionId);
+  expect(before).toBeNull();
+
+  const created = upsertSessionRecap({
+    guildId,
+    sessionId,
+    engine: "megameecap",
+    sourceHash: "hash-abc",
+    strategyVersion: "session-recaps-v2",
+    metaJson: JSON.stringify({ run: "run1" }),
+    views: {
+      concise: "Concise recap",
+      balanced: "Balanced recap",
+      detailed: "Detailed recap",
+    },
+  });
+
+  expect(created.sessionId).toBe(sessionId);
+  expect(created.views.concise).toBe("Concise recap");
+  expect(created.views.balanced).toBe("Balanced recap");
+  expect(created.views.detailed).toBe("Detailed recap");
+
+  const loaded = getSessionRecap(guildId, sessionId);
+  expect(loaded).toBeTruthy();
+  expect(loaded?.views.concise).toBe("Concise recap");
+  expect(loaded?.views.balanced).toBe("Balanced recap");
+  expect(loaded?.views.detailed).toBe("Detailed recap");
+  expect(loaded?.sourceHash).toBe("hash-abc");
+});
+
+test("sessionTranscript returns normalized transcript line contract", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-session-transcript-api-"));
+  tempDirs.push(tempDir);
+  configureHermeticEnv(tempDir);
+
+  const guildId = "guild-transcript-api";
+  const sessionId = "session-transcript-api";
+  await seedSessionAndLedger(guildId, sessionId);
+
+  const { getSessionTranscript } = await import("../sessions/sessionTranscript.js");
+
+  const transcript = getSessionTranscript({
+    guildId,
+    sessionId,
+    view: "raw",
+    primaryOnly: true,
+  });
+
+  expect(transcript.guildId).toBe(guildId);
+  expect(transcript.sessionId).toBe(sessionId);
+  expect(transcript.lineCount).toBeGreaterThan(0);
+  expect(transcript.lines[0]?.lineIndex).toBe(0);
+  expect(typeof transcript.lines[0]?.speaker).toBe("string");
+  expect(typeof transcript.lines[0]?.text).toBe("string");
+});

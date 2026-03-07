@@ -72,6 +72,7 @@ export default defineConfig({
       "src/tests/test-session-status-invariants.ts",
       "src/tests/test-session-boot-reconcile.ts",
       "src/tests/test-session-recovery.ts",
+      "src/tests/test-session-recaps-api.ts",
       "src/tests/test-lab-session-resolve.ts",
       "src/tests/test-lab-autocomplete-routing.ts",
       "src/tests/test-lab-wake.ts",

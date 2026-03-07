@@ -203,6 +203,23 @@ ON session_artifacts(session_id);
 CREATE INDEX IF NOT EXISTS idx_session_artifacts_type
 ON session_artifacts(artifact_type);
 
+-- Session recaps V2: canonical contract row containing all detail views
+CREATE TABLE IF NOT EXISTS session_recaps (
+  session_id TEXT PRIMARY KEY,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  engine TEXT,
+  source_hash TEXT,
+  strategy_version TEXT,
+  meta_json TEXT,
+  concise_text TEXT NOT NULL,
+  balanced_text TEXT NOT NULL,
+  detailed_text TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_recaps_updated
+ON session_recaps(updated_at_ms DESC);
+
 -- Meecaps: structured session summaries (Phase 1+)
 -- Supports two modes:
 --   - V1 JSON: schema-validated scenes/beats (legacy)
