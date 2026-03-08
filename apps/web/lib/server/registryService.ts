@@ -20,9 +20,10 @@ import {
   removePendingAtIndex,
 } from "../../../../src/registry/reviewNamesCore";
 import type { Faction, Location, Misc } from "../../../../src/registry/types";
-import { getRegistryDirForCampaign } from "../../../../src/registry/scaffold";
+import { getRegistryDirForCampaign, getRegistryDirForScope } from "../../../../src/registry/scaffold";
 
 type QueryInput = Record<string, string | string[] | undefined> | undefined;
+type RegistryScope = { campaignSlug: string; guildId: string | null };
 
 type PendingCandidate = {
   key: string;
@@ -87,21 +88,41 @@ function getRegistryBaseDir(): string {
   return path.join(getRepoRoot(), "data", "registry");
 }
 
-function getRegistryDir(campaignSlug: string): string {
-  return getRegistryDirForCampaign(campaignSlug, getRegistryBaseDir());
+function toRegistryScope(campaign: { slug: string; guildId: string | null }): RegistryScope {
+  return {
+    campaignSlug: campaign.slug,
+    guildId: campaign.guildId,
+  };
 }
 
-function getPendingPath(campaignSlug: string): string {
-  return path.join(getRegistryDir(campaignSlug), "decisions.pending.yml");
+function getRegistryDir(scope: RegistryScope): string {
+  if (scope.guildId && scope.guildId.trim().length > 0) {
+    const scoped = getRegistryDirForScope({
+      guildId: scope.guildId,
+      campaignSlug: scope.campaignSlug,
+      baseDir: getRegistryBaseDir(),
+    });
+    const legacy = getRegistryDirForCampaign(scope.campaignSlug, getRegistryBaseDir());
+    if (fs.existsSync(scoped) || !fs.existsSync(legacy)) {
+      return scoped;
+    }
+    return legacy;
+  }
+
+  return getRegistryDirForCampaign(scope.campaignSlug, getRegistryBaseDir());
 }
 
-function getIgnorePath(campaignSlug: string): string {
-  return path.join(getRegistryDir(campaignSlug), "ignore.yml");
+function getPendingPath(scope: RegistryScope): string {
+  return path.join(getRegistryDir(scope), "decisions.pending.yml");
 }
 
-function getCategoryPath(campaignSlug: string, category: RegistryCategoryKey): string {
+function getIgnorePath(scope: RegistryScope): string {
+  return path.join(getRegistryDir(scope), "ignore.yml");
+}
+
+function getCategoryPath(scope: RegistryScope, category: RegistryCategoryKey): string {
   const mapping = CATEGORY_FILE_MAP[category];
-  return path.join(getRegistryDir(campaignSlug), mapping.file);
+  return path.join(getRegistryDir(scope), mapping.file);
 }
 
 function parseYamlFile<T>(filePath: string, fallback: T): T {
@@ -187,8 +208,8 @@ function normalizeAliases(input: string[] | undefined): string[] {
   return out;
 }
 
-function readIgnoreTokens(campaignSlug: string): string[] {
-  const ignoreDoc = parseYamlFile<{ version?: number; tokens?: string[] }>(getIgnorePath(campaignSlug), {
+function readIgnoreTokens(scope: RegistryScope): string[] {
+  const ignoreDoc = parseYamlFile<{ version?: number; tokens?: string[] }>(getIgnorePath(scope), {
     version: 1,
     tokens: [],
   });
@@ -203,12 +224,12 @@ function readIgnoreTokens(campaignSlug: string): string[] {
   return Array.from(normalized.values()).sort((a, b) => a.localeCompare(b));
 }
 
-function loadRegistryIndex(campaignSlug: string): TolerantRegistryIndex {
-  const pcsDoc = readCategoryDoc(campaignSlug, "pcs");
-  const npcsDoc = readCategoryDoc(campaignSlug, "npcs");
-  const locationsDoc = readCategoryDoc(campaignSlug, "locations");
-  const factionsDoc = readCategoryDoc(campaignSlug, "factions");
-  const miscDoc = readCategoryDoc(campaignSlug, "misc");
+function loadRegistryIndex(scope: RegistryScope): TolerantRegistryIndex {
+  const pcsDoc = readCategoryDoc(scope, "pcs");
+  const npcsDoc = readCategoryDoc(scope, "npcs");
+  const locationsDoc = readCategoryDoc(scope, "locations");
+  const factionsDoc = readCategoryDoc(scope, "factions");
+  const miscDoc = readCategoryDoc(scope, "misc");
 
   const pcs = (Array.isArray(pcsDoc.characters) ? pcsDoc.characters : []).map((entry) =>
     mapCharacter(entry, "pcs")
@@ -252,7 +273,7 @@ function loadRegistryIndex(campaignSlug: string): TolerantRegistryIndex {
 
   return {
     categories,
-    ignoreTokens: readIgnoreTokens(campaignSlug),
+    ignoreTokens: readIgnoreTokens(scope),
     byName,
     ids,
   };
@@ -267,21 +288,22 @@ async function getAuthorizedCampaign(campaignSlug: string, searchParams?: QueryI
   return campaign;
 }
 
-async function assertAuthorizedCampaign(campaignSlug: string, searchParams?: QueryInput): Promise<void> {
-  await getAuthorizedCampaign(campaignSlug, searchParams);
+async function assertAuthorizedCampaign(campaignSlug: string, searchParams?: QueryInput) {
+  return getAuthorizedCampaign(campaignSlug, searchParams);
 }
 
-async function assertCampaignEditable(campaignSlug: string, searchParams?: QueryInput): Promise<void> {
+async function assertCampaignEditable(campaignSlug: string, searchParams?: QueryInput) {
   const campaign = await getAuthorizedCampaign(campaignSlug, searchParams);
   if (campaign.editable === false) {
     throw new WebDataError("invalid_request", 422, "This campaign is read-only.");
   }
+  return campaign;
 }
 
-function loadRegistrySnapshot(campaignSlug: string): RegistrySnapshotDto {
-  const index = loadRegistryIndex(campaignSlug);
+function loadRegistrySnapshot(scope: RegistryScope): RegistrySnapshotDto {
+  const index = loadRegistryIndex(scope);
 
-  const pendingDoc = parseYamlFile<PendingDoc>(getPendingPath(campaignSlug), {});
+  const pendingDoc = parseYamlFile<PendingDoc>(getPendingPath(scope), {});
   const pendingItems: RegistryPendingCandidateDto[] = Array.isArray(pendingDoc.pending)
     ? pendingDoc.pending.map((item) => ({
         key: item.key,
@@ -293,7 +315,7 @@ function loadRegistrySnapshot(campaignSlug: string): RegistrySnapshotDto {
     : [];
 
   return {
-    campaignSlug,
+    campaignSlug: scope.campaignSlug,
     categories: index.categories,
     ignoreTokens: index.ignoreTokens,
     pending: {
@@ -306,14 +328,14 @@ function loadRegistrySnapshot(campaignSlug: string): RegistrySnapshotDto {
 }
 
 function assertNameCollision(
-  campaignSlug: string,
+  scope: RegistryScope,
   input: {
     canonicalName: string;
     aliases: string[];
     currentEntityId?: string;
   }
 ): void {
-  const registry = loadRegistryIndex(campaignSlug);
+  const registry = loadRegistryIndex(scope);
 
   const normalizedNames = [input.canonicalName, ...input.aliases]
     .map((value) => normKey(value))
@@ -341,20 +363,20 @@ function getEntityList(doc: RegistryRoot, category: RegistryCategoryKey): Regist
   return doc[mapping.arrayKey] as RegistryRoot["characters"] | Location[] | Faction[] | Misc[];
 }
 
-function readCategoryDoc(campaignSlug: string, category: RegistryCategoryKey): RegistryRoot {
-  return parseYamlFile<RegistryRoot>(getCategoryPath(campaignSlug, category), { version: 1 });
+function readCategoryDoc(scope: RegistryScope, category: RegistryCategoryKey): RegistryRoot {
+  return parseYamlFile<RegistryRoot>(getCategoryPath(scope, category), { version: 1 });
 }
 
-function writeCategoryDoc(campaignSlug: string, category: RegistryCategoryKey, doc: RegistryRoot): void {
-  writeYamlFile(getCategoryPath(campaignSlug, category), doc);
+function writeCategoryDoc(scope: RegistryScope, category: RegistryCategoryKey, doc: RegistryRoot): void {
+  writeYamlFile(getCategoryPath(scope, category), doc);
 }
 
 export async function getWebRegistrySnapshot(args: {
   campaignSlug: string;
   searchParams?: QueryInput;
 }): Promise<RegistrySnapshotDto> {
-  await assertAuthorizedCampaign(args.campaignSlug, args.searchParams);
-  return loadRegistrySnapshot(args.campaignSlug);
+  const campaign = await assertAuthorizedCampaign(args.campaignSlug, args.searchParams);
+  return loadRegistrySnapshot(toRegistryScope(campaign));
 }
 
 export async function createWebRegistryEntry(args: {
@@ -362,7 +384,8 @@ export async function createWebRegistryEntry(args: {
   searchParams?: QueryInput;
   body: RegistryCreateEntryRequest;
 }): Promise<RegistrySnapshotDto> {
-  await assertCampaignEditable(args.campaignSlug, args.searchParams);
+  const campaign = await assertCampaignEditable(args.campaignSlug, args.searchParams);
+  const scope = toRegistryScope(campaign);
 
   const category = args.body.category;
   const canonicalName = args.body.canonicalName?.trim();
@@ -371,12 +394,12 @@ export async function createWebRegistryEntry(args: {
   }
 
   const aliases = normalizeAliases(args.body.aliases);
-  assertNameCollision(args.campaignSlug, { canonicalName, aliases });
+  assertNameCollision(scope, { canonicalName, aliases });
 
-  const doc = readCategoryDoc(args.campaignSlug, category);
+  const doc = readCategoryDoc(scope, category);
   const list = getEntityList(doc, category) as Array<Record<string, unknown>>;
 
-  const registry = loadRegistryIndex(args.campaignSlug);
+  const registry = loadRegistryIndex(scope);
   const existingIds = new Set(registry.ids.values());
 
   if (category === "pcs" || category === "npcs") {
@@ -414,8 +437,8 @@ export async function createWebRegistryEntry(args: {
     });
   }
 
-  writeCategoryDoc(args.campaignSlug, category, doc);
-  return loadRegistrySnapshot(args.campaignSlug);
+  writeCategoryDoc(scope, category, doc);
+  return loadRegistrySnapshot(scope);
 }
 
 export async function updateWebRegistryEntry(args: {
@@ -424,10 +447,11 @@ export async function updateWebRegistryEntry(args: {
   searchParams?: QueryInput;
   body: RegistryUpdateEntryRequest;
 }): Promise<RegistrySnapshotDto> {
-  await assertCampaignEditable(args.campaignSlug, args.searchParams);
+  const campaign = await assertCampaignEditable(args.campaignSlug, args.searchParams);
+  const scope = toRegistryScope(campaign);
 
   const category = args.body.category;
-  const doc = readCategoryDoc(args.campaignSlug, category);
+  const doc = readCategoryDoc(scope, category);
   const list = getEntityList(doc, category) as Array<Record<string, unknown>>;
   const index = list.findIndex((entry) => String(entry.id) === args.entryId);
 
@@ -443,7 +467,7 @@ export async function updateWebRegistryEntry(args: {
 
   const nextAliases = args.body.aliases ? normalizeAliases(args.body.aliases) : normalizeAliases(Array.isArray(current.aliases) ? (current.aliases as string[]) : []);
 
-  assertNameCollision(args.campaignSlug, {
+  assertNameCollision(scope, {
     canonicalName: nextCanonicalName,
     aliases: nextAliases,
     currentEntityId: args.entryId,
@@ -467,8 +491,8 @@ export async function updateWebRegistryEntry(args: {
   }
 
   list[index] = updated;
-  writeCategoryDoc(args.campaignSlug, category, doc);
-  return loadRegistrySnapshot(args.campaignSlug);
+  writeCategoryDoc(scope, category, doc);
+  return loadRegistrySnapshot(scope);
 }
 
 export async function applyWebRegistryPendingAction(args: {
@@ -476,9 +500,10 @@ export async function applyWebRegistryPendingAction(args: {
   searchParams?: QueryInput;
   body: RegistryPendingActionRequest;
 }): Promise<RegistrySnapshotDto> {
-  await assertCampaignEditable(args.campaignSlug, args.searchParams);
+  const campaign = await assertCampaignEditable(args.campaignSlug, args.searchParams);
+  const scope = toRegistryScope(campaign);
 
-  const pendingPath = getPendingPath(args.campaignSlug);
+  const pendingPath = getPendingPath(scope);
   const pendingDoc = parseYamlFile<PendingDoc>(pendingPath, { version: 1, pending: [] });
   const pending = Array.isArray(pendingDoc.pending) ? [...pendingDoc.pending] : [];
   const index = pending.findIndex((item) => item.key === args.body.key);
@@ -492,11 +517,11 @@ export async function applyWebRegistryPendingAction(args: {
   if (args.body.action === "delete") {
     pendingDoc.pending = removePendingAtIndex(pending, index);
     writeYamlFile(pendingPath, pendingDoc);
-    return loadRegistrySnapshot(args.campaignSlug);
+    return loadRegistrySnapshot(scope);
   }
 
   if (args.body.action === "reject") {
-    const ignorePath = getIgnorePath(args.campaignSlug);
+    const ignorePath = getIgnorePath(scope);
     const ignoreDoc = parseYamlFile<{ version?: number; tokens?: string[] }>(ignorePath, { version: 1, tokens: [] });
     const currentTokens = Array.isArray(ignoreDoc.tokens) ? ignoreDoc.tokens : [];
     const nextTokens = addIgnoreToken(currentTokens, candidate.key);
@@ -508,14 +533,14 @@ export async function applyWebRegistryPendingAction(args: {
 
     pendingDoc.pending = removePendingAtIndex(pending, index);
     writeYamlFile(pendingPath, pendingDoc);
-    return loadRegistrySnapshot(args.campaignSlug);
+    return loadRegistrySnapshot(scope);
   }
 
   const category = args.body.category;
   const canonicalName = args.body.canonicalName?.trim() || candidate.display;
-  const doc = readCategoryDoc(args.campaignSlug, category);
+  const doc = readCategoryDoc(scope, category);
   const list = getEntityList(doc, category) as Array<Record<string, unknown>>;
-  const registry = loadRegistryIndex(args.campaignSlug);
+  const registry = loadRegistryIndex(scope);
 
   const canonicalKey = normKey(canonicalName);
   const existingByCanonical = registry.byName.get(canonicalKey);
@@ -571,8 +596,8 @@ export async function applyWebRegistryPendingAction(args: {
     });
   }
 
-  writeCategoryDoc(args.campaignSlug, category, doc);
+  writeCategoryDoc(scope, category, doc);
   pendingDoc.pending = removePendingAtIndex(pending, index);
   writeYamlFile(pendingPath, pendingDoc);
-  return loadRegistrySnapshot(args.campaignSlug);
+  return loadRegistrySnapshot(scope);
 }

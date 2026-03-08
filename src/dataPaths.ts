@@ -11,6 +11,16 @@ const DEFAULT_CAMPAIGN_SLUG = "default";
 const warnedLegacyKinds = new Set<string>();
 let legacyFallbacksThisBoot = 0;
 
+function sanitizeCampaignScopeToken(input?: string | null, fallback = "none"): string {
+  const normalized = (input ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+}
+
 function sanitizeCampaignSlug(input?: string | null): string {
   const normalized = (input ?? DEFAULT_CAMPAIGN_SLUG)
     .trim()
@@ -68,35 +78,66 @@ export function getDataRoot(): string {
   return path.resolve(cfg.data.root);
 }
 
-export function resolveCampaignDataRoot(campaignSlug: string): string {
+export function buildCampaignScopeDirName(args: {
+  guildId: string;
+  campaignSlug: string;
+}): string {
+  const guildToken = sanitizeCampaignScopeToken(args.guildId, "none");
+  const campaignToken = sanitizeCampaignScopeToken(args.campaignSlug, DEFAULT_CAMPAIGN_SLUG);
+  return `g_${guildToken}__c_${campaignToken}`;
+}
+
+function resolveLegacyCampaignDataRoot(campaignSlug: string): string {
   const slug = sanitizeCampaignSlug(campaignSlug);
   return path.join(getDataRoot(), cfg.data.campaignsDir, slug);
 }
 
-export function resolveCampaignDbPath(campaignSlug: string): string {
-  return path.join(resolveCampaignDataRoot(campaignSlug), cfg.db.filename);
+export function resolveCampaignDataRoot(campaignSlug: string, guildId?: string | null): string {
+  const slug = sanitizeCampaignSlug(campaignSlug);
+  const normalizedGuildId = guildId?.trim();
+
+  if (!normalizedGuildId) {
+    return resolveLegacyCampaignDataRoot(slug);
+  }
+
+  return path.join(
+    getDataRoot(),
+    cfg.data.campaignsDir,
+    buildCampaignScopeDirName({ guildId: normalizedGuildId, campaignSlug: slug })
+  );
 }
 
-export function resolveCampaignRunsDir(campaignSlug: string, opts: ResolveOptions = {}): string {
-  const canonical = path.join(resolveCampaignDataRoot(campaignSlug), "runs");
+export function resolveCampaignDbPath(campaignSlug: string, guildId?: string | null): string {
+  const canonical = path.join(resolveCampaignDataRoot(campaignSlug, guildId), cfg.db.filename);
+  const legacy = path.join(resolveLegacyCampaignDataRoot(campaignSlug), cfg.db.filename);
+  return resolveWithLegacyReadFallback("campaign_db", canonical, legacy, { forWrite: false, ensureExists: false });
+}
+
+export function resolveCampaignRunsDir(campaignSlug: string, opts: ResolveOptions = {}, guildId?: string | null): string {
+  const canonical = path.join(resolveCampaignDataRoot(campaignSlug, guildId), "runs");
   const legacy = path.resolve("runs");
   return resolveWithLegacyReadFallback("runs", canonical, legacy, opts);
 }
 
-export function resolveCampaignTranscriptsDir(campaignSlug: string, opts: ResolveOptions = {}): string {
-  const canonical = path.join(resolveCampaignDataRoot(campaignSlug), "transcripts");
+export function resolveCampaignTranscriptsDir(campaignSlug: string, opts: ResolveOptions = {}, guildId?: string | null): string {
+  const canonical = path.join(resolveCampaignDataRoot(campaignSlug, guildId), "transcripts");
   const legacy = path.join(getDataRoot(), "transcripts");
   return resolveWithLegacyReadFallback("transcripts", canonical, legacy, opts);
 }
 
-export function resolveCampaignExportsDir(campaignSlug: string, opts: ResolveOptions = {}): string {
-  const canonical = path.join(resolveCampaignDataRoot(campaignSlug), "exports");
+export function resolveCampaignExportsDir(campaignSlug: string, opts: ResolveOptions = {}, guildId?: string | null): string {
+  const canonical = path.join(resolveCampaignDataRoot(campaignSlug, guildId), "exports");
   const legacy = path.join(getDataRoot(), "exports");
   return resolveWithLegacyReadFallback("exports", canonical, legacy, opts);
 }
 
-export function resolveCampaignExportSubdir(campaignSlug: string, subdir: "events" | "meecaps" | "gold" | "transcripts", opts: ResolveOptions = {}): string {
-  const canonical = path.join(resolveCampaignExportsDir(campaignSlug, opts), subdir);
+export function resolveCampaignExportSubdir(
+  campaignSlug: string,
+  subdir: "events" | "meecaps" | "gold" | "transcripts",
+  opts: ResolveOptions = {},
+  guildId?: string | null,
+): string {
+  const canonical = path.join(resolveCampaignExportsDir(campaignSlug, opts, guildId), subdir);
   const legacy = path.join(getDataRoot(), subdir);
   return resolveWithLegacyReadFallback(`exports/${subdir}`, canonical, legacy, opts);
 }
@@ -104,9 +145,10 @@ export function resolveCampaignExportSubdir(campaignSlug: string, subdir: "event
 export function resolveCampaignTranscriptExportsDir(
   campaignSlug: string,
   lane: "online" | "offline_replay" = "online",
-  opts: ResolveOptions = {}
+  opts: ResolveOptions = {},
+  guildId?: string | null,
 ): string {
-  const transcriptsRoot = resolveCampaignExportSubdir(campaignSlug, "transcripts", opts);
+  const transcriptsRoot = resolveCampaignExportSubdir(campaignSlug, "transcripts", opts, guildId);
   const canonical = path.join(transcriptsRoot, lane);
   return ensureDirIfRequested(canonical, opts.ensureExists ?? opts.forWrite ?? false);
 }
@@ -183,7 +225,7 @@ export function resolveSessionMegameecapPaths(args: {
     : resolveCampaignExportSubdir(args.campaignSlug, "meecaps", {
         forWrite: true,
         ensureExists: true,
-      });
+      }, args.guildId);
   const stem = buildSessionArtifactStem({
     guildId: args.guildId,
     campaignSlug: args.campaignSlug,
@@ -218,12 +260,12 @@ export function resolveSessionMegameecapPaths(args: {
   };
 }
 
-export function resolveCampaignCacheDir(campaignSlug: string, opts: ResolveOptions = {}): string {
-  const canonical = path.join(resolveCampaignDataRoot(campaignSlug), "cache");
+export function resolveCampaignCacheDir(campaignSlug: string, opts: ResolveOptions = {}, guildId?: string | null): string {
+  const canonical = path.join(resolveCampaignDataRoot(campaignSlug, guildId), "cache");
   const legacy = path.join(getDataRoot(), "cache");
   return resolveWithLegacyReadFallback("cache", canonical, legacy, opts);
 }
 
-export function resolveCampaignPidPath(campaignSlug: string): string {
-  return path.join(resolveCampaignCacheDir(campaignSlug, { forWrite: true, ensureExists: true }), "bot.pid");
+export function resolveCampaignPidPath(campaignSlug: string, guildId?: string | null): string {
+  return path.join(resolveCampaignCacheDir(campaignSlug, { forWrite: true, ensureExists: true }, guildId), "bot.pid");
 }

@@ -4,7 +4,7 @@ import yaml from "yaml";
 import type { CommitSpec } from "../../scripts/awakening/_schema.js";
 import type { CommitContext } from "./commitActionRegistry.js";
 import { requireStringField } from "./commitUtils.js";
-import { getRegistryDirForCampaign } from "../../registry/scaffold.js";
+import { getRegistryDirForScope } from "../../registry/scaffold.js";
 import { isAwakeningSetupWritable } from "../isSetupPhase.js";
 import { buildPcRegistryEntry } from "../../registry/runtime/buildPcRegistryEntry.js";
 import type { RawRegistryYaml, RawCharacter } from "../../registry/types.js";
@@ -70,7 +70,10 @@ export async function handleAppendRegistryYamlCommit(ctx: CommitContext, commit:
   const entriesFromKey = requireStringField(commit, "entries_from");
   const players = ensureArrayInput(ctx.inputs[entriesFromKey], entriesFromKey);
 
-  const registryDir = getRegistryDirForCampaign(ctx.campaignSlug);
+  const registryDir = getRegistryDirForScope({
+    guildId: ctx.guildId,
+    campaignSlug: ctx.campaignSlug,
+  });
   fs.mkdirSync(registryDir, { recursive: true });
   const pcsPath = path.join(registryDir, "pcs.yml");
 

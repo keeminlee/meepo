@@ -11,6 +11,14 @@ export type ArchiveSessionRow = {
   source: string | null;
 };
 
+export type GuildCampaignRecord = {
+  guild_id: string;
+  campaign_slug: string;
+  campaign_name: string;
+  created_at_ms: number;
+  created_by_user_id: string | null;
+};
+
 export type ArchiveTranscriptLine = {
   lineIndex: number;
   speaker: string;
@@ -50,6 +58,22 @@ const DEFAULT_DB_FILENAME = "db.sqlite";
 const DEFAULT_DATA_ROOT = "data";
 
 const readDbCache = new Map<string, Database.Database | null>();
+
+function sanitizeScopeToken(value: string, fallback: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+}
+
+function buildCampaignScopeDirName(args: { guildId: string; campaignSlug: string }): string {
+  const guildToken = sanitizeScopeToken(args.guildId, "none");
+  const slugToken = sanitizeScopeToken(args.campaignSlug, "default");
+  return `g_${guildToken}__c_${slugToken}`;
+}
 
 function resolveDataRoot(): string {
   const explicitRoot = process.env.DATA_ROOT?.trim();
@@ -148,30 +172,86 @@ function openReadOnlyDb(dbPath: string): Database.Database | null {
   }
 }
 
-function resolveCampaignDbPath(campaignSlug: string): string | null {
-  const campaignDir = path.join(resolveDataRoot(), resolveCampaignsDir(), campaignSlug);
-  if (!fs.existsSync(campaignDir)) {
-    return null;
-  }
+function resolveCampaignDbPath(args: { campaignSlug: string; guildId?: string | null }): string | null {
+  const dataRoot = resolveDataRoot();
+  const campaignsDir = resolveCampaignsDir();
+  const campaignSlug = args.campaignSlug.trim();
 
-  for (const fileName of resolveDbFilenameCandidates()) {
-    const candidate = path.join(campaignDir, fileName);
-    if (fs.existsSync(candidate)) {
-      return candidate;
+  const candidateDirs: string[] = [];
+  if (args.guildId && args.guildId.trim().length > 0) {
+    candidateDirs.push(
+      path.join(dataRoot, campaignsDir, buildCampaignScopeDirName({ guildId: args.guildId, campaignSlug }))
+    );
+  }
+  candidateDirs.push(path.join(dataRoot, campaignsDir, campaignSlug));
+
+  for (const campaignDir of candidateDirs) {
+    if (!fs.existsSync(campaignDir)) continue;
+    for (const fileName of resolveDbFilenameCandidates()) {
+      const candidate = path.join(campaignDir, fileName);
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
     }
   }
 
   return null;
 }
 
-function getCampaignDb(campaignSlug: string): Database.Database | null {
-  const dbPath = resolveCampaignDbPath(campaignSlug);
+function getCampaignDb(args: { campaignSlug: string; guildId?: string | null }): Database.Database | null {
+  const dbPath = resolveCampaignDbPath(args);
   if (!dbPath) return null;
   return openReadOnlyDb(dbPath);
 }
 
 export function getGuildCampaignSlug(guildId: string): string | null {
   return getGuildCampaignSlugDiagnostic(guildId).normalizedCampaignSlug;
+}
+
+export function getGuildCampaignRecord(args: {
+  guildId: string;
+  campaignSlug: string;
+}): GuildCampaignRecord | null {
+  const db = openReadOnlyDb(getControlDbPath());
+  if (!db) return null;
+
+  try {
+    const row = db
+      .prepare(
+        `SELECT guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id
+         FROM guild_campaigns
+         WHERE guild_id = ? AND campaign_slug = ?
+         LIMIT 1`
+      )
+      .get(args.guildId, args.campaignSlug) as GuildCampaignRecord | undefined;
+    return row ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function isCampaignSlugOwnedByGuild(args: {
+  guildId: string;
+  campaignSlug: string;
+}): boolean {
+  const normalizedRequested = args.campaignSlug.trim();
+  if (!normalizedRequested) return false;
+
+  const configuredSlug = getGuildCampaignSlug(args.guildId);
+  if (configuredSlug === normalizedRequested) {
+    return true;
+  }
+
+  return getGuildCampaignRecord({ guildId: args.guildId, campaignSlug: normalizedRequested }) !== null;
+}
+
+export function getGuildCampaignDisplayName(args: {
+  guildId: string;
+  campaignSlug: string;
+}): string | null {
+  const record = getGuildCampaignRecord(args);
+  const name = record?.campaign_name?.trim();
+  return name && name.length > 0 ? name : null;
 }
 
 export function getGuildCampaignSlugDiagnostic(guildId: string): GuildCampaignSlugDiagnostic {
@@ -271,7 +351,7 @@ export function listSessionsForGuildCampaign(args: {
   campaignSlug: string;
   limit: number;
 }): ArchiveSessionRow[] {
-  const db = getCampaignDb(args.campaignSlug);
+  const db = getCampaignDb({ campaignSlug: args.campaignSlug, guildId: args.guildId });
   if (!db) return [];
 
   const boundedLimit = Math.max(1, Math.min(100, Math.trunc(args.limit)));
@@ -298,7 +378,7 @@ export function findSessionByGuildAndId(args: {
   campaignSlug: string;
   sessionId: string;
 }): ArchiveSessionRow | null {
-  const db = getCampaignDb(args.campaignSlug);
+  const db = getCampaignDb({ campaignSlug: args.campaignSlug, guildId: args.guildId });
   if (!db) return null;
 
   try {
@@ -317,12 +397,37 @@ export function findSessionByGuildAndId(args: {
   }
 }
 
+export function updateSessionLabel(args: {
+  guildId: string;
+  campaignSlug: string;
+  sessionId: string;
+  label: string | null;
+}): boolean {
+  const dbPath = resolveCampaignDbPath({ campaignSlug: args.campaignSlug, guildId: args.guildId });
+  if (!dbPath || !fs.existsSync(dbPath)) return false;
+
+  try {
+    const db = new Database(dbPath);
+    const result = db
+      .prepare(
+        `UPDATE sessions
+         SET label = ?
+         WHERE guild_id = ? AND session_id = ?`
+      )
+      .run(args.label, args.guildId, args.sessionId);
+    db.close();
+    return Number(result.changes ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function readSessionTranscript(args: {
   guildId: string;
   campaignSlug: string;
   sessionId: string;
 }): ArchiveTranscript | null {
-  const db = getCampaignDb(args.campaignSlug);
+  const db = getCampaignDb({ campaignSlug: args.campaignSlug, guildId: args.guildId });
   if (!db) {
     throw new Error("Transcript storage is unavailable for this campaign.");
   }
@@ -405,7 +510,7 @@ export function readSessionRecap(args: {
   campaignSlug: string;
   sessionId: string;
 }): ArchiveRecap | null {
-  const db = getCampaignDb(args.campaignSlug);
+  const db = getCampaignDb({ campaignSlug: args.campaignSlug, guildId: args.guildId });
   if (!db) {
     throw new Error("Recap storage is unavailable for this campaign.");
   }
