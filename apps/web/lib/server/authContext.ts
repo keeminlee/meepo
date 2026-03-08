@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { getGuildDisplayMetadataByIds } from "@/lib/server/discordGuildMetadataStore";
 
 export type WebAuthorizedGuild = {
   id: string;
@@ -47,30 +48,12 @@ type ResolveAuthInputs = {
     iconUrl?: string;
   }>;
   sessionSource?: "session_snapshot" | "discord_refresh" | "session_snapshot_fallback";
+  guildMetadataById?: Map<string, { guildName: string; guildIcon?: string | null }>;
 };
 
 function toDiscordIconUrl(guildId: string, icon: string | null | undefined): string | undefined {
   if (!icon || icon.trim().length === 0) return undefined;
   return `https://cdn.discordapp.com/icons/${guildId}/${icon}.png`;
-}
-
-function toSessionAuthorizedGuilds(inputGuilds: ResolveAuthInputs["sessionGuilds"]): WebAuthorizedGuild[] {
-  const seen = new Set<string>();
-  const out: WebAuthorizedGuild[] = [];
-  for (const guild of inputGuilds ?? []) {
-    const id = guild.id?.trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-
-    const name = guild.name?.trim();
-    const iconUrl = guild.iconUrl ?? toDiscordIconUrl(id, guild.icon);
-    out.push({
-      id,
-      ...(name ? { name } : {}),
-      ...(iconUrl ? { iconUrl } : {}),
-    });
-  }
-  return out;
 }
 
 function createFallbackContext(args: {
@@ -96,13 +79,40 @@ function normalizeQueryValue(value: string | string[] | undefined): string | nul
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function toAuthorizedGuildsWithCachedMetadata(args: {
+  sessionGuilds: ResolveAuthInputs["sessionGuilds"];
+  guildMetadataById?: ResolveAuthInputs["guildMetadataById"];
+}): WebAuthorizedGuild[] {
+  const seen = new Set<string>();
+  const out: WebAuthorizedGuild[] = [];
+  for (const guild of args.sessionGuilds ?? []) {
+    const id = guild.id?.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+
+    const metadata = args.guildMetadataById?.get(id);
+    const name = guild.name?.trim() ?? metadata?.guildName;
+    const iconUrl = guild.iconUrl ?? metadata?.guildIcon ?? toDiscordIconUrl(id, guild.icon);
+    out.push({
+      id,
+      ...(name ? { name } : {}),
+      ...(iconUrl ? { iconUrl } : {}),
+    });
+  }
+
+  return out;
+}
+
 export function resolveWebAuthContextFromInputs(input: ResolveAuthInputs): WebAuthContext {
   const environment = (input.nodeEnv ?? process.env.NODE_ENV ?? "development").trim();
   const isDevelopment = environment !== "production";
   const bypassEnabled = isDevelopment && (input.bypassFlag ?? process.env.DEV_WEB_BYPASS) === "1";
 
   if (input.sessionUser?.id) {
-    const authorizedGuilds = toSessionAuthorizedGuilds(input.sessionGuilds);
+    const authorizedGuilds = toAuthorizedGuildsWithCachedMetadata({
+      sessionGuilds: input.sessionGuilds,
+      guildMetadataById: input.guildMetadataById,
+    });
     return {
       kind: "authenticated",
       source: input.sessionSource ?? "session_snapshot",
@@ -153,6 +163,14 @@ export async function resolveWebAuthContext(searchParams?: Record<string, string
       }
     : null;
 
+  const sessionGuildIds = Array.from(
+    new Set((session?.discord?.guilds ?? []).map((guild) => guild.id?.trim()).filter((id): id is string => Boolean(id)))
+  );
+  const durableGuildMetadata = await getGuildDisplayMetadataByIds({ guildIds: sessionGuildIds });
+  const guildMetadataById = new Map(
+    durableGuildMetadata.map((guild) => [guild.guildId, { guildName: guild.guildName, guildIcon: guild.guildIcon ?? null }])
+  );
+
   return resolveWebAuthContextFromInputs({
     headerGuild: headerStore.get("x-meepo-guild-id"),
     searchParams,
@@ -161,5 +179,6 @@ export async function resolveWebAuthContext(searchParams?: Record<string, string
     sessionUser,
     sessionGuilds: session?.discord?.guilds,
     sessionSource: session?.discord?.source,
+    guildMetadataById,
   });
 }

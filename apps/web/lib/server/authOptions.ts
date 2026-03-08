@@ -7,6 +7,11 @@ import {
   toSnapshotMeta,
   type DiscordGuildSnapshotSource,
 } from "@/lib/server/discordGuildSnapshotCache";
+import {
+  hasFreshGuildDisplayMetadata,
+  upsertGuildDisplayMetadata,
+  type DiscordGuildDisplayMetadata,
+} from "@/lib/server/discordGuildMetadataStore";
 
 type DiscordGuild = {
   id: string;
@@ -25,6 +30,48 @@ function toCompactGuildSnapshot(guilds: DiscordGuild[]): Array<{ id: string }> {
     compact.push({ id });
   }
   return compact;
+}
+
+function toDiscordIconUrl(guildId: string, icon: string | null | undefined): string | undefined {
+  if (!icon || icon.trim().length === 0) return undefined;
+  return `https://cdn.discordapp.com/icons/${guildId}/${icon}.png`;
+}
+
+function toCompactGuildMetadata(guilds: DiscordGuild[], nowMs: number): DiscordGuildDisplayMetadata[] {
+  const seen = new Set<string>();
+  const compact: DiscordGuildDisplayMetadata[] = [];
+  for (const guild of guilds) {
+    const id = guild.id?.trim();
+    const name = guild.name?.trim();
+    if (!id || !name || seen.has(id)) continue;
+    seen.add(id);
+
+    compact.push({
+      guildId: id,
+      guildName: name,
+      ...(toDiscordIconUrl(id, guild.icon) ? { guildIcon: toDiscordIconUrl(id, guild.icon) } : {}),
+      updatedAtMs: nowMs,
+      lastSeenAtMs: nowMs,
+    });
+  }
+  return compact;
+}
+
+function toTokenGuildIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const maybeId = (entry as { id?: unknown }).id;
+    if (typeof maybeId !== "string") continue;
+    const id = maybeId.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
 }
 
 type NextAuthOptionsWithTrustHost = NextAuthOptions & {
@@ -105,6 +152,10 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
             token.discordGuildsLastSyncedAtMs = nowMs;
             token.discordGuildsLastRefreshAttemptAtMs = nowMs;
             token.discordGuildsTtlMs = ttlMs;
+            await upsertGuildDisplayMetadata({
+              guilds: toCompactGuildMetadata(result.guilds, nowMs),
+              nowMs,
+            });
           } else {
             const failureMeta = toRefreshFailureMeta({
               previousLastSyncedAtMs,
@@ -123,8 +174,15 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
           lastSyncedAtMs: previousLastSyncedAtMs,
           ttlMs,
         });
+        const tokenGuildIds = toTokenGuildIds(token.discordGuilds);
+        const cacheMissing = !(await hasFreshGuildDisplayMetadata({
+          guildIds: tokenGuildIds,
+          maxAgeMs: ttlMs,
+          nowMs,
+        }));
+        const shouldRefresh = stale || cacheMissing;
 
-        if (stale) {
+        if (shouldRefresh) {
           const result = await fetchDiscordGuildsSafe(token.discordAccessToken);
           if (result.ok) {
             token.discordGuilds = toCompactGuildSnapshot(result.guilds);
@@ -132,6 +190,10 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
             token.discordGuildsLastSyncedAtMs = nowMs;
             token.discordGuildsLastRefreshAttemptAtMs = nowMs;
             token.discordGuildsTtlMs = ttlMs;
+            await upsertGuildDisplayMetadata({
+              guilds: toCompactGuildMetadata(result.guilds, nowMs),
+              nowMs,
+            });
           } else {
             const failureMeta = toRefreshFailureMeta({
               previousLastSyncedAtMs,
@@ -178,6 +240,26 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
         const maybeGlobalName = (profile as { global_name?: unknown }).global_name;
         if (typeof maybeGlobalName === "string" && maybeGlobalName.trim().length > 0) {
           token.discordGlobalName = maybeGlobalName;
+        }
+      }
+
+      const tokenGuildIds = toTokenGuildIds(token.discordGuilds);
+      if (
+        tokenGuildIds.length > 0
+        && typeof token.discordAccessToken === "string"
+        && token.discordAccessToken.trim().length > 0
+        && !(await hasFreshGuildDisplayMetadata({
+          guildIds: tokenGuildIds,
+          maxAgeMs: ttlMs,
+          nowMs,
+        }))
+      ) {
+        const hydrated = await fetchDiscordGuildsSafe(token.discordAccessToken);
+        if (hydrated.ok) {
+          await upsertGuildDisplayMetadata({
+            guilds: toCompactGuildMetadata(hydrated.guilds, nowMs),
+            nowMs,
+          });
         }
       }
 
