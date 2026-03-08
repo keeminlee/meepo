@@ -13,8 +13,8 @@ declare module "next-auth" {
     discord?: {
       guilds: Array<{
         id: string;
-        name: string;
-        icon: string | null;
+        name?: string;
+        icon?: string | null;
         permissions?: string;
       }>;
       source?: "session_snapshot" | "discord_refresh" | "session_snapshot_fallback";
@@ -32,8 +32,8 @@ declare module "next-auth/jwt" {
     discordGlobalName?: string;
     discordGuilds?: Array<{
       id: string;
-      name: string;
-      icon: string | null;
+      name?: string;
+      icon?: string | null;
       permissions?: string;
     }>;
     discordGuildsSource?: "session_snapshot" | "discord_refresh" | "session_snapshot_fallback";

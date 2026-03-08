@@ -15,33 +15,23 @@ type DiscordGuild = {
   permissions?: string;
 };
 
+function toCompactGuildSnapshot(guilds: DiscordGuild[]): Array<{ id: string }> {
+  const seen = new Set<string>();
+  const compact: Array<{ id: string }> = [];
+  for (const guild of guilds) {
+    const id = guild.id?.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    compact.push({ id });
+  }
+  return compact;
+}
+
 type NextAuthOptionsWithTrustHost = NextAuthOptions & {
   trustHost: true;
 };
 
 const isProduction = process.env.NODE_ENV === "production";
-const securePrefix = isProduction ? "__Secure-" : "";
-
-function resolveProductionCookieDomain(): string | undefined {
-  if (!isProduction) return undefined;
-
-  const rawUrl = process.env.NEXTAUTH_URL ?? process.env.AUTH_URL;
-  if (!rawUrl) return undefined;
-
-  try {
-    const hostname = new URL(rawUrl).hostname.trim().toLowerCase();
-    if (!hostname || hostname === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
-      return undefined;
-    }
-    return hostname;
-  } catch {
-    return undefined;
-  }
-}
-
-const productionCookieDomain = resolveProductionCookieDomain();
-const csrfPrefix = isProduction && !productionCookieDomain ? "__Host-" : securePrefix;
-const cookieSameSite = "lax";
 
 async function fetchDiscordGuilds(accessToken: string): Promise<DiscordGuild[]> {
   const response = await fetch("https://discord.com/api/users/@me/guilds", {
@@ -82,38 +72,6 @@ async function fetchDiscordGuildsSafe(accessToken: string): Promise<{ ok: boolea
 export const authOptions: NextAuthOptionsWithTrustHost = {
   trustHost: true,
   useSecureCookies: isProduction,
-  cookies: {
-    state: {
-      name: `${securePrefix}next-auth.state`,
-      options: {
-        httpOnly: true,
-        sameSite: cookieSameSite,
-        path: "/",
-        secure: isProduction,
-        maxAge: 900,
-        ...(productionCookieDomain ? { domain: productionCookieDomain } : {}),
-      },
-    },
-    callbackUrl: {
-      name: `${securePrefix}next-auth.callback-url`,
-      options: {
-        sameSite: cookieSameSite,
-        path: "/",
-        secure: isProduction,
-        ...(productionCookieDomain ? { domain: productionCookieDomain } : {}),
-      },
-    },
-    csrfToken: {
-      name: `${csrfPrefix}next-auth.csrf-token`,
-      options: {
-        httpOnly: true,
-        sameSite: cookieSameSite,
-        path: "/",
-        secure: isProduction,
-        ...(productionCookieDomain ? { domain: productionCookieDomain } : {}),
-      },
-    },
-  },
   session: {
     strategy: "jwt",
   },
@@ -142,7 +100,7 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
         if (account.access_token) {
           const result = await fetchDiscordGuildsSafe(account.access_token);
           if (result.ok) {
-            token.discordGuilds = result.guilds;
+            token.discordGuilds = toCompactGuildSnapshot(result.guilds);
             token.discordGuildsSource = "discord_refresh";
             token.discordGuildsLastSyncedAtMs = nowMs;
             token.discordGuildsLastRefreshAttemptAtMs = nowMs;
@@ -169,7 +127,7 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
         if (stale) {
           const result = await fetchDiscordGuildsSafe(token.discordAccessToken);
           if (result.ok) {
-            token.discordGuilds = result.guilds;
+            token.discordGuilds = toCompactGuildSnapshot(result.guilds);
             token.discordGuildsSource = "discord_refresh";
             token.discordGuildsLastSyncedAtMs = nowMs;
             token.discordGuildsLastRefreshAttemptAtMs = nowMs;
