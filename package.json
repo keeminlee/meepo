@@ -14,6 +14,7 @@
     "dev:deploy": "npm run deploy:commands",
     "dev:bot": "tsx src/bot.ts",
     "doctor": "tsx src/tools/doctor.ts",
+    "recap:test": "tsx src/tools/recap-test.ts",
     "stopline:no-raw-env": "powershell -ExecutionPolicy Bypass -File tools/stopline-no-raw-env.ps1",
     "stopline:no-getdb-runtime": "powershell -ExecutionPolicy Bypass -File tools/stopline-no-getdb-runtime.ps1",
     "stopline:active-session-boundary": "powershell -ExecutionPolicy Bypass -File tools/stopline-active-session-boundary.ps1",

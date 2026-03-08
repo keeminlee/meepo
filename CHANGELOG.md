@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.10 - 2026-03-07
+
+### Added
+
+- Shipped Track B chronicle archive viewer in `apps/web` using Next App Router.
+- Added canonical browse flow across web routes:
+  - `/`
+  - `/dashboard`
+  - `/campaigns/[campaignSlug]`
+  - `/sessions/[sessionId]`
+- Added internal web API boundary for campaign/session reads and recap regeneration.
+- Added session-level recap regenerate UX with pending, success refresh, and user-safe failure messaging.
+- Added transcript/recap download actions (`.txt` and `.json`) in session detail.
+
+### Changed
+
+- Migrated web data flow from mock-first adapters to canonical guild-scoped readers through API clients.
+- Hardened transcript viewer for long sessions with incremental loading (`Load more lines`) and safer overflow behavior.
+- Improved session viewer polish: breadcrumbs, artifact/status chips, and clearer metadata headers.
+
+### B2.5 Hygiene
+
+- Removed Google Fonts CSS `@import` usage in favor of `next/font` in `apps/web` layout.
+- Set explicit `outputFileTracingRoot` in `apps/web/next.config.ts` to eliminate lockfile root inference warning.
+- Added web-local ESLint flat config and temporarily configured web builds to skip lint during `next build` (`eslint.ignoreDuringBuilds`) as a known milestone tradeoff.
+
 ## v1.9 - 2026-03-06
 
 ### Sprint 3 Hardening (Operational Closure)

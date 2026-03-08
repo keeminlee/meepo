@@ -889,6 +889,62 @@ function applyMigrations(db: Database.Database) {
     `);
   }
 
+  // Migration: Create canonical session_recaps table for multi-view recap contract
+  const tablesForSessionRecaps = db.pragma("table_list") as any[];
+  const hasSessionRecapsTable = tablesForSessionRecaps.some((t: any) => t.name === "session_recaps");
+
+  if (!hasSessionRecapsTable) {
+    console.log("Migrating: Creating session_recaps table");
+    db.exec(`
+      CREATE TABLE session_recaps (
+        session_id TEXT PRIMARY KEY,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        engine TEXT,
+        source_hash TEXT,
+        strategy_version TEXT,
+        meta_json TEXT,
+        concise_text TEXT NOT NULL,
+        balanced_text TEXT NOT NULL,
+        detailed_text TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_session_recaps_updated
+      ON session_recaps(updated_at_ms DESC);
+    `);
+  } else {
+    const sessionRecapColumns = db.pragma("table_info(session_recaps)") as any[];
+    const hasEngine = sessionRecapColumns.some((col: any) => col.name === "engine");
+    const hasSourceHash = sessionRecapColumns.some((col: any) => col.name === "source_hash");
+    const hasStrategyVersion = sessionRecapColumns.some((col: any) => col.name === "strategy_version");
+    const hasMetaJson = sessionRecapColumns.some((col: any) => col.name === "meta_json");
+
+    if (!hasEngine) {
+      console.log("Migrating: Adding engine to session_recaps");
+      db.exec("ALTER TABLE session_recaps ADD COLUMN engine TEXT;");
+    }
+
+    if (!hasSourceHash) {
+      console.log("Migrating: Adding source_hash to session_recaps");
+      db.exec("ALTER TABLE session_recaps ADD COLUMN source_hash TEXT;");
+    }
+
+    if (!hasStrategyVersion) {
+      console.log("Migrating: Adding strategy_version to session_recaps");
+      db.exec("ALTER TABLE session_recaps ADD COLUMN strategy_version TEXT;");
+    }
+
+    if (!hasMetaJson) {
+      console.log("Migrating: Adding meta_json to session_recaps");
+      db.exec("ALTER TABLE session_recaps ADD COLUMN meta_json TEXT;");
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_session_recaps_updated
+      ON session_recaps(updated_at_ms DESC);
+    `);
+  }
+
   // Migration: Create meepo_mind table (Knowledge Base v1)
   const meepoMindTables = db.pragma("table_list") as any[];
   const hasMeepoMind = meepoMindTables.some((t: any) => t.name === "meepo_mind");

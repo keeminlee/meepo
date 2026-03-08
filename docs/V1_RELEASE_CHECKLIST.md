@@ -112,6 +112,35 @@ Fixture root:
   - interrupted sessions do not block a fresh showtime start
   - no duplicate active session per guild
 
+## 5.5) Multi-Guild Reliability (v1.5)
+
+- Isolation checks:
+  - runtime queries are guild-scoped (`guild_id`) and campaign-scoped DB routing is enforced
+  - no silent campaign fallback across guild/campaign boundaries
+- Session safety checks:
+  - `sessions.status` transitions are constrained to `active -> completed` and `active -> interrupted`
+  - duplicate active session starts are rejected (DB + command guards)
+- Cost/rate guardrails:
+  - recap requests enforce dedupe/capacity/cooldown protections
+  - recall request throttles and queue backpressure are active
+- User-facing failure contract:
+  - memory/recall/recap failures return safe user copy with error code and optional trace id
+  - raw stack traces are not surfaced to users
+
+## 5.6) Recap Contract Hardening (Run 3)
+
+- Contract tests:
+  - explicit tests validate all-three-view persistence and retrieval (`concise|balanced|detailed`)
+  - repeated generation/regeneration verifies overwrite semantics while preserving `created_at_ms`
+- Backward compatibility:
+  - existing `/meepo sessions recap` command contract tests remain green (no command cutover in Run 3)
+- Tooling:
+  - `npm run recap:test -- --guild <guild_id> --session <session_id>` prints the stored canonical recap contract
+  - `--regenerate [--reason <text>]` path overwrites safely and records regeneration context
+- Migration note:
+  - `session_recaps` is canonical multi-view recap store
+  - `session_artifacts` remains compatibility lane until a later production cutover
+
 ## 6) GitHub Release Draft (v1.0.0)
 
 ### Release Title (Primary)

@@ -25,6 +25,40 @@ This map is system-first. It answers:
 - Config loading + redacted snapshot: `src/config/env.ts`, `src/config/redact.ts`, `src/config/types.ts`
 - Voice attach and connection lifecycle: `src/voice/connection.ts`
 
+## 1.25 Web Archive Surface (Track B)
+
+`apps/web` is now a first-class product surface for campaign chronicle browsing.
+
+Primary user routes:
+
+- `apps/web/app/page.tsx`
+- `apps/web/app/dashboard/page.tsx`
+- `apps/web/app/campaigns/[campaignSlug]/page.tsx`
+- `apps/web/app/sessions/[sessionId]/page.tsx`
+
+Internal API boundary:
+
+- `apps/web/app/api/campaigns/route.ts`
+- `apps/web/app/api/campaigns/[campaignSlug]/sessions/route.ts`
+- `apps/web/app/api/sessions/[sessionId]/route.ts`
+- `apps/web/app/api/sessions/[sessionId]/transcript/route.ts`
+- `apps/web/app/api/sessions/[sessionId]/recap/route.ts`
+- `apps/web/app/api/sessions/[sessionId]/regenerate/route.ts`
+
+Web adapters over canonical modules:
+
+- campaign/session web readers: `apps/web/lib/server/campaignReaders.ts`, `apps/web/lib/server/sessionReaders.ts`
+- canonical mapping layer: `apps/web/lib/mappers/*`
+- web API clients consumed by pages: `apps/web/lib/api/*`
+
+Auth/scope posture:
+
+- guild-scoped auth resolution: `apps/web/lib/server/authContext.ts`
+- scope guards: `apps/web/lib/server/scopeGuards.ts`
+- dashboard and campaign discovery are filtered by `authorizedGuildIds`
+- session detail/transcript/recap/regenerate are authorized by reader/action ownership checks against `authorizedGuildIds`
+- no implicit env guild fallback; dev bypass override is allowed only in non-production with explicit `DEV_WEB_BYPASS=1`
+
 ## 1.5 Awakening Runtime
 
 Awakening Runtime is the deterministic onboarding interpreter lane.

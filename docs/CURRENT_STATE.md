@@ -1,9 +1,32 @@
-# Meepo Bot - Current State (March 6, 2026)
+# Meepo Bot - Current State (March 7, 2026)
 
 For documentation navigation, start at [README.md](README.md).
 
-**Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress + Sprint 3 hardening closure complete  
-**Last Updated:** March 6, 2026
+**Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress + Sprint 3 hardening closure complete + Track B web archive viewer complete  
+**Last Updated:** March 7, 2026
+
+## Track C Complete (Discord Auth + Secure Scope)
+
+- Web auth uses Auth.js + Discord OAuth as the primary access model.
+- Canonical auth context is stable and refresh-aware (`session_snapshot|discord_refresh|session_snapshot_fallback`).
+- Guild authorization is ID-driven via `authorizedGuildIds`; guild display metadata is non-authoritative.
+- Dashboard/campaign discovery and session object access share the same guild authorization boundary.
+- Session detail/transcript/recap/regenerate enforce ownership in reader/action code, not in route handlers.
+- Implicit env guild fallback is removed; local fallback requires explicit dev bypass (`DEV_WEB_BYPASS=1` in non-production).
+
+## Track B Complete (Web Archive Viewer)
+
+- Web archive viewer is now first-class under `apps/web` (Next App Router).
+- Real web routes:
+  - `/`
+  - `/dashboard`
+  - `/campaigns/[campaignSlug]`
+  - `/sessions/[sessionId]`
+- Canonical reads now power dashboard, campaign, and session flows via the internal API boundary.
+- Recap regenerate action and transcript/recap downloads (`.txt` and `.json`) are live on session detail.
+- Artifact-aware states are implemented for missing/unavailable recap/transcript conditions.
+- Dev bypass for local web scope overrides is available only behind explicit env gate (`DEV_WEB_BYPASS=1`) and non-production mode.
+- Known tradeoff: web lint is currently skipped during `next build` (`apps/web/next.config.ts`) to avoid a flat-config/plugin detection mismatch during this milestone checkpoint.
 
 ---
 
@@ -214,6 +237,39 @@ Behavior:
 - persists current prompt in guild config runtime state
 - forwards prompt override to STT provider at runtime
 
+### Multi-Guild Reliability Snapshot (v1.5)
+
+Target scale and safety posture:
+
+- designed for concurrent multi-guild operation (10-20 guild target)
+- guild/session runtime state is isolated per guild
+- session lifecycle remains independent per guild
+
+Implementation status against v1.5 reliability requirements:
+
+1. Guild state isolation:
+- implemented primarily via `guild_id` scoping plus campaign-scoped DB routing.
+- important nuance: not every runtime table stores a literal `campaign_slug` column.
+- campaign isolation is enforced by DB routing guardrails and per-campaign DB boundaries, while guild-level isolation is enforced by keyed queries and indexes.
+
+2. Session safety:
+- implemented with `sessions.status` (`active | completed | interrupted`).
+- boot behavior is crash-safe via recovery (`active -> interrupted`) then runtime reconciliation from DB truth.
+- duplicate active sessions are blocked by DB invariant (`idx_one_active_session_per_guild`).
+
+3. Basic rate limiting and cost guardrails:
+- recap/summarization requests are guarded by in-flight dedupe, guild capacity caps, and cooldown windows.
+- recall paths are guarded by per-user and per-guild request throttles plus queue backpressure.
+
+4. User-facing error surface:
+- centralized taxonomy-backed formatter provides safe fallback messages (for example: `"⚠️ Meepo stumbled while writing this memory."`).
+- user responses include stable error codes/trace IDs where available and do not expose raw stack traces.
+
+Known gap relative to strict wording:
+
+- if product requirements demand literal `campaign_slug` columns on every listed table, that is not fully implemented because current isolation uses campaign-scoped DB routing instead of universal per-row campaign columns.
+- this is a model/contract decision rather than a runtime reliability failure.
+
 ### DB Routing Guardrail (Campaign Isolation)
 
 - Runtime DB routing is campaign-scoped and must not silently fall back across campaigns.
@@ -341,10 +397,17 @@ Recap      Emotion Beats         LLM Response
   - Recap styles: `detailed | balanced | concise`
   - Base cache (`megameecap_base`) is file-canonical and valid only when files exist and `source_hash + base_version` match
   - Final recap (`recap_final`) is DB-canonical with exactly one row per session (most recent style overwrites prior style)
+  - Session recap contract API (`src/sessions/sessionRecaps.ts`) now orchestrates all three styles and persists canonical row in `session_recaps`
+    - Contract retrieval shape: `views.concise|balanced|detailed` + `generatedAt` + `modelVersion`
+    - Regeneration path: `regenerateSessionRecap(sessionId, reason?)` with safe overwrite semantics
+    - Typed domain errors: `RECAP_SESSION_NOT_FOUND | RECAP_TRANSCRIPT_UNAVAILABLE | RECAP_GENERATION_FAILED | RECAP_INVALID_OUTPUT`
   - Drift rules:
     - final DB row + missing file => regenerate final (cheap)
     - final file + missing DB row => shown as unindexed; regenerate to canonicalize
   - Storage: `session_artifacts` metadata + file outputs under `data/campaigns/{slug}/exports/meecaps`
+  - Migration posture:
+    - `session_recaps` is canonical for the new multi-view recap contract
+    - `session_artifacts` remains compatibility lane for current `/meepo sessions recap` command surface (no cutover yet)
 - `/session new [--label C2E20]` — [DM-only] Start a new session (ends active session first)
 - `/session label [label] [--session_id]` — [DM-only] Set label for session
 - `/session view scope:all|unlabeled` — [DM-only] List sessions
@@ -372,6 +435,9 @@ Recap      Emotion Beats         LLM Response
 - `src/tools/scan-names.ts` — Find unknown names in ledger
 - `src/tools/review-names.ts` — Interactive CLI for registry triage
 - `src/tools/cleanup-canonical-aliases.ts` — Validate alias consistency
+- `src/tools/recap-test.ts` — Run recap contract generation/regeneration for a real session id and print stored `session_recaps` views
+  - Example: `npm run recap:test -- --guild <guild_id> --session <session_id>`
+  - Example regenerate: `npm run recap:test -- --guild <guild_id> --session <session_id> --regenerate --reason manual_qc`
 
 ---
 

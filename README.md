@@ -63,6 +63,48 @@ Once running, invite Meepo to your Discord server and awaken her with:
 /meepo awaken
 ```
 
+### Run Web Archive Viewer (Next.js)
+
+The archive viewer now lives in `apps/web` and uses Next App Router.
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+Web routes:
+
+- `/`
+- `/dashboard`
+- `/settings`
+- `/campaigns/[campaignSlug]/sessions`
+- `/campaigns/[campaignSlug]/sessions/[sessionId]`
+- `/campaigns/[campaignSlug]/compendium`
+
+Campaign context doctrine:
+
+- Web archive surfaces resolve a mandatory active campaign via shared gate logic.
+- Resolution order: route slug -> persisted selection -> first real campaign -> system demo (`demo`).
+- Demo campaign appears only when no real campaigns are available.
+
+Useful local web env toggles:
+
+- `DISCORD_CLIENT_ID=<discord_oauth_client_id>`
+- `DISCORD_CLIENT_SECRET=<discord_oauth_client_secret>`
+- `AUTH_SECRET=<long_random_secret>`
+- `NEXTAUTH_URL=http://localhost:3000`
+- `DEV_WEB_BYPASS=1` to allow local header/query guild override in non-production
+
+Run 1 auth note:
+
+- Web login now uses Discord OAuth (`identify guilds`) via Auth.js session cookies.
+- `DEV_WEB_BYPASS` remains available for explicit local fallback while Track C is in progress.
+
+Current web build note:
+
+- `next build` in `apps/web` currently skips lint (`eslint.ignoreDuringBuilds`) as a temporary milestone tradeoff.
+
 ---
 
 ## Core Command Groups
