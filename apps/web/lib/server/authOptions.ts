@@ -21,7 +21,27 @@ type NextAuthOptionsWithTrustHost = NextAuthOptions & {
 
 const isProduction = process.env.NODE_ENV === "production";
 const securePrefix = isProduction ? "__Secure-" : "";
-const csrfPrefix = isProduction ? "__Host-" : "";
+
+function resolveProductionCookieDomain(): string | undefined {
+  if (!isProduction) return undefined;
+
+  const rawUrl = process.env.NEXTAUTH_URL ?? process.env.AUTH_URL;
+  if (!rawUrl) return undefined;
+
+  try {
+    const hostname = new URL(rawUrl).hostname.trim().toLowerCase();
+    if (!hostname || hostname === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
+      return undefined;
+    }
+    return hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+const productionCookieDomain = resolveProductionCookieDomain();
+const csrfPrefix = isProduction && !productionCookieDomain ? "__Host-" : securePrefix;
+const cookieSameSite = isProduction ? "none" : "lax";
 
 async function fetchDiscordGuilds(accessToken: string): Promise<DiscordGuild[]> {
   const response = await fetch("https://discord.com/api/users/@me/guilds", {
@@ -67,27 +87,30 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
       name: `${securePrefix}next-auth.state`,
       options: {
         httpOnly: true,
-        sameSite: "lax",
+        sameSite: cookieSameSite,
         path: "/",
         secure: isProduction,
         maxAge: 900,
+        ...(productionCookieDomain ? { domain: productionCookieDomain } : {}),
       },
     },
     callbackUrl: {
       name: `${securePrefix}next-auth.callback-url`,
       options: {
-        sameSite: "lax",
+        sameSite: cookieSameSite,
         path: "/",
         secure: isProduction,
+        ...(productionCookieDomain ? { domain: productionCookieDomain } : {}),
       },
     },
     csrfToken: {
       name: `${csrfPrefix}next-auth.csrf-token`,
       options: {
         httpOnly: true,
-        sameSite: "lax",
+        sameSite: cookieSameSite,
         path: "/",
         secure: isProduction,
+        ...(productionCookieDomain ? { domain: productionCookieDomain } : {}),
       },
     },
   },
