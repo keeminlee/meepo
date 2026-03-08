@@ -41,7 +41,7 @@ function resolveProductionCookieDomain(): string | undefined {
 
 const productionCookieDomain = resolveProductionCookieDomain();
 const csrfPrefix = isProduction && !productionCookieDomain ? "__Host-" : securePrefix;
-const cookieSameSite = isProduction ? "none" : "lax";
+const cookieSameSite = "lax";
 
 async function fetchDiscordGuilds(accessToken: string): Promise<DiscordGuild[]> {
   const response = await fetch("https://discord.com/api/users/@me/guilds", {
