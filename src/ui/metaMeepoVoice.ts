@@ -27,32 +27,14 @@ type WakeReplyInput = {
 };
 
 type StatusSnapshotInput = {
-  setupVersion: number;
-  awake: boolean;
-  voiceMode: string;
-  effectiveMode: string;
-  canonMode: CanonPersonaMode;
-  dmBinding: string;
-  configuredCanonPersona: string;
-  effectivePersonaDisplayName: string;
-  effectivePersonaId: string;
-  activeSessionId: string | null;
-  activeSessionSummary: string;
-  homeText: string;
-  homeVoice: string;
-  inVoice: boolean;
-  connectedVoice: string;
-  sttActive: boolean;
-  sttProviderName: string;
-  lastTranscription: string;
-  baseRecapCached: boolean;
-  finalStyle: string;
-  finalCreatedAt: string;
-  finalHash: string;
-  ttsAvailable: boolean;
-  ttsProviderName: string;
-  hints: string[];
-  internalDebugLines?: string[];
+  lifecycleState: "Dormant" | "Ready" | "Showtime Active";
+  voiceState: "Connected" | "Not connected";
+  session: string;
+  campaign: string;
+  nextStep: string;
+  isDevUser: boolean;
+  devDiagnosticsLines?: string[];
+  legacyLabNotes?: string[];
 };
 
 type SessionViewLinesInput = {
@@ -241,52 +223,32 @@ export const metaMeepoVoice = {
     },
 
     snapshot(input: StatusSnapshotInput): string {
-      const core = [
-        header("Status"),
-        `Setup: v${input.setupVersion}`,
-        `State: ${input.awake ? "awake" : "asleep"} (${input.voiceMode})`,
-        `Mode: ${formatMode(input.effectiveMode)}`,
+      const publicLines = [
+        header("Main Status"),
+        `State: ${input.lifecycleState}`,
+        `Voice: ${input.voiceState}`,
+        `Session: ${input.session}`,
+        `Campaign: ${input.campaign}`,
         "",
-        header("Persona"),
-        `Canon persona mode: ${input.canonMode}`,
-        `DM binding: ${input.dmBinding}`,
-        `Configured canon persona: ${input.configuredCanonPersona}`,
-        `Effective persona: ${input.effectivePersonaDisplayName} (${input.effectivePersonaId})`,
-        "",
-        header("Session"),
-        `Active session: ${input.activeSessionId ?? "(none)"}`,
-        input.activeSessionSummary ? input.activeSessionSummary : "(no session summary)",
-        "",
-        header("Home"),
-        `Text: ${input.homeText}`,
-        `Voice: ${input.homeVoice}`,
-        "",
-        header("Voice + STT"),
-        `In voice: ${input.inVoice ? "yes" : "no"}`,
-        `Connected voice: ${input.connectedVoice}`,
-        `STT: ${input.sttActive ? "active" : "inactive"} (${input.sttProviderName})`,
-        `Last transcription: ${input.lastTranscription}`,
-        "",
-        header("Recap"),
-        `Base cached: ${input.baseRecapCached ? "yes" : "no"}`,
-        `Most recent final: ${input.finalStyle} @ ${input.finalCreatedAt}`,
-        `Source hash: ${shortHash(input.finalHash)}`,
-        "",
-        header("TTS"),
-        `Available: ${input.ttsAvailable ? "yes" : "no"} (${input.ttsProviderName})`,
+        "Next step:",
+        input.nextStep,
       ];
 
-      const internalDebug =
-        input.internalDebugLines && input.internalDebugLines.length > 0
-          ? ["", header("Internal Debug"), ...input.internalDebugLines]
+      if (!input.isDevUser) {
+        return publicLines.join("\n");
+      }
+
+      const devLines =
+        input.devDiagnosticsLines && input.devDiagnosticsLines.length > 0
+          ? ["", header("Dev Diagnostics"), ...input.devDiagnosticsLines]
           : [];
 
-      const hints =
-        input.hints.length > 0
-          ? [header("Hints"), bullets(input.hints, "•")]
-          : [header("Hints"), "Fix hints: none. I’m almost suspicious."];
+      const legacyNotes =
+        input.legacyLabNotes && input.legacyLabNotes.length > 0
+          ? ["", header("Legacy / Lab Notes"), ...input.legacyLabNotes]
+          : [];
 
-      return [...core, ...internalDebug, "", ...sassyNudge(hints)].join("\n");
+      return [...publicLines, ...devLines, ...legacyNotes].join("\n");
     },
   },
 

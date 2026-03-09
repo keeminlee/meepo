@@ -59,6 +59,8 @@ import {
 } from "./observability/context.js";
 import { formatUserFacingError } from "./errors/formatUserFacingError.js";
 import { MeepoError } from "./errors/meepoError.js";
+import { isDevUser } from "./security/devAccess.js";
+import { shouldAllowConversationalTextOutput } from "./runtime/textReplyPolicy.js";
 
 const bootLog = log.withScope("boot");
 const overlayLog = log.withScope("overlay");
@@ -77,6 +79,92 @@ function normalizeStopPhrase(text: string): string {
 
 function isTextStopPhrase(text: string): boolean {
   return TEXT_STOP_PHRASES.has(normalizeStopPhrase(text));
+}
+
+function detectLegacyConversationalTrigger(args: {
+  message: any;
+  content: string;
+  guildMode: string;
+  active: ReturnType<typeof getActiveMeepo>;
+  defaultPersonaId: string;
+}): string | null {
+  const { message, content, guildMode, active, defaultPersonaId } = args;
+  const mentionedMeepo = message.mentions?.users?.has(client.user!.id) ?? false;
+  const autoWakeHit =
+    isWakePhrase(content, defaultPersonaId, { mentioned: false, prefix: cfg.discord.botPrefix }) ||
+    containsPersonaName(content, defaultPersonaId);
+
+  if (!active && autoWakeHit) {
+    return "auto_wake_trigger";
+  }
+
+  if (!active) {
+    return null;
+  }
+
+  const contentLower = content.toLowerCase();
+  const transformRequested =
+    (
+      contentLower.includes("xoblob")
+      && (
+        contentLower.includes("transform")
+        || contentLower.includes("become")
+        || contentLower.includes("turn into")
+        || contentLower.includes("switch")
+        || contentLower.includes("come out")
+        || contentLower.startsWith("xoblob")
+      )
+    )
+    || (
+      (
+        contentLower.includes("meepo")
+        && (
+          contentLower.includes("turn back")
+          || contentLower.includes("back")
+          || contentLower.includes("again")
+          || contentLower.includes("transform")
+          || contentLower.includes("become")
+          || contentLower.includes("switch")
+        )
+      )
+      || contentLower.includes("back to meepo")
+      || contentLower.includes("regular meepo")
+      || contentLower.includes("normal meepo")
+    );
+
+  if (transformRequested) {
+    return "transform_trigger";
+  }
+
+  const personaId = getEffectivePersonaId(message.guildId);
+  const isAnchor = isWakePhrase(content, personaId, { mentioned: mentionedMeepo, prefix: cfg.discord.botPrefix });
+  const hasMeepo = containsPersonaName(content, personaId) || mentionedMeepo;
+  const inBoundChannel = active.channel_id === message.channelId;
+  const latched = isLatchActive(message.guildId, message.channelId, message.author.id);
+  const dmUserId = getGuildDmUserId(message.guildId);
+
+  if (guildMode === "canon" && dmUserId && message.author.id === dmUserId) {
+    return null;
+  }
+
+  let replyMode: "voice" | "text" | "none" = "none";
+  if (isAnchor) {
+    replyMode = "voice";
+  } else if (hasMeepo) {
+    replyMode = latched ? "voice" : "text";
+  } else if (latched) {
+    replyMode = "text";
+  }
+
+  if (replyMode === "none") {
+    return null;
+  }
+
+  if (!inBoundChannel && !isAnchor) {
+    return null;
+  }
+
+  return "reply_mode_trigger";
 }
 
 printConfigSnapshot(cfg);
@@ -314,11 +402,41 @@ client.on("messageCreate", async (message: any) => {
       return;
     }
 
-    // 2) AWAKEN-ON-NAME: Auto-awaken Meepo if message contains "meepo" and Meepo is not active
-    let active = getActiveMeepo(message.guildId);
-    const contentLower = content.toLowerCase();
-    
+    const activeForPolicy = getActiveMeepo(message.guildId);
     const defaultPersonaId = getGuildDefaultPersonaId(message.guildId) ?? "meta_meepo";
+    const textReplyPolicy = shouldAllowConversationalTextOutput({
+      nodeEnv: process.env.NODE_ENV,
+      isDevUser: isDevUser(message.author?.id),
+    });
+
+    if (!textReplyPolicy.allowed) {
+      const suppressedTrigger = detectLegacyConversationalTrigger({
+        message,
+        content,
+        guildMode,
+        active: activeForPolicy,
+        defaultPersonaId,
+      });
+
+      if (suppressedTrigger) {
+        textReplyLog.info("Suppressed conversational text reply", {
+          event_type: "TEXT_REPLY_SUPPRESSED",
+          guild_id: message.guildId,
+          channel_id: message.channelId,
+          user_id: message.author.id,
+          reason: textReplyPolicy.reason,
+          trigger: suppressedTrigger,
+          interaction_id: interactionId,
+        });
+      }
+
+      return;
+    }
+
+    // 2) AWAKEN-ON-NAME: Auto-awaken Meepo if message contains "meepo" and Meepo is not active
+    let active = activeForPolicy;
+    const contentLower = content.toLowerCase();
+
     const defaultPersonaName = getPersona(defaultPersonaId).displayName.toLowerCase();
     const autoWakeHit =
       isWakePhrase(content, defaultPersonaId, { mentioned: false, prefix: cfg.discord.botPrefix }) ||

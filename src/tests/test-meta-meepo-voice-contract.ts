@@ -12,44 +12,39 @@ describe("metaMeepoVoice contract", () => {
 
   test("status snapshot keeps core structural sections", () => {
     const output = metaMeepoVoice.status.snapshot({
-      setupVersion: 1,
-      awake: true,
-      voiceMode: "hush",
-      effectiveMode: "ambient",
-      canonMode: "meta",
-      dmBinding: "<@dm-1> (dm-1)",
-      configuredCanonPersona: "(auto)",
-      effectivePersonaDisplayName: "Meta Meepo",
-      effectivePersonaId: "meta_meepo",
-      activeSessionId: "session-1",
-      activeSessionSummary: "C2E21 (active)",
-      homeText: "<#text>",
-      homeVoice: "<#voice>",
-      inVoice: false,
-      connectedVoice: "(unset)",
-      sttActive: false,
-      sttProviderName: "noop",
-      lastTranscription: "(none)",
-      baseRecapCached: true,
-      finalStyle: "balanced",
-      finalCreatedAt: "2026-03-03T00:00:00.000Z",
-      finalHash: "abcdef0123456789",
-      ttsAvailable: false,
-      ttsProviderName: "noop",
-      hints: ["join voice"],
+      lifecycleState: "Showtime Active",
+      voiceState: "Connected",
+      session: "C2E21 (active)",
+      campaign: "default",
+      nextStep: "Use /meepo showtime end when the session is over.",
+      isDevUser: true,
+      devDiagnosticsLines: ["Runtime mode: ambient"],
+      legacyLabNotes: ["Lab diagnostics available in /lab."],
     });
 
     const headers = extractHeaders(output);
     expect(headers).toEqual([
-      "Status",
-      "Persona",
-      "Session",
-      "Home",
-      "Voice + STT",
-      "Recap",
-      "TTS",
-      "Hints",
+      "Main Status",
+      "Dev Diagnostics",
+      "Legacy / Lab Notes",
     ]);
+  });
+
+  test("status snapshot hides dev sections for non-dev viewers", () => {
+    const output = metaMeepoVoice.status.snapshot({
+      lifecycleState: "Ready",
+      voiceState: "Not connected",
+      session: "No active session",
+      campaign: "default",
+      nextStep: "Use /meepo showtime start to begin a session.",
+      isDevUser: false,
+      devDiagnosticsLines: ["Runtime mode: ambient"],
+      legacyLabNotes: ["Lab diagnostics available in /lab."],
+    });
+
+    expect(output).toContain("**Main Status**");
+    expect(output).not.toContain("**Dev Diagnostics**");
+    expect(output).not.toContain("**Legacy / Lab Notes**");
   });
 
   test("sessions view output keeps core section anchors", () => {
