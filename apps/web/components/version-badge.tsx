@@ -7,17 +7,23 @@ export default function VersionBadge() {
     <div
       style={{
         position: "fixed",
-        bottom: 8,
-        left: 12,
+          bottom: 10,
+          left: 10,
+          padding: "3px 8px",
+          borderRadius: 999,
+          border: "1px solid rgba(255,255,255,0.16)",
+          background: "rgba(8,12,20,0.72)",
+          color: "rgba(255,255,255,0.92)",
         fontSize: "11px",
-        opacity: 0.6,
+          letterSpacing: "0.03em",
+          opacity: 0.92,
         fontFamily: "monospace",
         zIndex: 9999,
         pointerEvents: "none",
       }}
       aria-label="app-version"
     >
-      {APP_VERSION}
+        v{APP_VERSION}
     </div>
   );
 }

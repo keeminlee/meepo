@@ -15,6 +15,7 @@ echo "[deploy] app_dir=$APP_DIR branch=$BRANCH"
 
 cd "$APP_DIR"
 git fetch --prune origin
+git fetch --force --tags origin
 git checkout "$BRANCH"
 git reset --hard "origin/$BRANCH"
 
@@ -25,7 +26,11 @@ echo "[deploy] building web app"
 cd "$APP_DIR/apps/web"
 rm -rf .next
 npm ci
-export NEXT_PUBLIC_APP_VERSION="$(git -C "$APP_DIR" describe --tags --abbrev=0)"
+NEXT_PUBLIC_APP_VERSION="$(git -C "$APP_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
+if [ -z "${NEXT_PUBLIC_APP_VERSION:-}" ]; then
+  NEXT_PUBLIC_APP_VERSION="$(git -C "$APP_DIR" rev-parse --short HEAD)"
+fi
+export NEXT_PUBLIC_APP_VERSION
 echo "[deploy] NEXT_PUBLIC_APP_VERSION=$NEXT_PUBLIC_APP_VERSION"
 npm run build
 
