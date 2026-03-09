@@ -70,7 +70,7 @@ wait_for_http() {
   local delay_secs="${3:-1}"
 
   for ((i=1; i<=attempts; i++)); do
-    if curl -fsS "$url" >/dev/null; then
+    if curl -fsS "$url" >/dev/null 2>&1; then
       return 0
     fi
     sleep "$delay_secs"
