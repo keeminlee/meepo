@@ -1,6 +1,6 @@
 # Meepo Bot
-**PROD DISCORD APP LINK: https://discord.com/oauth2/authorize?client_id=1470521616747200524&permissions=3214336&integration_type=0&scope=bot+applications.commands**
-**DEV DISCORD APP LINK: https://discord.com/oauth2/authorize?client_id=1479618157650907276&permissions=2150632448&integration_type=0&scope=bot+applications.commands**
+**PROD DISCORD APP LINK: https://discord.com/oauth2/authorize?client_id=1470521616747200524&permissions=1051648&integration_type=0&scope=bot+applications.commands**
+**DEV DISCORD APP LINK: https://discord.com/oauth2/authorize?client_id=1479618157650907276&permissions=3148800&integration_type=0&scope=bot+applications.commands**
 
 
 **Meepo** is a diegetic AI companion for tabletop RPG campaigns.  
@@ -123,6 +123,14 @@ Meepo’s primary interactions are organized into a few command families.
 ```
 meepo awaken | status | talk | hush | help
 ```
+
+### Production Surface Rules
+
+- In production, Meepo does not provide ambient conversational text replies in channel chat.
+- Public interaction is slash-command and voice/session first.
+- `/meepo status` responds ephemerally and shows a concise public status view.
+- Dev-only diagnostics and lab/legacy notes are shown only to dev-gated users.
+- Use `/lab` for internal diagnostics and debugging routes.
 
 ### Configuration
 ```

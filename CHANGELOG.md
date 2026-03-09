@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.10.1 - 2026-03-09
+
+### Changed
+
+- Enforced production text silence for normal channel messages:
+  - conversational text replies are disabled for non-dev users when `NODE_ENV=production`,
+  - text can still be ingested for ledger/history,
+  - suppression emits structured logs (`TEXT_REPLY_SUPPRESSED`) without channel noise.
+- Kept slash-command and voice/session reply surfaces unchanged.
+- Refactored `/meepo status`:
+  - now always replies ephemerally,
+  - non-dev users see a clean public `Main Status` view,
+  - dev users additionally see separate `Dev Diagnostics` and `Legacy / Lab Notes` sections.
+
+### Tests
+
+- Added `src/tests/test-text-reply-policy.ts` for production text-reply gating.
+- Updated status voice-contract tests for public/dev section split.
+
 ## v1.10 - 2026-03-07
 
 ### Added

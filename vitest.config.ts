@@ -58,6 +58,7 @@ export default defineConfig({
       "src/tests/test-meepo-voice-boundary.ts",
       "src/tests/test-voice-reply-degradation-contract.ts",
       "src/tests/test-meta-meepo-voice-contract.ts",
+      "src/tests/test-text-reply-policy.ts",
       "src/tests/test-persona-canon-mode-switch.ts",
       "src/tests/test-recap-engine.ts",
       "src/tests/test-artifact-naming-fallback.ts",

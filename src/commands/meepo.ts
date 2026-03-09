@@ -3005,6 +3005,9 @@ export async function executeLabDoctor(interaction: any, ctx: CommandCtx): Promi
 async function handleStatus(interaction: any, ctx: CommandCtx): Promise<void> {
   const guildId = interaction.guildId as string;
   const active = getActiveMeepo(guildId);
+  const isDevViewer = isDevUser(interaction.user?.id);
+  const lifecycle = deriveLifecycleState(guildId);
+  const lifecycleLabel = lifecycle === "Awakened" ? "Ready" : lifecycle === "Showtime" ? "Showtime Active" : "Dormant";
   const voiceState = getVoiceState(guildId);
   const homeText = getGuildHomeTextChannelId(guildId);
   const homeVoice = resolveGuildHomeVoiceChannelId(guildId, cfg.overlay.homeVoiceChannelId ?? null);
@@ -3032,20 +3035,14 @@ async function handleStatus(interaction: any, ctx: CommandCtx): Promise<void> {
     )
     .get(guildId) as { ts: number | null } | undefined;
 
-  const awake = Boolean(active);
-  const talkMode = awake && active?.reply_mode === "voice" && Boolean(voiceState) && !isVoiceHushEnabled(guildId);
-  const voiceMode = awake ? (talkMode ? "talk" : "hush") : "asleep";
+  const activeSessionSummary = activeSession ? summarizeSession(activeSession) : "No active session";
+  const voiceLabel = voiceState ? "Connected" : "Not connected";
 
-  const hints: string[] = [];
-  if (awake && !voiceState) {
-    hints.push(metaMeepoVoice.status.hintJoinVoice());
-  }
-  if (!hasTtsAvailable()) {
-    hints.push(metaMeepoVoice.status.hintEnableTts());
-  }
-  if (!homeText) {
-    hints.push(metaMeepoVoice.status.hintSetHomeText());
-  }
+  const nextStep = lifecycle === "Dormant"
+    ? "Use /meepo awaken to initialize Meepo."
+    : lifecycle === "Showtime"
+      ? "Use /meepo showtime end when the session is over."
+      : "Use /meepo showtime start to begin a session.";
 
   const baseStatus = statusSession
     ? getBaseStatus(guildId, ctx.campaignSlug, statusSession.session_id, statusSession.label)
@@ -3064,7 +3061,7 @@ async function handleStatus(interaction: any, ctx: CommandCtx): Promise<void> {
     ? new Date(recapFinal.created_at_ms).toISOString()
     : "(none)";
   const finalHash = recapFinal?.source_hash ? `${recapFinal.source_hash.slice(0, 12)}…` : "(none)";
-  const showInternalDebug = cfg.logging.level === "debug" || cfg.logging.level === "trace";
+  const showInternalDebug = isDevViewer && (cfg.logging.level === "debug" || cfg.logging.level === "trace");
   const workerStatus = showInternalDebug ? getMeepoContextWorkerStatus(guildId) : null;
   const internalDebugLines = workerStatus
     ? [
@@ -3075,36 +3072,49 @@ async function handleStatus(interaction: any, ctx: CommandCtx): Promise<void> {
       ]
     : undefined;
 
+  const talkMode = active && active.reply_mode === "voice" && Boolean(voiceState) && !isVoiceHushEnabled(guildId);
+  const devDiagnosticsLines = isDevViewer
+    ? [
+        `Runtime mode: ${effectiveMode}`,
+        `Lifecycle raw: ${lifecycle}`,
+        `Canon persona mode: ${canonMode}`,
+        `DM binding: ${dmBinding ? `<@${dmBinding}> (${dmBinding})` : "(unset)"}`,
+        `Configured canon persona: ${configuredCanonPersona}`,
+        `Effective persona: ${effectivePersona.displayName} (${effectivePersonaId})`,
+        `Home text: ${formatChannel(homeText)}`,
+        `Home voice: ${formatChannel(homeVoice)}`,
+        `Voice runtime: ${active ? (talkMode ? "talk" : "hush") : "asleep"}`,
+        `Connected voice channel: ${formatChannel(voiceState?.channelId ?? null)}`,
+        `STT: ${voiceState?.sttEnabled ? "active" : "inactive"} (${sttInfo.name})`,
+        `Last transcription: ${lastTranscriptionRow?.ts ? new Date(lastTranscriptionRow.ts).toISOString() : "(none)"}`,
+        `TTS available: ${hasTtsAvailable() ? "yes" : "no"} (${ttsInfo.name})`,
+        `Setup version: v${setupVersion}`,
+        `Base recap cached: ${baseStatus?.exists ? "yes" : "no"}`,
+        `Final recap: ${finalStyle} @ ${finalCreatedAt}`,
+        `Final hash: ${finalHash}`,
+        ...(internalDebugLines ?? []),
+      ]
+    : undefined;
+
+  const legacyLabNotes = isDevViewer
+    ? [
+        "Lab/legacy diagnostics stay in /lab surfaces; /meepo status keeps product-facing status first.",
+        "Text-chat conversational replies are disabled in production for non-dev users.",
+      ]
+    : undefined;
+
   await interaction.reply({
     content: metaMeepoVoice.status.snapshot({
-      setupVersion,
-      awake,
-      voiceMode,
-      effectiveMode,
-      canonMode,
-      dmBinding: dmBinding ? `<@${dmBinding}> (${dmBinding})` : "(unset)",
-      configuredCanonPersona,
-      effectivePersonaDisplayName: effectivePersona.displayName,
-      effectivePersonaId,
-      activeSessionId: activeSession?.session_id ?? null,
-      activeSessionSummary: activeSession ? summarizeSession(activeSession) : "(none)",
-      homeText: formatChannel(homeText),
-      homeVoice: formatChannel(homeVoice),
-      inVoice: Boolean(voiceState),
-      connectedVoice: formatChannel(voiceState?.channelId ?? null),
-      sttActive: Boolean(voiceState?.sttEnabled),
-      sttProviderName: sttInfo.name,
-      lastTranscription: lastTranscriptionRow?.ts ? new Date(lastTranscriptionRow.ts).toISOString() : "(none)",
-      baseRecapCached: Boolean(baseStatus?.exists),
-      finalStyle,
-      finalCreatedAt,
-      finalHash,
-      ttsAvailable: hasTtsAvailable(),
-      ttsProviderName: ttsInfo.name,
-      hints,
-      internalDebugLines,
+      lifecycleState: lifecycleLabel,
+      voiceState: voiceLabel,
+      session: activeSessionSummary,
+      campaign: ctx.campaignSlug,
+      nextStep,
+      isDevUser: isDevViewer,
+      devDiagnosticsLines,
+      legacyLabNotes,
     }),
-    ephemeral: false,
+    ephemeral: true,
   });
 }
 
