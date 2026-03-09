@@ -65,5 +65,5 @@ jobs:
           PORT="$EC2_SSH_PORT"
           if [ -z "$PORT" ]; then PORT="22"; fi
           TARGET="$EC2_SSH_USER@$EC2_SSH_HOST"
-          ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -p "$PORT" "$TARGET" \
-            'cd /home/meepo/meepo-bot && ./deploy-meepo.sh main'
+          REMOTE_CMD='set -euo pipefail; if command -v sudo >/dev/null 2>&1; then sudo -n -u meepo bash -lc "cd /home/meepo/meepo-bot && ./deploy-meepo.sh main"; else cd /home/meepo/meepo-bot && ./deploy-meepo.sh main; fi'
+          ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -p "$PORT" "$TARGET" "$REMOTE_CMD"
