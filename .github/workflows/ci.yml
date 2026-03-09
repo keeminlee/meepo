@@ -27,22 +27,43 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify
     runs-on: ubuntu-latest
+    env:
+      EC2_SSH_HOST: ${{ secrets.EC2_SSH_HOST }}
+      EC2_SSH_USER: ${{ secrets.EC2_SSH_USER }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
     steps:
+      - name: Validate deploy secrets
+        run: |
+          if [ -z "$EC2_SSH_HOST" ]; then
+            echo "::error::Missing required secret: EC2_SSH_HOST"
+            exit 1
+          fi
+          if [ -z "$EC2_SSH_USER" ]; then
+            echo "::error::Missing required secret: EC2_SSH_USER"
+            exit 1
+          fi
+          if [ -z "$EC2_SSH_KEY" ]; then
+            echo "::error::Missing required secret: EC2_SSH_KEY"
+            exit 1
+          fi
+
       - name: Prepare SSH key
         run: |
           install -m 0700 -d ~/.ssh
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
       - name: Add EC2 host key (best effort)
         run: |
-          PORT="${{ secrets.EC2_SSH_PORT }}"
+          PORT="$EC2_SSH_PORT"
           if [ -z "$PORT" ]; then PORT="22"; fi
-          ssh-keyscan -T 10 -p "$PORT" -H "${{ secrets.EC2_SSH_HOST }}" >> ~/.ssh/known_hosts || true
+          ssh-keyscan -T 10 -p "$PORT" -H "$EC2_SSH_HOST" >> ~/.ssh/known_hosts || true
 
       - name: Deploy on EC2
         run: |
-          PORT="${{ secrets.EC2_SSH_PORT }}"
+          PORT="$EC2_SSH_PORT"
           if [ -z "$PORT" ]; then PORT="22"; fi
-          ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -p "$PORT" "${{ secrets.EC2_SSH_USER }}@${{ secrets.EC2_SSH_HOST }}" \
+          TARGET="$EC2_SSH_USER@$EC2_SSH_HOST"
+          ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -p "$PORT" "$TARGET" \
             'cd /home/meepo/meepo-bot && ./deploy-meepo.sh main'
