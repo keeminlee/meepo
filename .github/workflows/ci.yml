@@ -34,10 +34,15 @@ jobs:
           printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
-      - name: Add EC2 host key
-        run: ssh-keyscan -p "${{ secrets.EC2_SSH_PORT || '22' }}" -H "${{ secrets.EC2_SSH_HOST }}" >> ~/.ssh/known_hosts
+      - name: Add EC2 host key (best effort)
+        run: |
+          PORT="${{ secrets.EC2_SSH_PORT }}"
+          if [ -z "$PORT" ]; then PORT="22"; fi
+          ssh-keyscan -T 10 -p "$PORT" -H "${{ secrets.EC2_SSH_HOST }}" >> ~/.ssh/known_hosts || true
 
       - name: Deploy on EC2
         run: |
-          ssh -p "${{ secrets.EC2_SSH_PORT || '22' }}" "${{ secrets.EC2_SSH_USER }}@${{ secrets.EC2_SSH_HOST }}" \
+          PORT="${{ secrets.EC2_SSH_PORT }}"
+          if [ -z "$PORT" ]; then PORT="22"; fi
+          ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -p "$PORT" "${{ secrets.EC2_SSH_USER }}@${{ secrets.EC2_SSH_HOST }}" \
             'cd /home/meepo/meepo-bot && ./deploy-meepo.sh main'
