@@ -47,21 +47,41 @@ sudo systemctl restart meepo-web
 sudo systemctl restart meepo-bot
 
 echo "[deploy] validating service health"
-if ! sudo systemctl is-active --quiet meepo-web; then
-  echo "meepo-web is not active" >&2
-  sudo journalctl -u meepo-web -n 200 --no-pager || true
-  exit 1
-fi
+wait_for_active() {
+  local unit="$1"
+  local attempts="${2:-20}"
+  local delay_secs="${3:-1}"
 
-if ! sudo systemctl is-active --quiet meepo-bot; then
-  echo "meepo-bot is not active" >&2
-  sudo journalctl -u meepo-bot -n 200 --no-pager || true
-  exit 1
-fi
+  for ((i=1; i<=attempts; i++)); do
+    if sudo systemctl is-active --quiet "$unit"; then
+      return 0
+    fi
+    sleep "$delay_secs"
+  done
 
-if ! curl -fsS http://127.0.0.1:3000 >/dev/null; then
-  echo "Web health check failed at http://127.0.0.1:3000" >&2
-  exit 1
-fi
+  echo "$unit is not active" >&2
+  sudo journalctl -u "$unit" -n 200 --no-pager || true
+  return 1
+}
+
+wait_for_http() {
+  local url="$1"
+  local attempts="${2:-30}"
+  local delay_secs="${3:-1}"
+
+  for ((i=1; i<=attempts; i++)); do
+    if curl -fsS "$url" >/dev/null; then
+      return 0
+    fi
+    sleep "$delay_secs"
+  done
+
+  echo "Web health check failed at $url" >&2
+  return 1
+}
+
+wait_for_active meepo-web
+wait_for_active meepo-bot
+wait_for_http http://127.0.0.1:3000
 
 echo "[deploy] success: $BRANCH deployed"
