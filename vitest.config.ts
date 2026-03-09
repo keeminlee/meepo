@@ -87,6 +87,7 @@ export default defineConfig({
       "src/tests/test-session-recaps-api.ts",
       "src/tests/test-web-auth-context-guard.ts",
       "src/tests/test-web-active-campaign-resolver.ts",
+      "src/tests/test-web-session-scope-disambiguation.ts",
       "src/tests/test-web-dashboard-phaseb.ts",
       "src/tests/test-web-recap-visibility.ts",
       "src/tests/test-web-phase55-authority-and-recaps.ts",

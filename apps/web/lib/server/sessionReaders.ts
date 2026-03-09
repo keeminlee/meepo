@@ -42,28 +42,73 @@ function normalizeAuthorizedGuildIds(ids: string[]): string[] {
   return out;
 }
 
+function normalizeScopeToken(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+function readScopeHint(
+  searchParams: Record<string, string | string[] | undefined> | undefined,
+  ...keys: string[]
+): string | null {
+  if (!searchParams) return null;
+  for (const key of keys) {
+    const value = searchParams[key];
+    if (Array.isArray(value)) {
+      const normalized = normalizeScopeToken(value[0]);
+      if (normalized) return normalized;
+      continue;
+    }
+    const normalized = normalizeScopeToken(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+type ResolvedSessionOwnership = {
+  guildId: string;
+  campaignSlug: string;
+  session: ArchiveSessionRow;
+};
+
 async function resolveAuthorizedSessionOwnership(args: {
   authorizedGuildIds: string[];
   sessionId: string;
-}): Promise<{ guildId: string; campaignSlug: string; session: ArchiveSessionRow }> {
+  searchParams?: Record<string, string | string[] | undefined>;
+}): Promise<ResolvedSessionOwnership> {
 
   const guildIds = normalizeAuthorizedGuildIds(args.authorizedGuildIds);
   if (guildIds.length === 0) {
     throw new ScopeGuardError("Session is out of scope for the authorized guild set.");
   }
 
-  for (const guildId of guildIds) {
-    const campaignCandidates = new Set<string>();
-    const configuredSlug = getGuildCampaignSlug(guildId);
-    if (configuredSlug) {
-      campaignCandidates.add(configuredSlug);
-    }
+  const requestedGuildId = readScopeHint(args.searchParams, "guild_id", "guildId");
+  const requestedCampaignSlug = readScopeHint(args.searchParams, "campaign_slug", "campaignSlug");
 
-    const records = listGuildCampaignRecords(guildId);
-    for (const record of records) {
-      const slug = record.campaign_slug?.trim();
-      if (!slug) continue;
-      campaignCandidates.add(slug);
+  if (requestedGuildId && !guildIds.includes(requestedGuildId)) {
+    throw new ScopeGuardError("Session is out of scope for the authorized guild set.");
+  }
+
+  const guildIdsToScan = requestedGuildId ? [requestedGuildId] : guildIds;
+  const matches: ResolvedSessionOwnership[] = [];
+
+  for (const guildId of guildIdsToScan) {
+    const campaignCandidates = new Set<string>();
+
+    if (requestedCampaignSlug) {
+      campaignCandidates.add(requestedCampaignSlug);
+    } else {
+      const configuredSlug = getGuildCampaignSlug(guildId);
+      if (configuredSlug) {
+        campaignCandidates.add(configuredSlug);
+      }
+
+      const records = listGuildCampaignRecords(guildId);
+      for (const record of records) {
+        const slug = record.campaign_slug?.trim();
+        if (!slug) continue;
+        campaignCandidates.add(slug);
+      }
     }
 
     for (const campaignSlug of campaignCandidates) {
@@ -79,8 +124,21 @@ async function resolveAuthorizedSessionOwnership(args: {
         sessionGuildId: session.guild_id,
       });
 
-      return { guildId, campaignSlug, session };
+      matches.push({ guildId, campaignSlug, session });
     }
+  }
+
+  if (matches.length > 1) {
+    throw new WebDataError(
+      "ambiguous_session_scope",
+      409,
+      `Session '${args.sessionId}' matches multiple authorized scopes. Provide guild_id to disambiguate.`
+    );
+  }
+
+  const resolved = matches[0];
+  if (resolved) {
+    return resolved;
   }
 
   throw new ScopeGuardError("Session is out of scope for the authorized guild set.");
@@ -100,6 +158,7 @@ export async function updateWebSessionLabel(args: {
     const { guildId, campaignSlug } = await resolveAuthorizedSessionOwnership({
       authorizedGuildIds: auth.authorizedGuildIds,
       sessionId: args.sessionId,
+      searchParams: args.searchParams,
     });
 
     assertUserCanWriteGuildArchive({
@@ -136,10 +195,12 @@ export async function updateWebSessionLabel(args: {
 export async function getCanonicalSessionDetail(args: {
   authorizedGuildIds: string[];
   sessionId: string;
+  searchParams?: Record<string, string | string[] | undefined>;
 }): Promise<CanonicalSessionDetail> {
   const { guildId, campaignSlug, session } = await resolveAuthorizedSessionOwnership({
     authorizedGuildIds: args.authorizedGuildIds,
     sessionId: args.sessionId,
+    searchParams: args.searchParams,
   });
 
   const warnings: string[] = [];
@@ -225,6 +286,7 @@ export async function getWebSessionDetail(args: {
     const canonical = await getCanonicalSessionDetail({
       authorizedGuildIds: auth.authorizedGuildIds,
       sessionId: args.sessionId,
+      searchParams: args.searchParams,
     });
 
     return buildSessionDetail({
@@ -257,6 +319,7 @@ export async function regenerateWebSessionRecap(args: {
     const { guildId, campaignSlug } = await resolveAuthorizedSessionOwnership({
       authorizedGuildIds: auth.authorizedGuildIds,
       sessionId: args.sessionId,
+      searchParams: args.searchParams,
     });
 
     assertUserCanWriteGuildArchive({

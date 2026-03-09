@@ -196,6 +196,39 @@ describe("web dashboard Phase B state engine", () => {
     db.close();
   });
 
+  test("keeps campaign visible when configured slug matches meta campaign slug", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-web-phaseb-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    await setAuthGuilds(["guild-1"]);
+
+    const { getDbForCampaign } = await import("../db.js");
+    const { ensureGuildConfig, setGuildAwakened, setGuildMetaCampaignSlug, setGuildCampaignSlug } = await import("../campaign/guildConfig.js");
+    const { createShowtimeCampaign } = await import("../campaign/showtimeCampaigns.js");
+    const { startSession } = await import("../sessions/sessions.js");
+    const db = getDbForCampaign("default");
+
+    ensureGuildConfig("guild-1", "Guild One");
+    setGuildAwakened("guild-1", true);
+
+    const campaign = createShowtimeCampaign({
+      guildId: "guild-1",
+      campaignName: "homebrew_campaign_2",
+      createdByUserId: "dm-user",
+    });
+
+    setGuildCampaignSlug("guild-1", campaign.campaign_slug);
+    setGuildMetaCampaignSlug("guild-1", campaign.campaign_slug);
+    startSession("guild-1", "dm-user", "DM", { source: "live", kind: "canon", modeAtStart: "canon" });
+
+    const model = await getWebDashboardModel();
+    expect(model.authState).toBe("ok");
+    expect(model.campaigns.some((item: any) => item.slug === campaign.campaign_slug)).toBe(true);
+
+    db.close();
+  });
+
   test("dashboard model lists only authorized guild scope", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-web-phaseb-"));
     tempDirs.push(tempDir);

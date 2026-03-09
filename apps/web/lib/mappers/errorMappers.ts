@@ -6,6 +6,7 @@ export type WebDataErrorCode =
   | "not_found"
   | "invalid_request"
   | "ambiguous_campaign_scope"
+  | "ambiguous_session_scope"
   | "conflict"
   | "transcript_unavailable"
   | "recap_unavailable"

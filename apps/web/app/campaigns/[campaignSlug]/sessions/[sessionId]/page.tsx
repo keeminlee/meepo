@@ -20,7 +20,10 @@ export default async function CampaignSessionPage({ params, searchParams }: Page
   let session = null as Awaited<ReturnType<typeof getSessionDetailApi>>["session"] | null;
 
   try {
-    const response = await getSessionDetailApi(sessionId, query);
+    const response = await getSessionDetailApi(sessionId, {
+      ...query,
+      campaign_slug: campaignSlug,
+    });
     session = response.session;
   } catch (error) {
     if (error instanceof WebApiError && error.status === 404) {

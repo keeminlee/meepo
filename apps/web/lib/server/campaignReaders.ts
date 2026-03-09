@@ -211,11 +211,10 @@ async function listWebCampaignForGuild(args: {
   for (const campaign of showtimeCampaigns) {
     const slug = campaign.campaign_slug?.trim();
     if (!slug) continue;
-    if (configState.metaCampaignSlug && slug === configState.metaCampaignSlug) continue;
     slugSet.add(slug);
   }
 
-  if (configuredSlug && configuredSlug !== configState.metaCampaignSlug) {
+  if (configuredSlug) {
     slugSet.add(configuredSlug);
   }
 
@@ -409,11 +408,6 @@ export async function getWebCampaignDetail(args: {
   }
 
   const guildId = resolvedScope.guildId;
-  const guildState = getGuildConfigState(guildId);
-  if (guildState.metaCampaignSlug && args.campaignSlug === guildState.metaCampaignSlug) {
-    return null;
-  }
-
   const sessions = await listWebSessionsForCampaign({
     guildId,
     campaignSlug: args.campaignSlug,
