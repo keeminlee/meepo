@@ -4,17 +4,27 @@ let activeSession: any | null = null;
 let recapArtifact: any | null = null;
 let baseExists = false;
 let awakened = false;
+let currentCampaignSlug = "default";
+let metaCampaignSlug: string | null = null;
+let dmUserId: string | null = "user-1";
+const showtimeCampaigns: Array<{ campaign_slug: string; campaign_name: string }> = [];
 
 vi.mock("../../campaign/guildConfig.js", () => ({
-  ensureGuildConfig: vi.fn(() => undefined),
+  ensureGuildConfig: vi.fn(() => ({ campaign_slug: currentCampaignSlug })),
   getGuildAwakened: vi.fn(() => awakened),
+  getGuildMetaCampaignSlug: vi.fn(() => metaCampaignSlug),
   setGuildAwakened: vi.fn((_guildId: string, value: boolean) => {
     awakened = value;
   }),
-  setGuildCampaignSlug: vi.fn(() => undefined),
+  setGuildCampaignSlug: vi.fn((_guildId: string, value: string) => {
+    currentCampaignSlug = value;
+  }),
+  setGuildMetaCampaignSlug: vi.fn((_guildId: string, value: string | null) => {
+    metaCampaignSlug = value;
+  }),
   getGuildCanonPersonaId: vi.fn(() => null),
   getGuildCanonPersonaMode: vi.fn(() => "meta"),
-  getGuildDmUserId: vi.fn(() => null),
+  getGuildDmUserId: vi.fn(() => dmUserId),
   getGuildConfig: vi.fn(() => ({ campaign_slug: "default", setup_version: 1, default_recap_style: "balanced" })),
   getGuildDefaultRecapStyle: vi.fn(() => "balanced"),
   getGuildHomeTextChannelId: vi.fn(() => "text-1"),
@@ -26,7 +36,9 @@ vi.mock("../../campaign/guildConfig.js", () => ({
   setGuildCanonPersonaId: vi.fn(),
   setGuildCanonPersonaMode: vi.fn(),
   setGuildDefaultRecapStyle: vi.fn(),
-  setGuildDmUserId: vi.fn(),
+  setGuildDmUserId: vi.fn((_guildId: string, value: string | null) => {
+    dmUserId = value;
+  }),
 }));
 
 vi.mock("../../campaign/ensureGuildSetup.js", () => ({
@@ -37,6 +49,39 @@ vi.mock("../../campaign/ensureGuildSetup.js", () => ({
     setupVersionChanged: false,
     canAttemptVoice: false,
   })),
+}));
+
+vi.mock("../../campaign/showtimeCampaigns.js", () => ({
+  listShowtimeCampaigns: vi.fn(() => showtimeCampaigns.map((record) => ({
+    guild_id: "guild-1",
+    campaign_slug: record.campaign_slug,
+    campaign_name: record.campaign_name,
+    created_at_ms: Date.now(),
+    created_by_user_id: "user-1",
+  }))),
+  getShowtimeCampaignBySlug: vi.fn((_guildId: string, slug: string) => {
+    const found = showtimeCampaigns.find((record) => record.campaign_slug === slug);
+    if (!found) return null;
+    return {
+      guild_id: "guild-1",
+      campaign_slug: found.campaign_slug,
+      campaign_name: found.campaign_name,
+      created_at_ms: Date.now(),
+      created_by_user_id: "user-1",
+    };
+  }),
+  createShowtimeCampaign: vi.fn((_args: { guildId: string; campaignName: string; createdByUserId?: string }) => {
+    const slug = `campaign_${showtimeCampaigns.length + 1}`;
+    const record = { campaign_slug: slug, campaign_name: "Echoes of Avernus" };
+    showtimeCampaigns.push(record);
+    return {
+      guild_id: "guild-1",
+      campaign_slug: record.campaign_slug,
+      campaign_name: record.campaign_name,
+      created_at_ms: Date.now(),
+      created_by_user_id: "user-1",
+    };
+  }),
 }));
 
 vi.mock("../../config/env.js", () => ({
@@ -192,7 +237,7 @@ vi.mock("../../voice/receiver.js", () => ({
 }));
 
 vi.mock("../../voice/state.js", () => ({
-  getVoiceState: vi.fn(() => null),
+  getVoiceState: vi.fn(() => ({ channelId: "voice-1" })),
   isVoiceHushEnabled: vi.fn(() => true),
   setVoiceHushEnabled: vi.fn(),
   setVoiceState: vi.fn(),
@@ -221,6 +266,10 @@ afterEach(() => {
   recapArtifact = null;
   baseExists = false;
   awakened = false;
+  currentCampaignSlug = "default";
+  metaCampaignSlug = null;
+  dmUserId = "user-1";
+  showtimeCampaigns.length = 0;
   vi.clearAllMocks();
 });
 
@@ -268,7 +317,7 @@ describe("v1.1 golden path smoke (mocked)", () => {
         options: {
           getSubcommandGroup: vi.fn(() => "showtime"),
           getSubcommand: vi.fn(() => "start"),
-          getString: vi.fn(() => null),
+          getString: vi.fn((name: string) => (name === "campaign_name" ? "Echoes of Avernus" : null)),
         },
         reply: showtimeReply,
       } as any,

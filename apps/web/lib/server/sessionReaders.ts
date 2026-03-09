@@ -7,14 +7,17 @@ import { getDemoSessionDetail, isDemoSessionId } from "@/lib/server/demoCampaign
 import {
   findSessionByGuildAndId,
   getGuildCampaignSlug,
+  listGuildCampaignRecords,
   readSessionRecap,
   readSessionTranscript,
+  updateSessionLabel,
   type ArchiveRecap,
   type ArchiveSessionRow,
   type ArchiveTranscript,
 } from "@/lib/server/readData/archiveReadStore";
 import { assertSessionGuildInAuthorizedScope, ScopeGuardError } from "@/lib/server/scopeGuards";
 import type { SessionArtifactStatus, SessionDetail } from "@/lib/types";
+import { assertUserCanWriteGuildArchive, canUserWriteGuildArchive } from "@/lib/server/writeAuthority";
 
 export type CanonicalSessionDetail = {
   guildId: string;
@@ -50,25 +53,84 @@ async function resolveAuthorizedSessionOwnership(args: {
   }
 
   for (const guildId of guildIds) {
-    const campaignSlug = getGuildCampaignSlug(guildId);
-    if (!campaignSlug) continue;
+    const campaignCandidates = new Set<string>();
+    const configuredSlug = getGuildCampaignSlug(guildId);
+    if (configuredSlug) {
+      campaignCandidates.add(configuredSlug);
+    }
 
-    const session = findSessionByGuildAndId({
-      guildId,
-      campaignSlug,
-      sessionId: args.sessionId,
-    });
-    if (!session) continue;
+    const records = listGuildCampaignRecords(guildId);
+    for (const record of records) {
+      const slug = record.campaign_slug?.trim();
+      if (!slug) continue;
+      campaignCandidates.add(slug);
+    }
 
-    assertSessionGuildInAuthorizedScope({
-      authorizedGuildIds: guildIds,
-      sessionGuildId: session.guild_id,
-    });
+    for (const campaignSlug of campaignCandidates) {
+      const session = findSessionByGuildAndId({
+        guildId,
+        campaignSlug,
+        sessionId: args.sessionId,
+      });
+      if (!session) continue;
 
-    return { guildId, campaignSlug, session };
+      assertSessionGuildInAuthorizedScope({
+        authorizedGuildIds: guildIds,
+        sessionGuildId: session.guild_id,
+      });
+
+      return { guildId, campaignSlug, session };
+    }
   }
 
   throw new ScopeGuardError("Session is out of scope for the authorized guild set.");
+}
+
+export async function updateWebSessionLabel(args: {
+  sessionId: string;
+  label: string | null;
+  searchParams?: Record<string, string | string[] | undefined>;
+}): Promise<SessionDetail> {
+  try {
+    if (isDemoSessionId(args.sessionId)) {
+      throw new WebDataError("invalid_request", 422, "Demo sessions do not support label editing.");
+    }
+
+    const auth = await resolveWebAuthContext(args.searchParams);
+    const { guildId, campaignSlug } = await resolveAuthorizedSessionOwnership({
+      authorizedGuildIds: auth.authorizedGuildIds,
+      sessionId: args.sessionId,
+    });
+
+    assertUserCanWriteGuildArchive({
+      guildId,
+      userId: auth.user?.id ?? null,
+    });
+
+    const normalizedLabel = args.label === null ? null : args.label.trim();
+    if (normalizedLabel !== null && normalizedLabel.length > 80) {
+      throw new WebDataError("invalid_request", 422, "session label exceeds max length (80).");
+    }
+
+    // Canonical source-of-truth: mutate only sessions.label in the scoped campaign DB.
+    const updated = updateSessionLabel({
+      guildId,
+      campaignSlug,
+      sessionId: args.sessionId,
+      label: normalizedLabel && normalizedLabel.length > 0 ? normalizedLabel : null,
+    });
+
+    if (!updated) {
+      throw new ScopeGuardError("Session is out of scope for the authorized guild set.");
+    }
+
+    return getWebSessionDetail({
+      sessionId: args.sessionId,
+      searchParams: args.searchParams,
+    });
+  } catch (error) {
+    throw mapToWebDataError(error);
+  }
 }
 
 export async function getCanonicalSessionDetail(args: {
@@ -174,6 +236,7 @@ export async function getWebSessionDetail(args: {
       transcriptStatus: canonical.transcriptStatus,
       recapStatus: canonical.recapStatus,
       warnings: canonical.warnings,
+      canWrite: canUserWriteGuildArchive({ guildId: canonical.guildId, userId: auth.user?.id ?? null }),
     });
   } catch (error) {
     throw mapToWebDataError(error);
@@ -191,9 +254,14 @@ export async function regenerateWebSessionRecap(args: {
     }
 
     const auth = await resolveWebAuthContext(args.searchParams);
-    const { guildId } = await resolveAuthorizedSessionOwnership({
+    const { guildId, campaignSlug } = await resolveAuthorizedSessionOwnership({
       authorizedGuildIds: auth.authorizedGuildIds,
       sessionId: args.sessionId,
+    });
+
+    assertUserCanWriteGuildArchive({
+      guildId,
+      userId: auth.user?.id ?? null,
     });
 
     // Recap generation requires OpenAI at execution time; read paths remain independent.
@@ -202,6 +270,7 @@ export async function regenerateWebSessionRecap(args: {
     const { regenerateSessionRecap } = await import("../../../../src/sessions/sessionRecaps");
     await regenerateSessionRecap({
       guildId,
+      campaignSlug,
       sessionId: args.sessionId,
       reason: args.reason,
     });

@@ -55,7 +55,7 @@ export default async function CampaignSessionPage({ params, searchParams }: Page
   return (
     <ArchiveShell section="Sessions" campaignName={session.campaignName}>
       <div className="space-y-8 pb-16">
-        <SessionHeader session={session} />
+        <SessionHeader session={session} searchParams={query} />
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           <div className="lg:col-span-7">
             <RecapTabs
@@ -64,7 +64,11 @@ export default async function CampaignSessionPage({ params, searchParams }: Page
               sessionTitle={session.title}
               campaignSlug={session.campaignSlug}
               searchParams={query}
-              canRegenerate={session.campaignSlug !== "demo" && Boolean(process.env.OPENAI_API_KEY?.trim())}
+              canRegenerate={
+                session.campaignSlug !== "demo"
+                && Boolean(process.env.OPENAI_API_KEY?.trim())
+                && Boolean(session.canWrite)
+              }
               showRegenerateUnavailableBanner={session.campaignSlug !== "demo"}
               status={session.artifacts.recap}
               emptyDescription={recapEmptyDescription}

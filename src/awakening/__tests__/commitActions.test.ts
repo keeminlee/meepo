@@ -62,6 +62,39 @@ describe("awakening commit actions", () => {
     db.close();
   });
 
+  test("set_guild_config can persist meta_campaign_slug", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-commit-actions-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const { getDbForCampaign } = await import("../../db.js");
+    const { initState } = await import("../../ledger/awakeningStateRepo.js");
+    const { buildCommitContext, executeCommitAction } = await import("../commitActions/commitActionRegistry.js");
+    const { getGuildMetaCampaignSlug } = await import("../../campaign/guildConfig.js");
+
+    const db = getDbForCampaign("default");
+    const state = initState("guild-1", "meepo_awaken", 1, "done", { db });
+
+    const ctx = buildCommitContext({
+      db,
+      guildId: "guild-1",
+      scriptId: "meepo_awaken",
+      sceneId: "done",
+      progress: state.progress_json,
+      inputs: {},
+      onboardingState: state,
+    });
+
+    await executeCommitAction(ctx, {
+      type: "set_guild_config",
+      key: "meta_campaign_slug",
+      value: "keemin_s_d_d_server",
+    });
+
+    expect(getGuildMetaCampaignSlug("guild-1")).toBe("keemin_s_d_d_server");
+    db.close();
+  });
+
   test("write_memory is idempotent for dm_display_name", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-commit-actions-"));
     tempDirs.push(tempDir);
@@ -116,7 +149,7 @@ describe("awakening commit actions", () => {
     const { initState, markComplete } = await import("../../ledger/awakeningStateRepo.js");
     const { buildCommitContext, executeCommitAction } = await import("../commitActions/commitActionRegistry.js");
     const { setGuildAwakened, setGuildCampaignSlug } = await import("../../campaign/guildConfig.js");
-    const { getRegistryDirForCampaign } = await import("../../registry/scaffold.js");
+    const { getRegistryDirForScope } = await import("../../registry/scaffold.js");
     const yaml = (await import("yaml")).default;
 
     const db = getDbForCampaign("default");
@@ -213,7 +246,7 @@ describe("awakening commit actions", () => {
       mode: "append_only",
     });
 
-    const registryDir = getRegistryDirForCampaign("default");
+    const registryDir = getRegistryDirForScope({ guildId: "guild-2", campaignSlug: "default" });
     const pcsPath = path.join(registryDir, "pcs.yml");
     expect(fs.existsSync(pcsPath)).toBe(true);
 

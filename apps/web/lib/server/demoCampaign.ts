@@ -133,6 +133,7 @@ export function getDemoCampaignSummary(): CampaignSummary {
     guildId: DEMO_GUILD_ID,
     name: "Demo Campaign",
     guildName: "System Demo",
+    guildIconUrl: null,
     description: "Guided sample archive with example sessions, recaps, and compendium entries.",
     sessionCount: DEMO_SESSIONS.length,
     lastSessionDate: DEMO_SESSIONS[0]?.date ?? null,
@@ -140,6 +141,7 @@ export function getDemoCampaignSummary(): CampaignSummary {
     type: "system",
     editable: false,
     persisted: false,
+    canWrite: false,
   };
 }
 

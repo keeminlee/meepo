@@ -57,8 +57,8 @@ function normalizeArtifactStrategy(strategy?: string | null): string {
   return value && value.length > 0 ? value : "default";
 }
 
-function getSessionDbForGuild(guildId: string) {
-  const campaignSlug = resolveCampaignSlug({ guildId });
+function getSessionDbForGuild(guildId: string, campaignSlugOverride?: string | null) {
+  const campaignSlug = campaignSlugOverride?.trim() || resolveCampaignSlug({ guildId });
   return {
     campaignSlug,
     dbPath: resolveCampaignDbPath(campaignSlug),
@@ -263,8 +263,8 @@ export function listSessions(guildId: string, limit: number = 10): Session[] {
   return rows;
 }
 
-export function getSessionById(guildId: string, sessionId: string): Session | null {
-  const { db } = getSessionDbForGuild(guildId);
+export function getSessionById(guildId: string, sessionId: string, campaignSlug?: string | null): Session | null {
+  const { db } = getSessionDbForGuild(guildId, campaignSlug);
   const row = db
     .prepare("SELECT * FROM sessions WHERE guild_id = ? AND session_id = ? LIMIT 1")
     .get(guildId, sessionId) as Session | undefined;
@@ -275,9 +275,10 @@ export function getSessionArtifact(
   guildId: string,
   sessionId: string,
   artifactType: SessionArtifactType | string,
-  strategy?: string | null
+  strategy?: string | null,
+  campaignSlug?: string | null
 ): SessionArtifact | null {
-  const { db } = getSessionDbForGuild(guildId);
+  const { db } = getSessionDbForGuild(guildId, campaignSlug);
   const row =
     strategy == null
       ? (db
@@ -311,8 +312,8 @@ export function getSessionArtifact(
   return row ?? null;
 }
 
-export function getSessionArtifactsForSession(guildId: string, sessionId: string): SessionArtifact[] {
-  const { db } = getSessionDbForGuild(guildId);
+export function getSessionArtifactsForSession(guildId: string, sessionId: string, campaignSlug?: string | null): SessionArtifact[] {
+  const { db } = getSessionDbForGuild(guildId, campaignSlug);
   const rows = db
     .prepare(
       `
@@ -379,6 +380,7 @@ export function getSessionArtifactMap(
 export function upsertSessionArtifact(args: {
   guildId: string;
   sessionId: string;
+  campaignSlug?: string | null;
   artifactType: SessionArtifactType | string;
   createdAtMs?: number;
   engine?: string | null;
@@ -390,7 +392,7 @@ export function upsertSessionArtifact(args: {
   filePath?: string | null;
   sizeBytes?: number | null;
 }): SessionArtifact {
-  const { db } = getSessionDbForGuild(args.guildId);
+  const { db } = getSessionDbForGuild(args.guildId, args.campaignSlug);
   const now = args.createdAtMs ?? Date.now();
   const id = randomUUID();
   const strategyKey = normalizeArtifactStrategy(args.strategy);
@@ -438,7 +440,7 @@ export function upsertSessionArtifact(args: {
     args.sizeBytes ?? null
   );
 
-  const row = getSessionArtifact(args.guildId, args.sessionId, args.artifactType);
+  const row = getSessionArtifact(args.guildId, args.sessionId, args.artifactType, undefined, args.campaignSlug);
   if (!row) {
     throw new Error(`Failed to upsert session artifact: ${args.sessionId}/${args.artifactType}`);
   }

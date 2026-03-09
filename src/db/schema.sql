@@ -129,6 +129,22 @@ ON guild_onboarding_state(guild_id, script_id);
 CREATE INDEX IF NOT EXISTS idx_guild_onboarding_state_guild
 ON guild_onboarding_state(guild_id);
 
+-- Durable guild display metadata cache for web identity rendering.
+-- Authorization remains guild_id-based; this table is enrichment-only.
+CREATE TABLE IF NOT EXISTS discord_guild_metadata (
+  guild_id TEXT PRIMARY KEY,
+  guild_name TEXT NOT NULL,
+  guild_icon TEXT,
+  updated_at_ms INTEGER NOT NULL,
+  last_seen_at_ms INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_discord_guild_metadata_updated
+ON discord_guild_metadata(updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_discord_guild_metadata_last_seen
+ON discord_guild_metadata(last_seen_at_ms DESC);
+
 -- Latches v2: per (guild, channel, user) for Tier S/A reply gating
 CREATE TABLE IF NOT EXISTS latches (
   guild_id TEXT NOT NULL,

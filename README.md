@@ -1,5 +1,7 @@
 # Meepo Bot
-**DISCORD APP LINK: https://discord.com/oauth2/authorize?client_id=1470521616747200524&permissions=3214336&integration_type=0&scope=bot+applications.commands**
+**PROD DISCORD APP LINK: https://discord.com/oauth2/authorize?client_id=1470521616747200524&permissions=3214336&integration_type=0&scope=bot+applications.commands**
+**DEV DISCORD APP LINK: https://discord.com/oauth2/authorize?client_id=1479618157650907276&permissions=2150632448&integration_type=0&scope=bot+applications.commands**
+
 
 **Meepo** is a diegetic AI companion for tabletop RPG campaigns.  
 She sits quietly beside your party in Discord, listens as the story unfolds, and preserves the adventure in an append-only narrative ledger.
@@ -17,6 +19,12 @@ The goal is simple:
 
 For first-time setup, start here:  
 ➡ **[docs/START_HERE.md](docs/START_HERE.md)**
+
+Closed Alpha release control (branch alignment + scope freeze):
+➡ **[docs/ops/CLOSED_ALPHA_PHASE0_RELEASE_CONTROL.md](docs/ops/CLOSED_ALPHA_PHASE0_RELEASE_CONTROL.md)**
+
+Closed Alpha Phase 5 deploy/runtime versioning (in-repo deploy hook + systemd units):
+➡ **[docs/ops/CLOSED_ALPHA_PHASE5_DEPLOY_RUNTIME_VERSIONING.md](docs/ops/CLOSED_ALPHA_PHASE5_DEPLOY_RUNTIME_VERSIONING.md)**
 
 ### Prerequisites
 

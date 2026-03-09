@@ -3,8 +3,11 @@ import { AttachmentBuilder, GuildMember, SlashCommandBuilder } from "discord.js"
 import {
   ensureGuildConfig,
   getGuildAwakened,
+  getGuildMetaCampaignSlug,
+  resolveCampaignSlug,
   setGuildAwakened,
   setGuildCampaignSlug,
+  setGuildMetaCampaignSlug,
   getGuildCanonPersonaId,
   getGuildCanonPersonaMode,
   getGuildConfig,
@@ -17,11 +20,17 @@ import {
   getGuildSetupVersion,
   resolveGuildHomeVoiceChannelId,
   setGuildDefaultTalkMode,
+  setGuildDmUserId,
   setGuildDmRoleId,
   setGuildHomeTextChannelId,
   setGuildHomeVoiceChannelId,
 } from "../campaign/guildConfig.js";
-import { getDefaultCampaignSlug } from "../campaign/defaultCampaign.js";
+import { normalizeCampaignSlugLookup, slugifyCampaignScopeName } from "../campaign/campaignScopeSlug.js";
+import {
+  createShowtimeCampaign,
+  getShowtimeCampaignBySlug,
+  listShowtimeCampaigns,
+} from "../campaign/showtimeCampaigns.js";
 import { ensureGuildSetup, type SetupReport } from "../campaign/ensureGuildSetup.js";
 import { cfg } from "../config/env.js";
 import { AwakenEngine, type AwakenRunResult } from "../awakening/AwakenEngine.js";
@@ -51,6 +60,7 @@ import {
   getFinalStatus,
   type RecapPassStrategy,
 } from "../sessions/megameecapArtifactLocator.js";
+import { getDbForCampaign } from "../db.js";
 import { resolveEffectiveMode, setGuildMode } from "../sessions/sessionRuntime.js";
 import {
   deriveLifecycleState,
@@ -323,7 +333,7 @@ function buildRecapDedupeKey(args: {
 }): string {
   return [
     args.guildId.trim().toLowerCase(),
-    args.campaignSlug.trim().toLowerCase(),
+    normalizeCampaignSlugLookup(args.campaignSlug),
     args.sessionId.trim().toLowerCase(),
     "recap_final",
     args.strategy,
@@ -431,7 +441,14 @@ function formatAwakenStatus(runResult: AwakenRunResult): string {
       return "Awakening paused: awaiting DM input.";
     }
     if (runResult.reason === "action" || runResult.reason === "commit") {
-      return `Awakening paused: ${runResult.reason} steps not implemented yet (Sprint 5).`;
+      return [
+        "Meepo setup was interrupted.",
+        "",
+        "Run:",
+        "/meepo awaken",
+        "",
+        "to resume setup.",
+      ].join("\n");
     }
     if (runResult.reason === "budget") {
       return "Awakening paused: beat budget reached for this run. Use /meepo awaken again to continue.";
@@ -1521,7 +1538,7 @@ async function runDoctorChecks(interaction: any, ctx: CommandCtx): Promise<Docto
     checks.push({
       icon: "⚠️",
       label: "No session data yet",
-      action: "Run /meepo awaken once, then use /meepo showtime start and generate a recap",
+      action: "Use /meepo showtime start to begin a session, then /meepo showtime end to generate recap artifacts",
     });
   } else {
     const baseStatus = getBaseStatus(guildId, ctx.campaignSlug, session.session_id, session.label);
@@ -1562,14 +1579,40 @@ function formatSessionChoice(session: SessionRow, idx: number): { name: string; 
   };
 }
 
+function buildCanonicalShowtimeEventPayload(args: {
+  eventType: string;
+  guildId: string;
+  campaignSlug?: string | null;
+  sessionId?: string | null;
+  traceId?: string | null;
+  outcome?: "start" | "success" | "failure";
+  error?: string;
+  extra?: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    event_type: args.eventType,
+    guild_id: args.guildId,
+    campaign_slug: args.campaignSlug ?? null,
+    session_id: args.sessionId ?? null,
+    timestamp_ms: Date.now(),
+    trace_id: args.traceId ?? null,
+    outcome: args.outcome ?? "success",
+    ...(args.error ? { error: args.error } : {}),
+    ...(args.extra ?? {}),
+  };
+}
+
 async function ensureVoiceConnection(interaction: any, guildId: string): Promise<{
   joinedVoiceChannelId: string | null;
   stayPutNotice: string | null;
   notInVoiceNotice: string | null;
 }> {
   const guild = interaction.guild;
-  const member = await guild.members.fetch(interaction.user.id);
-  const invokerVoiceChannelId = member.voice.channelId ?? null;
+  const memberFromInteraction = interaction.member as GuildMember | null | undefined;
+  const fetchedMember = !memberFromInteraction?.voice?.channelId && guild?.members?.fetch
+    ? await guild.members.fetch(interaction.user.id)
+    : null;
+  const invokerVoiceChannelId = memberFromInteraction?.voice?.channelId ?? fetchedMember?.voice?.channelId ?? null;
   const currentVoiceState = getVoiceState(guildId);
 
   if (currentVoiceState) {
@@ -1609,10 +1652,6 @@ async function ensureVoiceConnection(interaction: any, guildId: string): Promise
   });
 
   startReceiver(guildId);
-
-  if (!getGuildHomeVoiceChannelId(guildId)) {
-    setGuildHomeVoiceChannelId(guildId, invokerVoiceChannelId);
-  }
 
   return {
     joinedVoiceChannelId: invokerVoiceChannelId,
@@ -1760,10 +1799,36 @@ export async function executeLabAwakenRespond(interaction: any, ctx: CommandCtx,
 function kickoffShowtimeArtifactsAsync(args: {
   ctx: CommandCtx;
   guildId: string;
+  channelId: string;
+  campaignSlug: string;
   sessionId: string;
   sessionLabel?: string | null;
 }): void {
+  const campaignDb = getDbForCampaign(args.campaignSlug);
+
   void Promise.resolve().then(async () => {
+    logSystemEvent({
+      guildId: args.guildId,
+      channelId: args.channelId,
+      eventType: "SHOWTIME_ARTIFACT_KICKOFF",
+      content: JSON.stringify(
+        buildCanonicalShowtimeEventPayload({
+          eventType: "SHOWTIME_ARTIFACT_KICKOFF",
+          guildId: args.guildId,
+          campaignSlug: args.campaignSlug,
+          sessionId: args.sessionId,
+          traceId: args.ctx.trace_id,
+          outcome: "start",
+          extra: {
+            stage: "start",
+          },
+        })
+      ),
+      authorId: "system",
+      authorName: "SYSTEM",
+      narrativeWeight: "secondary",
+    });
+
     meepoCommandLog.info("Showtime artifact kickoff started", {
       event_type: "SHOWTIME_ARTIFACT_KICKOFF",
       stage: "start",
@@ -1771,27 +1836,203 @@ function kickoffShowtimeArtifactsAsync(args: {
       session_label: args.sessionLabel ?? null,
     }, {
       guild_id: args.guildId,
-      campaign_slug: args.ctx.campaignSlug,
+      campaign_slug: args.campaignSlug,
       interaction_id: args.ctx.interaction_id,
       trace_id: args.ctx.trace_id,
       session_id: args.sessionId,
     });
 
     try {
-      ensureBronzeTranscriptExportCached({
+      logSystemEvent({
         guildId: args.guildId,
-        campaignSlug: args.ctx.campaignSlug,
-        sessionId: args.sessionId,
-        sessionLabel: args.sessionLabel,
-        db: args.ctx.db,
-        timeBudgetMs: TRANSCRIPT_EXPORT_TIME_BUDGET_MS,
+        channelId: args.channelId,
+        eventType: "TRANSCRIPT_BEGIN",
+        content: JSON.stringify(
+          buildCanonicalShowtimeEventPayload({
+            eventType: "TRANSCRIPT_BEGIN",
+            guildId: args.guildId,
+            campaignSlug: args.campaignSlug,
+            sessionId: args.sessionId,
+            traceId: args.ctx.trace_id,
+            outcome: "start",
+          })
+        ),
+        authorId: "system",
+        authorName: "SYSTEM",
+        narrativeWeight: "secondary",
+      });
+
+      let transcriptExportResult: { cacheHit: boolean };
+      try {
+        transcriptExportResult = ensureBronzeTranscriptExportCached({
+          guildId: args.guildId,
+          campaignSlug: args.campaignSlug,
+          sessionId: args.sessionId,
+          sessionLabel: args.sessionLabel,
+          db: campaignDb,
+          timeBudgetMs: TRANSCRIPT_EXPORT_TIME_BUDGET_MS,
+        });
+      } catch (error) {
+        logSystemEvent({
+          guildId: args.guildId,
+          channelId: args.channelId,
+          eventType: "TRANSCRIPT_END",
+          content: JSON.stringify(
+            buildCanonicalShowtimeEventPayload({
+              eventType: "TRANSCRIPT_END",
+              guildId: args.guildId,
+              campaignSlug: args.campaignSlug,
+              sessionId: args.sessionId,
+              traceId: args.ctx.trace_id,
+              outcome: "failure",
+              error: error instanceof Error ? error.message : String(error),
+            })
+          ),
+          authorId: "system",
+          authorName: "SYSTEM",
+          narrativeWeight: "secondary",
+        });
+        throw error;
+      }
+
+      logSystemEvent({
+        guildId: args.guildId,
+        channelId: args.channelId,
+        eventType: "TRANSCRIPT_WRITE",
+        content: JSON.stringify(
+          buildCanonicalShowtimeEventPayload({
+            eventType: "TRANSCRIPT_WRITE",
+            guildId: args.guildId,
+            campaignSlug: args.campaignSlug,
+            sessionId: args.sessionId,
+            traceId: args.ctx.trace_id,
+            extra: {
+              cache_hit: transcriptExportResult.cacheHit,
+            },
+          })
+        ),
+        authorId: "system",
+        authorName: "SYSTEM",
+        narrativeWeight: "secondary",
+      });
+
+      logSystemEvent({
+        guildId: args.guildId,
+        channelId: args.channelId,
+        eventType: "TRANSCRIPT_END",
+        content: JSON.stringify(
+          buildCanonicalShowtimeEventPayload({
+            eventType: "TRANSCRIPT_END",
+            guildId: args.guildId,
+            campaignSlug: args.campaignSlug,
+            sessionId: args.sessionId,
+            traceId: args.ctx.trace_id,
+          })
+        ),
+        authorId: "system",
+        authorName: "SYSTEM",
+        narrativeWeight: "secondary",
       });
 
       const strategy = getGuildDefaultRecapStyle(args.guildId) ?? DEFAULT_RECAP_STRATEGY;
-      await generateSessionRecap({
+
+      logSystemEvent({
         guildId: args.guildId,
-        sessionId: args.sessionId,
-        strategy,
+        channelId: args.channelId,
+        eventType: "RECAP_GENERATE",
+        content: JSON.stringify(
+          buildCanonicalShowtimeEventPayload({
+            eventType: "RECAP_GENERATE",
+            guildId: args.guildId,
+            campaignSlug: args.campaignSlug,
+            sessionId: args.sessionId,
+            traceId: args.ctx.trace_id,
+            outcome: "start",
+            extra: {
+              strategy,
+            },
+          })
+        ),
+        authorId: "system",
+        authorName: "SYSTEM",
+        narrativeWeight: "secondary",
+      });
+
+      let recapResult: { cacheHit: boolean };
+      try {
+        recapResult = await generateSessionRecap({
+          guildId: args.guildId,
+          sessionId: args.sessionId,
+          campaignSlug: args.campaignSlug,
+          strategy,
+        });
+      } catch (error) {
+        logSystemEvent({
+          guildId: args.guildId,
+          channelId: args.channelId,
+          eventType: "RECAP_GENERATE",
+          content: JSON.stringify(
+            buildCanonicalShowtimeEventPayload({
+              eventType: "RECAP_GENERATE",
+              guildId: args.guildId,
+              campaignSlug: args.campaignSlug,
+              sessionId: args.sessionId,
+              traceId: args.ctx.trace_id,
+              outcome: "failure",
+              error: error instanceof Error ? error.message : String(error),
+              extra: {
+                strategy,
+              },
+            })
+          ),
+          authorId: "system",
+          authorName: "SYSTEM",
+          narrativeWeight: "secondary",
+        });
+        throw error;
+      }
+
+      logSystemEvent({
+        guildId: args.guildId,
+        channelId: args.channelId,
+        eventType: "SESSION_RECAP_GENERATED",
+        content: JSON.stringify(
+          buildCanonicalShowtimeEventPayload({
+            eventType: "SESSION_RECAP_GENERATED",
+            guildId: args.guildId,
+            campaignSlug: args.campaignSlug,
+            sessionId: args.sessionId,
+            traceId: args.ctx.trace_id,
+            extra: {
+              strategy,
+              cache_hit: recapResult.cacheHit,
+            },
+          })
+        ),
+        authorId: "system",
+        authorName: "SYSTEM",
+        narrativeWeight: "secondary",
+      });
+
+      logSystemEvent({
+        guildId: args.guildId,
+        channelId: args.channelId,
+        eventType: "RECAP_GENERATE",
+        content: JSON.stringify(
+          buildCanonicalShowtimeEventPayload({
+            eventType: "RECAP_GENERATE",
+            guildId: args.guildId,
+            campaignSlug: args.campaignSlug,
+            sessionId: args.sessionId,
+            traceId: args.ctx.trace_id,
+            extra: {
+              strategy,
+            },
+          })
+        ),
+        authorId: "system",
+        authorName: "SYSTEM",
+        narrativeWeight: "secondary",
       });
 
       meepoCommandLog.info("Showtime artifact kickoff succeeded", {
@@ -1801,10 +2042,32 @@ function kickoffShowtimeArtifactsAsync(args: {
         strategy,
       }, {
         guild_id: args.guildId,
-        campaign_slug: args.ctx.campaignSlug,
+        campaign_slug: args.campaignSlug,
         interaction_id: args.ctx.interaction_id,
         trace_id: args.ctx.trace_id,
         session_id: args.sessionId,
+      });
+
+      logSystemEvent({
+        guildId: args.guildId,
+        channelId: args.channelId,
+        eventType: "SHOWTIME_ARTIFACT_KICKOFF",
+        content: JSON.stringify(
+          buildCanonicalShowtimeEventPayload({
+            eventType: "SHOWTIME_ARTIFACT_KICKOFF",
+            guildId: args.guildId,
+            campaignSlug: args.campaignSlug,
+            sessionId: args.sessionId,
+            traceId: args.ctx.trace_id,
+            extra: {
+              stage: "success",
+              strategy,
+            },
+          })
+        ),
+        authorId: "system",
+        authorName: "SYSTEM",
+        narrativeWeight: "secondary",
       });
     } catch (error) {
       meepoCommandLog.warn("Showtime artifact kickoff failed", {
@@ -1814,10 +2077,33 @@ function kickoffShowtimeArtifactsAsync(args: {
         error: error instanceof Error ? error.message : String(error),
       }, {
         guild_id: args.guildId,
-        campaign_slug: args.ctx.campaignSlug,
+        campaign_slug: args.campaignSlug,
         interaction_id: args.ctx.interaction_id,
         trace_id: args.ctx.trace_id,
         session_id: args.sessionId,
+      });
+
+      logSystemEvent({
+        guildId: args.guildId,
+        channelId: args.channelId,
+        eventType: "SHOWTIME_ARTIFACT_KICKOFF",
+        content: JSON.stringify(
+          buildCanonicalShowtimeEventPayload({
+            eventType: "SHOWTIME_ARTIFACT_KICKOFF",
+            guildId: args.guildId,
+            campaignSlug: args.campaignSlug,
+            sessionId: args.sessionId,
+            traceId: args.ctx.trace_id,
+            outcome: "failure",
+            error: error instanceof Error ? error.message : String(error),
+            extra: {
+              stage: "error",
+            },
+          })
+        ),
+        authorId: "system",
+        authorName: "SYSTEM",
+        narrativeWeight: "secondary",
       });
     }
   });
@@ -1835,9 +2121,26 @@ async function handleAwaken(interaction: any, ctx: CommandCtx): Promise<void> {
     return;
   }
 
-  const defaultCampaignSlug = getDefaultCampaignSlug();
-  ensureGuildConfig(guildId, interaction.guild?.name ?? null);
-  setGuildCampaignSlug(guildId, defaultCampaignSlug);
+  const guildName = interaction.guild?.name ?? null;
+  const guildConfig = ensureGuildConfig(guildId, guildName);
+
+  const existingMetaSlug = getGuildMetaCampaignSlug(guildId);
+  if (!existingMetaSlug) {
+    const derivedMetaSlug = guildConfig.campaign_slug || slugifyCampaignScopeName(ctx.campaignSlug);
+    setGuildMetaCampaignSlug(guildId, derivedMetaSlug);
+  }
+
+  if (!getGuildDmUserId(guildId)) {
+    setGuildDmUserId(guildId, interaction.user.id as string);
+  }
+
+  if (!getGuildHomeTextChannelId(guildId)) {
+    const channelId = typeof interaction.channelId === "string" ? interaction.channelId : null;
+    if (channelId) {
+      setGuildHomeTextChannelId(guildId, channelId);
+    }
+  }
+
   setGuildAwakened(guildId, true);
   setGuildMode(guildId, "ambient");
 
@@ -1847,10 +2150,10 @@ async function handleAwaken(interaction: any, ctx: CommandCtx): Promise<void> {
 
   await interaction.reply({
     content: [
-      "Meepo awakens in this guild.",
+      "The Archive is now attentive.",
       "",
-      "Ambient mode is now active.",
-      "Use `/meepo showtime start` when your session begins.",
+      "Guild setup is complete for Closed Alpha.",
+      "Next step: run `/meepo showtime start` when your session begins.",
     ].join("\n"),
     ephemeral: true,
   });
@@ -1858,20 +2161,75 @@ async function handleAwaken(interaction: any, ctx: CommandCtx): Promise<void> {
 
 async function handleShowtimeStart(interaction: any, ctx: CommandCtx): Promise<void> {
   const guildId = interaction.guildId as string;
-  const lifecycle = deriveLifecycleState(guildId);
-
-  if (lifecycle === "Dormant") {
-    await interaction.reply({
-      content: "Meepo is not awakened in this guild yet. Use `/meepo awaken` first.",
-      ephemeral: true,
-    });
-    return;
-  }
 
   const activeSession = getGuildActiveSession(guildId) as SessionRow | null;
   if (activeSession) {
     await interaction.reply({
       content: `A showtime session is already active (${getSessionDisplayLabel(activeSession)}). Use /meepo showtime end first.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const existingCampaignInput = interaction.options.getString("campaign", false);
+  const newCampaignNameInput = interaction.options.getString("campaign_name", false);
+
+  if (existingCampaignInput && newCampaignNameInput) {
+    await interaction.reply({
+      content: "Choose either `campaign` (reuse) or `campaign_name` (create), not both.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  let selectedCampaignSlug: string;
+  let selectedCampaignName: string;
+  let createdNewCampaign = false;
+
+  if (existingCampaignInput) {
+    const existing = getShowtimeCampaignBySlug(guildId, existingCampaignInput);
+    if (!existing) {
+      await interaction.reply({
+        content: `No showtime campaign found for slug: ${normalizeCampaignSlugLookup(existingCampaignInput)}.`,
+        ephemeral: true,
+      });
+      return;
+    }
+    selectedCampaignSlug = existing.campaign_slug;
+    selectedCampaignName = existing.campaign_name;
+  } else if (newCampaignNameInput?.trim()) {
+    const created = createShowtimeCampaign({
+      guildId,
+      campaignName: String(newCampaignNameInput ?? ""),
+      createdByUserId: interaction.user.id,
+    });
+    selectedCampaignSlug = created.campaign_slug;
+    selectedCampaignName = created.campaign_name;
+    createdNewCampaign = true;
+  } else {
+    const existingCampaigns = listShowtimeCampaigns(guildId);
+    if (existingCampaigns.length > 0) {
+      selectedCampaignSlug = existingCampaigns[0]!.campaign_slug;
+      selectedCampaignName = existingCampaigns[0]!.campaign_name;
+    } else {
+      const created = createShowtimeCampaign({
+        guildId,
+        campaignName: "Campaign Alpha",
+        createdByUserId: interaction.user.id,
+      });
+      selectedCampaignSlug = created.campaign_slug;
+      selectedCampaignName = created.campaign_name;
+      createdNewCampaign = true;
+    }
+  }
+
+  // Showtime sessions always bind to an explicit showtime campaign scope.
+  setGuildCampaignSlug(guildId, selectedCampaignSlug);
+
+  const voiceConnection = await ensureVoiceConnection(interaction, guildId);
+  if (!voiceConnection.joinedVoiceChannelId && !getVoiceState(guildId)) {
+    await interaction.reply({
+      content: "Join a voice channel first, then run `/meepo showtime start` again. Closed Alpha showtime is listen-only.",
       ephemeral: true,
     });
     return;
@@ -1886,30 +2244,66 @@ async function handleShowtimeStart(interaction: any, ctx: CommandCtx): Promise<v
   logSystemEvent({
     guildId,
     channelId: interaction.channelId,
+    eventType: "VOICE_JOIN",
+    content: JSON.stringify(
+      buildCanonicalShowtimeEventPayload({
+        eventType: "VOICE_JOIN",
+        guildId,
+        campaignSlug: selectedCampaignSlug,
+        sessionId: startedSession.session_id,
+        traceId: ctx.trace_id,
+        extra: {
+          channel_id: voiceConnection.joinedVoiceChannelId ?? getVoiceState(guildId)?.channelId ?? null,
+          reused_connection: !voiceConnection.joinedVoiceChannelId,
+          listen_only: true,
+        },
+      })
+    ),
+    authorId: interaction.user.id,
+    authorName: interaction.user.username,
+    narrativeWeight: "secondary",
+  });
+
+  logSystemEvent({
+    guildId,
+    channelId: interaction.channelId,
     eventType: "SESSION_STARTED",
     content: JSON.stringify({ id: startedSession.session_id, label: startedSession.label }),
     authorId: interaction.user.id,
     authorName: interaction.user.username,
     narrativeWeight: "secondary",
   });
+  logSystemEvent({
+    guildId,
+    channelId: interaction.channelId,
+    eventType: "SHOWTIME_START",
+    content: JSON.stringify(
+      buildCanonicalShowtimeEventPayload({
+        eventType: "SHOWTIME_START",
+        guildId,
+        campaignSlug: selectedCampaignSlug,
+        sessionId: startedSession.session_id,
+        traceId: ctx.trace_id,
+        extra: {
+          label: startedSession.label,
+        },
+      })
+    ),
+    authorId: interaction.user.id,
+    authorName: interaction.user.username,
+    narrativeWeight: "secondary",
+  });
 
   await interaction.reply({
-    content: "🎭 Showtime begins.\n\nSession recording has started.",
+    content: createdNewCampaign
+      ? `🎭 Showtime begins.\n\nCreated campaign **${selectedCampaignName}** (\`${selectedCampaignSlug}\`) and started session recording.\nMeepo is now listening in ${formatChannel(voiceConnection.joinedVoiceChannelId ?? getVoiceState(guildId)?.channelId ?? null)} (listen-only).`
+      : `🎭 Showtime begins.\n\nUsing campaign **${selectedCampaignName}** (\`${selectedCampaignSlug}\`) and started session recording.\nMeepo is now listening in ${formatChannel(voiceConnection.joinedVoiceChannelId ?? getVoiceState(guildId)?.channelId ?? null)} (listen-only).`,
     ephemeral: true,
   });
 }
 
 async function handleShowtimeEnd(interaction: any, ctx: CommandCtx): Promise<void> {
   const guildId = interaction.guildId as string;
-  const lifecycle = deriveLifecycleState(guildId);
-
-  if (lifecycle === "Dormant") {
-    await interaction.reply({
-      content: "Meepo is not awakened in this guild yet. Use `/meepo awaken` first.",
-      ephemeral: true,
-    });
-    return;
-  }
 
   const activeSession = getGuildActiveSession(guildId) as SessionRow | null;
   if (!activeSession) {
@@ -1930,16 +2324,64 @@ async function handleShowtimeEnd(interaction: any, ctx: CommandCtx): Promise<voi
     authorName: interaction.user.username,
     narrativeWeight: "secondary",
   });
+  logSystemEvent({
+    guildId,
+    channelId: interaction.channelId,
+    eventType: "SHOWTIME_END",
+    content: JSON.stringify(
+      buildCanonicalShowtimeEventPayload({
+        eventType: "SHOWTIME_END",
+        guildId,
+        campaignSlug: resolveCampaignSlug({ guildId }),
+        sessionId: activeSession.session_id,
+        traceId: ctx.trace_id,
+      })
+    ),
+    authorId: interaction.user.id,
+    authorName: interaction.user.username,
+    narrativeWeight: "secondary",
+  });
+
+  const currentVoiceState = getVoiceState(guildId);
+  const leftVoiceOnEnd = Boolean(currentVoiceState);
+  if (leftVoiceOnEnd) {
+    stopReceiver(guildId);
+    leaveVoice(guildId);
+    logSystemEvent({
+      guildId,
+      channelId: interaction.channelId,
+      eventType: "VOICE_LEAVE",
+      content: JSON.stringify(
+        buildCanonicalShowtimeEventPayload({
+          eventType: "VOICE_LEAVE",
+          guildId,
+          campaignSlug: resolveCampaignSlug({ guildId }),
+          sessionId: activeSession.session_id,
+          traceId: ctx.trace_id,
+          extra: {
+            reason: "showtime_end",
+          },
+        })
+      ),
+      authorId: interaction.user.id,
+      authorName: interaction.user.username,
+      narrativeWeight: "secondary",
+    });
+  }
 
   kickoffShowtimeArtifactsAsync({
     ctx,
     guildId,
+    channelId: interaction.channelId,
+    campaignSlug: resolveCampaignSlug({ guildId }),
     sessionId: activeSession.session_id,
     sessionLabel: activeSession.label,
   });
 
   await interaction.reply({
-    content: "🎬 Session complete.\n\nArtifacts are being generated.",
+    content: leftVoiceOnEnd
+      ? "🎬 Session complete.\n\nMeepo has left voice for this guild.\nArtifacts are being generated."
+      : "🎬 Session complete.\n\nArtifacts are being generated.",
     ephemeral: true,
   });
 }
@@ -2746,6 +3188,19 @@ export const meepo = {
           sub
             .setName("start")
             .setDescription("Start a showtime session.")
+            .addStringOption((opt) =>
+              opt
+                .setName("campaign")
+                .setDescription("Existing showtime campaign slug to reuse.")
+                .setAutocomplete(true)
+                .setRequired(false)
+            )
+            .addStringOption((opt) =>
+              opt
+                .setName("campaign_name")
+                .setDescription("Campaign name to create (slug is generated automatically).")
+                .setRequired(false)
+            )
         )
         .addSubcommand((sub) =>
           sub
@@ -2831,6 +3286,30 @@ export const meepo = {
     const guildId = interaction.guildId as string | null;
     if (!guildId) {
       await interaction.respond([]);
+      return;
+    }
+
+    const supportsShowtimeCampaignAutocomplete =
+      focused.name === "campaign" && subGroup === "showtime" && sub === "start";
+
+    if (supportsShowtimeCampaignAutocomplete) {
+      const query = String(focused.value ?? "").trim().toLowerCase();
+      const campaigns = listShowtimeCampaigns(guildId);
+      const options = campaigns
+        .filter((campaign) => {
+          if (!query) return true;
+          return (
+            campaign.campaign_slug.toLowerCase().includes(query)
+            || campaign.campaign_name.toLowerCase().includes(query)
+          );
+        })
+        .slice(0, 25)
+        .map((campaign) => ({
+          name: `${campaign.campaign_name} (${campaign.campaign_slug})`.slice(0, 100),
+          value: campaign.campaign_slug,
+        }));
+
+      await interaction.respond(options);
       return;
     }
 

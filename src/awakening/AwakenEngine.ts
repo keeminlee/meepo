@@ -501,6 +501,7 @@ export async function runCurrentScene(
       state,
     });
   } catch {
+    // Recoverable path: caller surfaces rerun guidance (/meepo awaken).
     return {
       status: "blocked",
       emittedBeatCount: emitted,

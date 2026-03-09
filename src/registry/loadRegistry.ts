@@ -3,7 +3,7 @@ import path from "path";
 import yaml from "yaml";
 import { Character, Location, Faction, Misc, Entity, LoadedRegistry, RawRegistryYaml } from "./types.js";
 import { getDefaultCampaignSlug } from "../campaign/defaultCampaign.js";
-import { ensureRegistryScaffold, getRegistryDirForCampaign } from "./scaffold.js";
+import { ensureRegistryScaffold, getRegistryDirForCampaign, getRegistryDirForScope } from "./scaffold.js";
 
 export type RegistryScope = {
   guildId: string;
@@ -34,11 +34,23 @@ function normKey(s: string): string {
  */
 export function loadRegistry(opts?: {
   campaignSlug?: string;  // campaign scope; default from env or "default"
+  guildId?: string;       // optional explicit guild scope for composite directory
   registryPath?: string;  // override: directory path (skips campaign-scoping)
   ignorePath?: string;    // override: ignore file path
 }): LoadedRegistry {
+  const requestedSlug = opts?.campaignSlug ?? getDefaultCampaignSlug();
+  const requestedGuildId = opts?.guildId?.trim();
+  const scopedRegistryDir = requestedGuildId
+    ? getRegistryDirForScope({ guildId: requestedGuildId, campaignSlug: requestedSlug })
+    : null;
+  const legacyRegistryDir = getRegistryDirForCampaign(requestedSlug);
+
   const registryDir = opts?.registryPath
-    ?? getRegistryDirForCampaign(opts?.campaignSlug ?? getDefaultCampaignSlug());
+    ?? (scopedRegistryDir && fs.existsSync(scopedRegistryDir)
+      ? scopedRegistryDir
+      : scopedRegistryDir && fs.existsSync(legacyRegistryDir)
+        ? legacyRegistryDir
+        : scopedRegistryDir ?? legacyRegistryDir);
   const ignorePath = opts?.ignorePath ?? path.join(registryDir, "ignore.yml");
 
   if (!fs.existsSync(registryDir)) {
@@ -300,6 +312,7 @@ export function loadRegistryForScope(
 
   return loadRegistry({
     campaignSlug,
+    guildId,
     registryPath: opts?.registryPath,
     ignorePath: opts?.ignorePath,
   });

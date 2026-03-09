@@ -3,6 +3,7 @@ import type {
   ArchiveSessionRow as Session,
   ArchiveTranscript as SessionTranscript,
 } from "@/lib/server/readData/archiveReadStore";
+import { formatSessionDisplayTitle, prettifyCampaignSlug } from "@/lib/campaigns/display";
 import type { SessionArtifactStatus, SessionDetail, SessionRecap, SessionStatus, TranscriptEntry } from "@/lib/types";
 
 function toIsoDate(ms: number): string {
@@ -40,6 +41,7 @@ export function mapCanonicalRecapToWebRecap(recap: CanonicalSessionRecap | null)
     detailed: recap.views.detailed,
     generatedAt: new Date(recap.generatedAt).toISOString(),
     modelVersion: recap.modelVersion,
+    source: recap.source,
   };
 }
 
@@ -52,6 +54,7 @@ export function buildSessionDetail(args: {
   transcriptStatus: SessionArtifactStatus;
   recapStatus: SessionArtifactStatus;
   warnings?: string[];
+  canWrite?: boolean;
 }): SessionDetail {
   const source = args.session.source === "ingest-media" ? "ingest" : "live";
 
@@ -59,8 +62,12 @@ export function buildSessionDetail(args: {
     id: args.session.session_id,
     guildId: args.guildId,
     campaignSlug: args.campaignSlug,
-    campaignName: args.campaignSlug,
-    title: args.session.label ?? args.session.session_id,
+    campaignName: prettifyCampaignSlug(args.campaignSlug),
+    label: args.session.label,
+    title: formatSessionDisplayTitle({
+      label: args.session.label,
+      sessionId: args.session.session_id,
+    }),
     date: toIsoDate(args.session.started_at_ms),
     status: mapCanonicalStatusToWebStatus(args.session.status),
     source,
@@ -71,5 +78,6 @@ export function buildSessionDetail(args: {
       recap: args.recapStatus,
     },
     warnings: args.warnings ?? [],
+    canWrite: args.canWrite ?? false,
   };
 }

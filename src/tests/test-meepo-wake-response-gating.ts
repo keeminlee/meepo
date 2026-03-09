@@ -81,7 +81,8 @@ describe("/meepo wake legacy response input behavior", () => {
     });
 
     const content = String(interaction.reply.mock.calls[0]?.[0]?.content ?? "");
-    expect(content).toContain("Meepo awakens in this guild");
+    expect(content).toContain("The Archive is now attentive.");
+    expect(content).toContain("Guild setup is complete for Closed Alpha.");
     expect(content).toContain("/meepo showtime start");
     db.close();
   });

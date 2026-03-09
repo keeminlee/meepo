@@ -5,6 +5,8 @@ import type {
   SessionDetailResponse,
   SessionRecapResponse,
   SessionTranscriptResponse,
+  UpdateSessionLabelRequest,
+  UpdateSessionLabelResponse,
 } from "@/lib/api/types";
 
 type QueryInput = Record<string, string | string[] | undefined> | undefined;
@@ -53,6 +55,18 @@ export async function regenerateSessionRecapApi(
 ): Promise<RegenerateSessionRecapResponse> {
   return fetchJson<RegenerateSessionRecapResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/regenerate`, {
     method: "POST",
+    query: toQuery(searchParams),
+    body: payload,
+  });
+}
+
+export async function updateSessionLabelApi(
+  sessionId: string,
+  payload: UpdateSessionLabelRequest,
+  searchParams?: QueryInput
+): Promise<UpdateSessionLabelResponse> {
+  return fetchJson<UpdateSessionLabelResponse>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
     query: toQuery(searchParams),
     body: payload,
   });

@@ -31,7 +31,25 @@ export function ensureRegistryScaffold(registryDir: string): void {
 }
 
 /**
+ * Return the absolute path for a campaign's guild-scoped registry directory.
+ * Canonical directory key format: g_<guildId>__c_<campaignSlug>
+ */
+export function getRegistryDirForScope(args: {
+  guildId: string;
+  campaignSlug: string;
+  baseDir?: string;
+}): string {
+  const base = args.baseDir ?? path.join(process.cwd(), "data", "registry");
+  const slug = args.campaignSlug.trim().toLowerCase();
+  const guild = args.guildId.trim().toLowerCase();
+  const safeSlug = slug.replace(/[^a-z0-9-_]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "") || "default";
+  const safeGuild = guild.replace(/[^a-z0-9-_]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "") || "none";
+  return path.join(base, `g_${safeGuild}__c_${safeSlug}`);
+}
+
+/**
  * Return the absolute path for a campaign's registry directory.
+ * Legacy slug-only path kept for compatibility tooling.
  */
 export function getRegistryDirForCampaign(campaignSlug: string, baseDir?: string): string {
   const base = baseDir ?? path.join(process.cwd(), "data", "registry");

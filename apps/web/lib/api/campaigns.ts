@@ -1,5 +1,10 @@
 import { fetchJson } from "@/lib/api/http";
-import type { CampaignSessionsResponse, CampaignsResponse } from "@/lib/api/types";
+import type {
+  CampaignSessionsResponse,
+  CampaignsResponse,
+  UpdateCampaignNameRequest,
+  UpdateCampaignNameResponse,
+} from "@/lib/api/types";
 
 type QueryInput = Record<string, string | string[] | undefined> | undefined;
 
@@ -25,5 +30,17 @@ export async function getCampaignSessionsApi(
 ): Promise<CampaignSessionsResponse> {
   return fetchJson<CampaignSessionsResponse>(`/api/campaigns/${encodeURIComponent(campaignSlug)}/sessions`, {
     query: toQuery(searchParams),
+  });
+}
+
+export async function updateCampaignNameApi(
+  campaignSlug: string,
+  payload: UpdateCampaignNameRequest,
+  searchParams?: QueryInput
+): Promise<UpdateCampaignNameResponse> {
+  return fetchJson<UpdateCampaignNameResponse>(`/api/campaigns/${encodeURIComponent(campaignSlug)}`, {
+    method: "PATCH",
+    query: toQuery(searchParams),
+    body: payload,
   });
 }

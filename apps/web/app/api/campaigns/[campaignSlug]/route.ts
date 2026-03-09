@@ -1,0 +1,44 @@
+import { NextRequest, NextResponse } from "next/server";
+import { readSearchParams, jsonError } from "@/app/api/_utils";
+import { toCampaignSummaryDto } from "@/lib/mappers/campaignMappers";
+import { WebDataError } from "@/lib/mappers/errorMappers";
+import { getWebCampaignDetail, updateWebCampaignName } from "@/lib/server/campaignReaders";
+import type { UpdateCampaignNameRequest } from "@/lib/api/types";
+
+type RouteContext = {
+  params: Promise<{ campaignSlug: string }>;
+};
+
+export async function GET(request: NextRequest, context: RouteContext): Promise<NextResponse> {
+  try {
+    const { campaignSlug } = await context.params;
+    const searchParams = readSearchParams(request);
+    const campaign = await getWebCampaignDetail({ campaignSlug, searchParams });
+
+    if (!campaign) {
+      throw new WebDataError("not_found", 404, `Campaign not found: ${campaignSlug}`);
+    }
+
+    return NextResponse.json({ campaign: toCampaignSummaryDto(campaign) }, { status: 200 });
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+
+export async function PATCH(request: NextRequest, context: RouteContext): Promise<NextResponse> {
+  try {
+    const { campaignSlug } = await context.params;
+    const searchParams = readSearchParams(request);
+    const body = (await request.json()) as UpdateCampaignNameRequest;
+
+    const campaign = await updateWebCampaignName({
+      campaignSlug,
+      campaignName: body.campaignName,
+      searchParams,
+    });
+
+    return NextResponse.json({ campaign: toCampaignSummaryDto(campaign) }, { status: 200 });
+  } catch (error) {
+    return jsonError(error);
+  }
+}

@@ -31,6 +31,7 @@ export type SessionRecap = {
 export type UpsertSessionRecapArgs = {
   guildId: string;
   sessionId: string;
+  campaignSlug?: string;
   createdAtMs?: number;
   updatedAtMs?: number;
   engine?: string | null;
@@ -66,12 +67,14 @@ export function isRecapDomainError(error: unknown): error is RecapDomainError {
 export type GenerateSessionRecapArgs = {
   guildId: string;
   sessionId: string;
+  campaignSlug?: string;
   force?: boolean;
 };
 
 export type RegenerateSessionRecapArgs = {
   guildId: string;
   sessionId: string;
+  campaignSlug?: string;
   reason?: string;
 };
 
@@ -79,6 +82,7 @@ export type GenerateSessionRecapDeps = {
   generateStyleRecap?: (args: {
     guildId: string;
     sessionId: string;
+    campaignSlug?: string;
     strategy: RecapStrategy;
     force?: boolean;
   }) => Promise<RecapResult>;
@@ -187,8 +191,8 @@ function getLegacyRecapRow(db: ReturnType<typeof getRecapDbForGuild>["db"], sess
   return null;
 }
 
-function getRecapDbForGuild(guildId: string) {
-  const campaignSlug = resolveCampaignSlug({ guildId });
+function getRecapDbForGuild(guildId: string, campaignSlugOverride?: string) {
+  const campaignSlug = campaignSlugOverride?.trim() || resolveCampaignSlug({ guildId });
   return {
     campaignSlug,
     db: getDbForCampaign(campaignSlug),
@@ -245,7 +249,7 @@ function assertValidRecapOutput(style: RecapStrategy, result: RecapResult): void
 
 export function getSessionRecap(guildId: string, sessionId: string): SessionRecap | null {
   const { db, campaignSlug } = getRecapDbForGuild(guildId);
-  const session = getSessionById(guildId, sessionId);
+  const session = getSessionById(guildId, sessionId, campaignSlug);
   if (!session) {
     return null;
   }
@@ -274,8 +278,8 @@ export async function generateSessionRecap(
   args: GenerateSessionRecapArgs,
   deps?: GenerateSessionRecapDeps
 ): Promise<SessionRecap> {
-  const { db } = getRecapDbForGuild(args.guildId);
-  const session = getSessionById(args.guildId, args.sessionId);
+  const { db, campaignSlug } = getRecapDbForGuild(args.guildId, args.campaignSlug);
+  const session = getSessionById(args.guildId, args.sessionId, campaignSlug);
   if (!session) {
     throw new RecapDomainError("RECAP_SESSION_NOT_FOUND", `Session not found: ${args.sessionId}`);
   }
@@ -288,6 +292,7 @@ export async function generateSessionRecap(
       const result = await generateStyleRecap({
         guildId: args.guildId,
         sessionId: args.sessionId,
+        campaignSlug,
         strategy: style,
         force: args.force ?? false,
       });
@@ -339,6 +344,7 @@ export async function generateSessionRecap(
   return upsertSessionRecap({
     guildId: args.guildId,
     sessionId: args.sessionId,
+    campaignSlug,
     createdAtMs,
     updatedAtMs: generatedAt,
     engine: balanced.engine,
@@ -361,6 +367,7 @@ export async function regenerateSessionRecap(
     {
       guildId: args.guildId,
       sessionId: args.sessionId,
+      campaignSlug: args.campaignSlug,
       force: true,
     },
     deps
@@ -380,6 +387,7 @@ export async function regenerateSessionRecap(
     return upsertSessionRecap({
       guildId: args.guildId,
       sessionId: args.sessionId,
+      campaignSlug: args.campaignSlug,
       createdAtMs: recap.createdAtMs,
       updatedAtMs: recap.updatedAtMs,
       engine: recap.engine,
@@ -397,8 +405,8 @@ export async function regenerateSessionRecap(
 }
 
 export function upsertSessionRecap(args: UpsertSessionRecapArgs): SessionRecap {
-  const { db, campaignSlug } = getRecapDbForGuild(args.guildId);
-  const session = getSessionById(args.guildId, args.sessionId);
+  const { db, campaignSlug } = getRecapDbForGuild(args.guildId, args.campaignSlug);
+  const session = getSessionById(args.guildId, args.sessionId, campaignSlug);
   if (!session) {
     throw new Error(`Session not found: ${args.sessionId}`);
   }

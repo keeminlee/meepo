@@ -33,12 +33,15 @@ Primary user routes:
 
 - `apps/web/app/page.tsx`
 - `apps/web/app/dashboard/page.tsx`
-- `apps/web/app/campaigns/[campaignSlug]/page.tsx`
-- `apps/web/app/sessions/[sessionId]/page.tsx`
+- `apps/web/app/settings/page.tsx`
+- `apps/web/app/campaigns/[campaignSlug]/sessions/page.tsx`
+- `apps/web/app/campaigns/[campaignSlug]/sessions/[sessionId]/page.tsx`
+- `apps/web/app/campaigns/[campaignSlug]/compendium/page.tsx`
 
 Internal API boundary:
 
 - `apps/web/app/api/campaigns/route.ts`
+- `apps/web/app/api/campaigns/[campaignSlug]/route.ts`
 - `apps/web/app/api/campaigns/[campaignSlug]/sessions/route.ts`
 - `apps/web/app/api/sessions/[sessionId]/route.ts`
 - `apps/web/app/api/sessions/[sessionId]/transcript/route.ts`
@@ -49,6 +52,7 @@ Web adapters over canonical modules:
 
 - campaign/session web readers: `apps/web/lib/server/campaignReaders.ts`, `apps/web/lib/server/sessionReaders.ts`
 - canonical mapping layer: `apps/web/lib/mappers/*`
+- campaign/session display helpers: `apps/web/lib/campaigns/display.ts`
 - web API clients consumed by pages: `apps/web/lib/api/*`
 
 Auth/scope posture:
@@ -58,6 +62,19 @@ Auth/scope posture:
 - dashboard and campaign discovery are filtered by `authorizedGuildIds`
 - session detail/transcript/recap/regenerate are authorized by reader/action ownership checks against `authorizedGuildIds`
 - no implicit env guild fallback; dev bypass override is allowed only in non-production with explicit `DEV_WEB_BYPASS=1`
+
+Campaign identity posture:
+
+- slug-only URLs remain compatibility surface only (`/campaigns/[campaignSlug]/...`)
+- canonical identity is `guild_id + campaign_slug`
+- slug routes use explicit `guild_id` query disambiguation for campaign-scoped API calls
+- unresolved multi-guild slug collisions return explicit ambiguity (`409 ambiguous_campaign_scope`) rather than first-match selection
+
+Path/materialization posture:
+
+- canonical campaign artifact roots are guild-scoped directories (`g_<guild>__c_<campaign>`)
+- legacy slug-only campaign/registry paths are compatibility-read fallback during migration windows
+- migration utility: `src/tools/migrate-campaign-scope-paths.ts`
 
 ## 1.5 Awakening Runtime
 

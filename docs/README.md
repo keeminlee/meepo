@@ -14,12 +14,19 @@ This index is the entry point for project docs. It separates active references f
 
 - [OVERLAY.md](OVERLAY.md) — OBS overlay architecture and setup
 - [ops/ENV.md](ops/ENV.md) — deploy/runtime env contract (prod-safe defaults)
+- [apps/web/README.md](../apps/web/README.md) — web archive routes, auth/scope doctrine, and edit capabilities
 - [MISSIONS_V0.md](MISSIONS_V0.md) — mission economy design and command behavior
 - [CAUSAL_CORE_PHYSICS.md](CAUSAL_CORE_PHYSICS.md) — mass vs strength contract, rounds, and convergence behavior
 - Silver-Seq lane (`src/silver/seq/*`) — deterministic transcript segmentation for sequential summarization
 - Online Events lane (`src/tools/events/compile-and-export-events-live.ts`) — campaign-scoped live event artifacts
 - [notes/ops/LOGGING_REFERENCE.md](notes/ops/LOGGING_REFERENCE.md) — logging scopes and operations
 - [notes/causal/causal-debug.md](notes/causal/causal-debug.md) — practical causal debug workflow
+
+## Sprint Note (Campaign Identity Hardening)
+
+- Route compatibility doctrine: slug URLs are preserved, but slug alone is not authoritative identity.
+- Canonical campaign identity is `guild_id + campaign_slug` across web/server resolution.
+- Campaign-scoped disk roots are now guild-scoped directory keys (`g_<guild>__c_<campaign>`), with migration tooling in `src/tools/migrate-campaign-scope-paths.ts`.
 
 ## Causal Pivot Notes (Implementation-Specific)
 

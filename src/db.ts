@@ -1649,11 +1649,37 @@ function applyMigrations(db: Database.Database) {
     db.exec("ALTER TABLE guild_config ADD COLUMN default_talk_mode TEXT");
   }
 
+  const hasMetaCampaignSlug = guildConfigColumns.some((c: any) => c.name === "meta_campaign_slug");
+  if (!hasMetaCampaignSlug) {
+    console.log("Migrating: Adding meta_campaign_slug to guild_config");
+    db.exec("ALTER TABLE guild_config ADD COLUMN meta_campaign_slug TEXT");
+  }
+
   db.exec(`
     UPDATE guild_config
     SET default_recap_style = 'balanced'
     WHERE default_recap_style IS NULL OR TRIM(default_recap_style) = ''
   `);
+
+  // Migration: guild-scoped showtime campaign records (explicit canon campaign namespaces)
+  const tablesForGuildCampaigns = db.pragma("table_list") as any[];
+  const hasGuildCampaigns = tablesForGuildCampaigns.some((t: any) => t.name === "guild_campaigns");
+  if (!hasGuildCampaigns) {
+    console.log("Migrating: Creating guild_campaigns table (showtime campaign records)");
+    db.exec(`
+      CREATE TABLE guild_campaigns (
+        guild_id TEXT NOT NULL,
+        campaign_slug TEXT NOT NULL,
+        campaign_name TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        created_by_user_id TEXT,
+        PRIMARY KEY (guild_id, campaign_slug)
+      );
+
+      CREATE INDEX idx_guild_campaigns_guild_created
+      ON guild_campaigns(guild_id, created_at_ms DESC);
+    `);
+  }
 
   // Migration: MeepoContext substrate tables (Sprint 1)
   const tablesForMeepoContext = db.pragma("table_list") as any[];

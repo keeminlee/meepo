@@ -14,17 +14,39 @@ This package is the Track B web archive shell for Meepo.
    - `/campaigns/[campaignSlug]/compendium`
 - Route-level shells are implemented with `loading.tsx` and `error.tsx` for main archive routes.
 
+## Campaign and Session Metadata Editing
+
+Web metadata editing is available on campaign/session archive surfaces.
+
+Capabilities:
+
+- Rename campaign display name from campaign sessions view.
+- Edit session label from campaign sessions list and session detail header.
+
+Internal API routes:
+
+- `PATCH /api/campaigns/[campaignSlug]`
+- `PATCH /api/sessions/[sessionId]`
+
+Doctrine and guardrails:
+
+- Campaign slug identity is immutable; rename updates display name only.
+- Campaign rename upsert is allowed only after proving campaign slug ownership within authorized guild scope.
+- Session label mutation writes canonical `sessions.label` only.
+- Shared display helpers (`lib/campaigns/display.ts`) define campaign/session fallback naming.
+- Client UI uses optimistic updates with rollback on failure, user-safe error messaging, and canonical `router.refresh()` refetch.
+
 ## Campaign Context Stabilization
 
 Campaign context is now enforced by a shared gate:
 
 - `components/guards/active-campaign-gate.tsx`
 
-Resolution order is deterministic:
+Resolution model is deterministic and composite:
 
-1. route campaign slug
-2. persisted campaign (`localStorage.meepo.activeCampaign`)
-3. first real campaign
+1. route campaign slug + optional `guild_id` query disambiguator
+2. persisted campaign selection (`localStorage.meepo.activeCampaign`) as composite `{ slug, guildId }`
+3. first real campaign scope
 4. system demo campaign (`demo`) when real campaign count is zero
 
 Doctrine:
@@ -35,6 +57,9 @@ Doctrine:
 - Unsigned users may access only demo-safe dashboard presentation plus demo sessions/compendium routes.
 - Unsigned users cannot resolve into real campaign routes or authenticated campaign data.
 - Invalid campaign slug routes remain not-found (no redirect compatibility route).
+- Route compatibility doctrine: slug-only URL paths are preserved, but slug alone is not authoritative campaign identity.
+- Canonical campaign identity is `guild_id + campaign_slug`.
+- Slug route ambiguity is explicit: when multiple authorized guilds share a slug and `guild_id` is absent, API returns `409 ambiguous_campaign_scope`.
 
 ## Local Run
 
@@ -82,6 +107,7 @@ Final doctrine:
 - Auth.js + Discord OAuth is the primary auth model.
 - Guild authorization is derived from Discord membership and enforced by `authorizedGuildIds`.
 - Campaign identity remains `guild_id + campaign_slug`.
+- Slug-only routes are compatibility surface only; `guild_id` query disambiguator is canonical when slug collisions are possible.
 - Session object authorization is enforced in reader/action code, not route handlers.
 - No implicit env guild fallback exists.
 - Dev bypass is explicit local fallback only (`NODE_ENV!=production` and `DEV_WEB_BYPASS=1`).
@@ -110,7 +136,7 @@ Naming doctrine:
 
 Doctrine and guardrails:
 
-- Registry remains campaign-scoped (`data/registry/<campaign_slug>/`).
+- Registry canonical roots are campaign-scope directories keyed by `guild_id + campaign_slug` (`data/registry/g_<guild>__c_<campaign>/`).
 - YAML remains source of truth; web uses structured mutation adapters.
 - No cross-campaign fallback or write-through to another campaign.
 - Out-of-scope campaign access returns not-found style denial.

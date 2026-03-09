@@ -1,9 +1,113 @@
-# Meepo Bot - Current State (March 7, 2026)
+# Meepo Bot - Current State (March 8, 2026)
 
 For documentation navigation, start at [README.md](README.md).
 
 **Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress + Sprint 3 hardening closure complete + Track B web archive viewer complete  
-**Last Updated:** March 7, 2026
+**Last Updated:** March 8, 2026
+
+## P0 Boundary (Locked)
+
+P0 interpretation:
+
+- P0 is infrastructure-first and reliability-first.
+- This does not de-prioritize the mythic product identity.
+- Mythic sky/Archivist behavior is deferred as runtime/user-facing behavior until the substrate is trustworthy.
+
+### Implemented for P0
+
+- Guild-scoped identity and authorization boundaries (`guild_id` as primary scope key).
+- Minimal awaken bootstrap (`awakened` + `meta_campaign_slug` + DM binding + home text channel durability).
+- Guild-scoped campaign registry for showtime workflows.
+- Durable session recording and dashboard listing.
+- Closed Alpha listen-only lifecycle: public `/meepo awaken` stays minimal, and `/meepo showtime start` joins voice ephemerally from invoker runtime context.
+- Lifecycle completion hardening: `/meepo showtime end` finalizes session and safely disconnects voice only when a connection exists.
+- Five-state dashboard onboarding guidance.
+- Web auth boundary enforcement and deny-by-default out-of-scope access.
+
+### Closed Alpha C4r (Listen-Only Lifecycle)
+
+Public contract:
+
+- `/meepo awaken` is minimal and deterministic for bootstrap.
+- `/meepo awaken` writes only canonical essentials:
+  - `awakened = true`
+  - `meta_campaign_slug` (if missing)
+  - `dm_user_id` (if missing)
+  - `home_text_channel_id` (if missing)
+- `/meepo awaken` does not configure `home_voice_channel_id` or wizard-driven voice bindings.
+- `/meepo showtime start` creates/selects campaign, starts session, joins invoker voice channel in listen-only mode, and starts receiver capture.
+- `/meepo showtime start` depends on invoker runtime voice context, not persisted voice setup.
+- Closed Alpha speaking/performance remains disabled; Meepo is a silent witness.
+
+Deferred lane:
+
+- Richer ritual/onboarding setup remains under `/lab awaken` for experimentation.
+
+Minimal awaken config audit (public `/meepo awaken`):
+
+- required in Closed Alpha:
+  - `awakened`
+  - `meta_campaign_slug` (if missing)
+  - `dm_user_id` (if missing)
+  - `home_text_channel_id` (if missing)
+- deferred to `/lab awaken` and future onboarding:
+  - `dm_role_id`
+  - DM display name memory/modal flow
+  - registry/player builder writes
+- non-public / non-gating in P0 path:
+  - `home_voice_channel_id`
+  - voice default/binding state
+
+### Deferred to P1+
+
+- Constellation/sky product mechanics as user-facing behavior.
+- Prophecy/global sky progression systems.
+- Narrative bot interaction layers as success criteria.
+- Recap/AI features as launch-gating requirements.
+
+## Phase A Contract Clarifications
+
+### `guild_config` authority
+
+- Authoritative for awakened state: yes.
+- Authoritative for meta campaign slug: yes (`meta_campaign_slug`).
+- Authoritative for DM/channel preferences: yes when present (`dm_user_id`, `dm_role_id`, `home_*`, `default_talk_mode`).
+- Required for P0 success: `guild_id`, `campaign_slug`, `awakened`, `meta_campaign_slug`.
+- Non-gating in P0: DM/channel preference completeness.
+
+### `guild_campaigns` scope semantics
+
+- Intended user-facing content: showtime campaigns.
+- Meta campaign handling: persisted in `guild_config.meta_campaign_slug`, hidden from web archive browsing.
+- Current web filtering rule: exclusion by `meta_campaign_slug` (not by explicit campaign type field).
+
+### `sessions` naming and visibility semantics
+
+- Canonical naming field: `sessions.label`.
+- UI wording may render as "session title"; semantics map to the same canonical label.
+- Zero-arg `/meepo showtime start`: yes, creates campaign/session without requiring user-supplied label.
+- Dashboard visibility rule for P0: row presence under authorized `guild_id + campaign_slug` scope.
+- Dashboard inclusion for P0: show both `active` and ended (`completed`/`interrupted`) sessions.
+
+## Campaign Scope Foundations (Current Doctrine)
+
+The runtime now uses a two-layer campaign scope model:
+
+- runtime container: `guild_id`
+- ambient/meta scope: `guild_config.meta_campaign_slug` (durable guild home)
+- showtime canon scope: guild-scoped showtime campaign records (`guild_campaigns`)
+
+Operational semantics:
+
+- `/meepo awaken` creates or confirms one durable `meta_campaign_slug` for the guild and does not regenerate it on later awakens.
+- `/meepo awaken` also seeds `dm_user_id` and `home_text_channel_id` when missing; it does not set voice config.
+- `/meepo showtime start` now requires explicit campaign intent:
+  - reuse existing showtime campaign via `campaign`
+  - create new showtime campaign via `campaign_name`
+- showtime sessions bind to explicit showtime campaign slugs (not inferred from meta scope).
+- `/meepo showtime start` is Closed Alpha listen-only by contract (runtime-derived voice join, no speaking).
+- one active session per guild remains unchanged (`idx_one_active_session_per_guild`).
+- legacy/default fallback behavior is compatibility-only; new write paths do not create `homebrew_campaign_*` style slugs.
 
 ## Track C Complete (Discord Auth + Secure Scope)
 
@@ -14,15 +118,56 @@ For documentation navigation, start at [README.md](README.md).
 - Session detail/transcript/recap/regenerate enforce ownership in reader/action code, not in route handlers.
 - Implicit env guild fallback is removed; local fallback requires explicit dev bypass (`DEV_WEB_BYPASS=1` in non-production).
 
+## Campaign Identity Hardening Sprint (Phases 1-4)
+
+Route compatibility doctrine:
+
+- slug-only URLs are preserved for compatibility (`/campaigns/[campaignSlug]/...`)
+- slug alone is no longer authoritative campaign identity
+- canonical campaign identity is `guild_id + campaign_slug`
+
+Web/API disambiguation contract:
+
+- canonical route disambiguator is `guild_id` query param on slug routes
+- active campaign context now persists composite selection (`slug`, `guildId`) rather than slug-only local storage
+- server campaign resolution is explicit:
+  - if `guild_id` is provided, resolve only that authorized guild scope
+  - if `guild_id` is absent and slug matches multiple authorized guilds, return explicit ambiguity (`409 ambiguous_campaign_scope`)
+
+Ambiguity flow doctrine:
+
+- Case A (active context certainty): client has composite selection and passes both `campaign_slug` (route) and `guild_id` (query); no ambiguity remains
+- Case B (cold slug URL): server may detect multiple authorized guild matches and returns explicit ambiguity so UI requests guild disambiguation
+
+Storage/materialization hardening (Phase 4):
+
+- canonical campaign data roots are now guild-scoped directory keys:
+  - `data/campaigns/g_<guild>__c_<campaign>/...`
+  - `data/registry/g_<guild>__c_<campaign>/...`
+- legacy slug-only roots are compatibility-read fallback only during migration windows
+- migration tool is available for scoped backfill:
+  - `npx tsx src/tools/migrate-campaign-scope-paths.ts --dry-run`
+  - `npx tsx src/tools/migrate-campaign-scope-paths.ts`
+
 ## Track B Complete (Web Archive Viewer)
 
 - Web archive viewer is now first-class under `apps/web` (Next App Router).
 - Real web routes:
   - `/`
   - `/dashboard`
-  - `/campaigns/[campaignSlug]`
-  - `/sessions/[sessionId]`
+  - `/settings`
+  - `/campaigns/[campaignSlug]/sessions`
+  - `/campaigns/[campaignSlug]/sessions/[sessionId]`
+  - `/campaigns/[campaignSlug]/compendium`
 - Canonical reads now power dashboard, campaign, and session flows via the internal API boundary.
+- Campaign metadata editing is live in web:
+  - campaign rename (`PATCH /api/campaigns/[campaignSlug]`) with immutable slug identity
+  - session label edit (`PATCH /api/sessions/[sessionId]`) writing canonical `sessions.label`
+- Campaign/session display naming is centralized in shared helpers (`apps/web/lib/campaigns/display.ts`).
+- Web edit doctrine:
+  - campaign rename upsert is allowed only after proving slug ownership in authorized guild scope
+  - session label mutation updates canonical session row only (no shadow label store)
+  - UI edit flows use optimistic updates with rollback + user-safe error + canonical refetch
 - Recap regenerate action and transcript/recap downloads (`.txt` and `.json`) are live on session detail.
 - Artifact-aware states are implemented for missing/unavailable recap/transcript conditions.
 - Dev bypass for local web scope overrides is available only behind explicit env gate (`DEV_WEB_BYPASS=1`) and non-production mode.

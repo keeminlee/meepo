@@ -12,6 +12,7 @@ export type SessionSummary = {
   label: string | null;
   title: string;
   date: string;
+  startedByUserId?: string | null;
   status: SessionStatus;
   source: "live" | "ingest";
   artifacts: {
@@ -26,6 +27,8 @@ export type CampaignSummary = {
   guildId: string | null;
   name: string;
   guildName: string;
+  guildIconUrl?: string | null;
+  isDm?: boolean;
   description: string;
   sessionCount: number;
   lastSessionDate: string | null;
@@ -33,6 +36,7 @@ export type CampaignSummary = {
   type?: "user" | "system";
   editable?: boolean;
   persisted?: boolean;
+  canWrite?: boolean;
 };
 
 export type TranscriptEntry = {
@@ -48,6 +52,7 @@ export type SessionRecap = {
   detailed: string;
   generatedAt: string;
   modelVersion: string;
+  source?: "canonical" | "legacy_artifact" | "legacy_meecap";
 };
 
 export type SessionDetail = {
@@ -67,6 +72,7 @@ export type SessionDetail = {
     recap: SessionArtifactStatus;
   };
   warnings: string[];
+  canWrite?: boolean;
 };
 
 export type DashboardModel = {
@@ -74,5 +80,10 @@ export type DashboardModel = {
   campaignCount: number;
   wordsRecorded: number;
   campaigns: CampaignSummary[];
-  authState?: "ok" | "unsigned_demo_fallback" | "signed_in_no_authorized_campaigns";
+  authState?:
+    | "ok"
+    | "unsigned"
+    | "signed_in_no_authorized_guilds"
+    | "signed_in_no_meepo_installed"
+    | "signed_in_no_sessions";
 };

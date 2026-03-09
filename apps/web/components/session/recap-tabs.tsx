@@ -34,7 +34,7 @@ type BannerState =
 function mapRegenerateError(error: unknown): string {
   if (error instanceof WebApiError) {
     if (error.code === "unauthorized") {
-      return "This viewer is not authorized for recap regeneration in the current guild scope.";
+      return "Only the configured DM can regenerate recaps for this guild archive.";
     }
     if (error.code === "not_found") {
       return "This session is no longer available for regeneration.";
@@ -248,6 +248,11 @@ export function RecapTabs({
             <div className="rounded-xl border border-border/60 bg-background/35 px-3 py-2 text-[11px] uppercase tracking-widest text-muted-foreground">
               Generated {new Date(recap.generatedAt).toLocaleString()}
             </div>
+            {recap.source && recap.source !== "canonical" ? (
+              <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+                This recap was loaded from a legacy store ({recap.source}). Regenerate recap to canonicalize it.
+              </div>
+            ) : null}
           </>
         ) : (
           <p className="text-sm text-muted-foreground">
