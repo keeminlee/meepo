@@ -4,6 +4,9 @@ Primary documentation entrypoints for active architecture lanes.
 
 - [README.md](README.md) — top-level docs navigation
 - [START_HERE.md](START_HERE.md) — first-time DM onboarding path
+- [ops/CLOSED_ALPHA_PHASE0_RELEASE_CONTROL.md](ops/CLOSED_ALPHA_PHASE0_RELEASE_CONTROL.md) — integration branch + scope freeze contract
+- [ops/CLOSED_ALPHA_PHASE5_DEPLOY_RUNTIME_VERSIONING.md](ops/CLOSED_ALPHA_PHASE5_DEPLOY_RUNTIME_VERSIONING.md) — deploy hook + systemd unit versioning contract
+- [OPS_TRIAGE.md](OPS_TRIAGE.md) — closed alpha incident triage checklist
 - [MAP.md](MAP.md) — runtime and subsystem map
 - [CURRENT_STATE.md](CURRENT_STATE.md) — current implementation status
 - [../apps/web/README.md](../apps/web/README.md) — web archive runtime routes and scope/edit doctrine

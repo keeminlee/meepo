@@ -297,6 +297,9 @@ async function assertCampaignEditable(campaignSlug: string, searchParams?: Query
   if (campaign.editable === false) {
     throw new WebDataError("invalid_request", 422, "This campaign is read-only.");
   }
+  if (!campaign.canWrite) {
+    throw new WebDataError("unauthorized", 403, "Write access is restricted to the guild DM for this archive scope.");
+  }
   return campaign;
 }
 

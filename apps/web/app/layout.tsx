@@ -3,6 +3,7 @@ import { Inter, Playfair_Display } from "next/font/google";
 import type { ReactNode } from "react";
 import { Providers } from "@/components/providers";
 import { PersistentAmbient } from "@/components/layout/persistent-ambient";
+import VersionBadge from "@/components/version-badge";
 import "@/app/globals.css";
 
 const inter = Inter({
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <Providers>
           <PersistentAmbient />
           <div className="app-foreground-root">{children}</div>
+          <VersionBadge />
         </Providers>
       </body>
     </html>

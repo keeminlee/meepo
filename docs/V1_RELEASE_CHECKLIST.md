@@ -2,6 +2,13 @@
 
 This checklist is the source of truth for shipping `v1.0.0`.
 
+## 0) Phase 0 Release Control (Closed Alpha)
+
+- Integration branch for closed-alpha finish-line work is `v1.5_finish_line_to_v2`.
+- Unrelated feature merges are frozen while launch-critical lanes are in progress.
+- Deferred lanes are explicitly documented in:
+  - `docs/ops/CLOSED_ALPHA_PHASE0_RELEASE_CONTROL.md`
+
 ## 1) Automated Ship Gate
 
 - Run `npm run ci:verify`
@@ -140,6 +147,22 @@ Fixture root:
 - Migration note:
   - `session_recaps` is canonical multi-view recap store
   - `session_artifacts` remains compatibility lane until a later production cutover
+
+## 5.7) Deploy/Runtime Asset Versioning (Closed Alpha Phase 5)
+
+- In-repo deploy hook exists and is referenced by CI deploy:
+  - `deploy/ec2/deploy-meepo.sh`
+  - `.github/deploy.yml`
+- In-repo host install helper exists:
+  - `deploy/ec2/install-runtime-assets.sh`
+- In-repo systemd unit definitions exist:
+  - `deploy/systemd/meepo-bot.service`
+  - `deploy/systemd/meepo-web.service`
+- In-repo env templates exist:
+  - `deploy/env/meepo-bot.env.example`
+  - `deploy/env/meepo-web.env.example`
+- Host procedure and checks are documented in:
+  - `docs/ops/CLOSED_ALPHA_PHASE5_DEPLOY_RUNTIME_VERSIONING.md`
 
 ## 6) GitHub Release Draft (v1.0.0)
 

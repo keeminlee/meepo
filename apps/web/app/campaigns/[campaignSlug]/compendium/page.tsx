@@ -70,7 +70,7 @@ export default async function CampaignCompendiumPage({ params, searchParams }: P
         guildId={campaign.guildId}
         initialRegistry={registry}
         searchParams={query}
-        isEditable={campaign.editable !== false}
+        isEditable={campaign.editable !== false && Boolean(campaign.canWrite)}
       />
     </ArchiveShell>
   );

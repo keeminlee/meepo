@@ -1,0 +1,21 @@
+[Unit]
+Description=Meepo Web Archive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=meepo
+Group=meepo
+WorkingDirectory=/home/meepo/meepo-bot/apps/web
+EnvironmentFile=/etc/meepo/meepo-web.env
+ExecStart=/usr/bin/env npm run start
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

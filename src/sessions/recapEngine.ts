@@ -6,6 +6,7 @@ import { buildTranscript } from "../ledger/transcripts.js";
 import type { TranscriptEntry } from "../ledger/transcripts.js";
 import { getDbForCampaign } from "../db.js";
 import { resolveCampaignSlug } from "../campaign/guildConfig.js";
+import { normalizeCampaignSlugLookup } from "../campaign/campaignScopeSlug.js";
 import { getSessionArtifact, getSessionById, upsertSessionArtifact } from "./sessions.js";
 import { orchestrateMegaMeecap } from "../tools/megameecap/orchestrate.js";
 import { runFinalPassOnly } from "../tools/megameecap/orchestrate.js";
@@ -48,7 +49,7 @@ function buildRecapInFlightKey(args: {
 }): string {
   return [
     args.guildId.trim().toLowerCase(),
-    args.campaignSlug.trim().toLowerCase(),
+    normalizeCampaignSlugLookup(args.campaignSlug),
     args.sessionId.trim().toLowerCase(),
     "recap_final",
     args.strategy,
@@ -81,6 +82,7 @@ export type RecapResult = {
 export type GenerateSessionRecapArgs = {
   guildId: string;
   sessionId: string;
+  campaignSlug?: string;
   force?: boolean;
   strategy?: RecapStrategy;
   debug?: boolean;
@@ -159,7 +161,7 @@ export async function generateSessionRecap(
 ): Promise<RecapResult> {
   const strategy = args.strategy ?? "balanced";
 
-  const campaignSlug = resolveCampaignSlug({ guildId: args.guildId });
+  const campaignSlug = args.campaignSlug?.trim() || resolveCampaignSlug({ guildId: args.guildId });
   const recapKey = buildRecapInFlightKey({
     guildId: args.guildId,
     campaignSlug,
@@ -223,7 +225,7 @@ async function generateSessionRecapInternal(
   deps?: { callLlm?: LlmCall; now?: () => number }
 ): Promise<RecapResult> {
   const db = getDbForCampaign(campaignSlug);
-  const session = getSessionById(args.guildId, args.sessionId);
+  const session = getSessionById(args.guildId, args.sessionId, campaignSlug);
   if (!session) {
     throw new Error(`Session not found: ${args.sessionId}`);
   }
@@ -304,6 +306,7 @@ async function generateSessionRecapInternal(
   upsertSessionArtifact({
     guildId: args.guildId,
     sessionId: args.sessionId,
+    campaignSlug,
     artifactType: "recap_final",
     strategy,
     createdAtMs: final.createdAtMs,
@@ -354,7 +357,7 @@ export async function ensureMegameecapBase(
   const baseStatus = getBaseStatus(args.guildId, deps.campaignSlug, args.sessionId, deps.sessionLabel);
   const hashMatches = baseStatus.sourceHash === sourceHash;
   const versionMatches = baseStatus.baseVersion === MEGAMEECAP_BASE_VERSION;
-  const baseDbArtifact = getSessionArtifact(args.guildId, args.sessionId, "megameecap_base");
+  const baseDbArtifact = getSessionArtifact(args.guildId, args.sessionId, "megameecap_base", undefined, deps.campaignSlug);
 
   const useCache = !args.forceBase && baseStatus.exists && hashMatches && versionMatches;
   if (useCache) {
@@ -364,6 +367,7 @@ export async function ensureMegameecapBase(
         upsertSessionArtifact({
           guildId: args.guildId,
           sessionId: args.sessionId,
+          campaignSlug: deps.campaignSlug,
           artifactType: "megameecap_base",
           createdAtMs: baseStatus.createdAtMs ?? deps.now(),
           engine: MEGAMEECAP_ENGINE,
@@ -434,6 +438,7 @@ export async function ensureMegameecapBase(
   upsertSessionArtifact({
     guildId: args.guildId,
     sessionId: args.sessionId,
+    campaignSlug: deps.campaignSlug,
     artifactType: "megameecap_base",
     createdAtMs,
     engine: MEGAMEECAP_ENGINE,
@@ -475,7 +480,7 @@ export async function generateFinalRecapFromBase(
     now: () => number;
   }
 ): Promise<FinalFromBaseResult> {
-  const existingFinal = getSessionArtifact(args.guildId, args.sessionId, "recap_final");
+  const existingFinal = getSessionArtifact(args.guildId, args.sessionId, "recap_final", undefined, deps.campaignSlug);
   const expectedPaths = resolveMegameecapFinalPaths(
     args.guildId,
     deps.campaignSlug,

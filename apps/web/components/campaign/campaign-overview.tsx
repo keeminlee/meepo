@@ -52,17 +52,19 @@ export function CampaignOverview({ campaign, searchParams }: CampaignOverviewPro
           {!isEditingCampaignName ? (
             <>
               <h1 className="text-4xl font-serif">{campaignName}</h1>
-              <button
-                type="button"
-                className="rounded-full border border-border px-3 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
-                onClick={() => {
-                  setCampaignNameDraft(campaignName);
-                  setErrorMessage(null);
-                  setIsEditingCampaignName(true);
-                }}
-              >
-                Edit name
-              </button>
+              {campaign.canWrite ? (
+                <button
+                  type="button"
+                  className="rounded-full border border-border px-3 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+                  onClick={() => {
+                    setCampaignNameDraft(campaignName);
+                    setErrorMessage(null);
+                    setIsEditingCampaignName(true);
+                  }}
+                >
+                  Edit name
+                </button>
+              ) : null}
             </>
           ) : (
             <form
@@ -160,7 +162,7 @@ export function CampaignOverview({ campaign, searchParams }: CampaignOverviewPro
                     >
                       {displayTitle}
                     </Link>
-                    {editingSessionId === session.id ? (
+                    {campaign.canWrite && editingSessionId === session.id ? (
                       <form
                         className="inline-flex items-center gap-2"
                         onSubmit={async (event) => {
@@ -219,7 +221,7 @@ export function CampaignOverview({ campaign, searchParams }: CampaignOverviewPro
                         <button type="submit" className="rounded-full border border-primary/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">Save</button>
                         <button type="button" className="rounded-full border border-border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" onClick={() => setEditingSessionId(null)}>Cancel</button>
                       </form>
-                    ) : (
+                    ) : campaign.canWrite ? (
                       <button
                         type="button"
                         className="rounded-full border border-border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
@@ -231,7 +233,7 @@ export function CampaignOverview({ campaign, searchParams }: CampaignOverviewPro
                       >
                         Edit label
                       </button>
-                    )}
+                    ) : null}
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-4 text-xs uppercase tracking-wider text-muted-foreground">
                     <span className="inline-flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{session.date}</span>

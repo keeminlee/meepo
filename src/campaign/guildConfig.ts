@@ -4,9 +4,9 @@
  */
 
 import { getControlDb } from "../db.js";
-import { slugify } from "../utils/slugify.js";
 import { getDefaultCampaignSlug } from "./defaultCampaign.js";
 import { log } from "../utils/logger.js";
+import { slugifyCampaignScopeName } from "./campaignScopeSlug.js";
 
 const campaignLog = log.withScope("campaign");
 const seenNoGuildFallbackCampaigns = new Set<string>();
@@ -14,6 +14,7 @@ const seenNoGuildFallbackCampaigns = new Set<string>();
 export type GuildConfigRow = {
   guild_id: string;
   campaign_slug: string;
+  meta_campaign_slug: string | null;
   awakened: number | null;
   dm_user_id: string | null;
   dm_role_id: string | null;
@@ -49,7 +50,7 @@ export function getGuildConfig(guildId: string): GuildConfigRow | null {
   try {
     const row = db
       .prepare(
-        "SELECT guild_id, campaign_slug, awakened, dm_user_id, dm_role_id, default_talk_mode, default_persona_id, setup_version, home_text_channel_id, home_voice_channel_id, canon_persona_mode, canon_persona_id, default_recap_style FROM guild_config WHERE guild_id = ? LIMIT 1"
+        "SELECT guild_id, campaign_slug, meta_campaign_slug, awakened, dm_user_id, dm_role_id, default_talk_mode, default_persona_id, setup_version, home_text_channel_id, home_voice_channel_id, canon_persona_mode, canon_persona_id, default_recap_style FROM guild_config WHERE guild_id = ? LIMIT 1"
       )
       .get(guildId) as GuildConfigRow | undefined;
     return row ?? null;
@@ -64,8 +65,8 @@ export function getGuildConfig(guildId: string): GuildConfigRow | null {
       .prepare(
         "SELECT guild_id, campaign_slug, awakened, dm_user_id, dm_role_id, default_persona_id, setup_version, home_text_channel_id, home_voice_channel_id, canon_persona_mode, canon_persona_id, default_recap_style FROM guild_config WHERE guild_id = ? LIMIT 1"
       )
-      .get(guildId) as Omit<GuildConfigRow, "default_talk_mode"> | undefined;
-    return legacyRow ? { ...legacyRow, default_talk_mode: null } : null;
+      .get(guildId) as Omit<GuildConfigRow, "default_talk_mode" | "meta_campaign_slug"> | undefined;
+    return legacyRow ? { ...legacyRow, default_talk_mode: null, meta_campaign_slug: null } : null;
   }
 }
 
@@ -78,11 +79,12 @@ export function ensureGuildConfig(guildId: string, guildName?: string | null): G
   if (row) return row;
 
   const db = getControlDb();
-  const slug = guildName ? slugify(guildName) : getDefaultCampaignSlug();
+  const slug = guildName ? slugifyCampaignScopeName(guildName) : getDefaultCampaignSlug();
   db.prepare(
     `INSERT INTO guild_config (
       guild_id,
       campaign_slug,
+      meta_campaign_slug,
       awakened,
       dm_user_id,
       dm_role_id,
@@ -95,7 +97,7 @@ export function ensureGuildConfig(guildId: string, guildName?: string | null): G
       canon_persona_id,
       default_recap_style
     )
-      VALUES (?, ?, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`
+        VALUES (?, ?, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`
   ).run(guildId, slug);
   campaignLog.info(`Created guild_config for guild=${guildId} campaign_slug=${slug}`);
   row = getGuildConfig(guildId)!;
@@ -138,6 +140,18 @@ export function setGuildCampaignSlug(guildId: string, campaignSlug: string): voi
   ensureGuildConfig(guildId, null);
   db.prepare("UPDATE guild_config SET campaign_slug = ? WHERE guild_id = ?").run(campaignSlug, guildId);
   campaignLog.info(`Set campaign_slug=${campaignSlug} for guild=${guildId}`);
+}
+
+export function getGuildMetaCampaignSlug(guildId: string): string | null {
+  const config = getGuildConfig(guildId);
+  return config?.meta_campaign_slug ?? null;
+}
+
+export function setGuildMetaCampaignSlug(guildId: string, campaignSlug: string | null): void {
+  const db = getControlDb();
+  ensureGuildConfig(guildId, null);
+  db.prepare("UPDATE guild_config SET meta_campaign_slug = ? WHERE guild_id = ?").run(campaignSlug, guildId);
+  campaignLog.info(`Set meta_campaign_slug=${campaignSlug ?? "null"} for guild=${guildId}`);
 }
 
 export function getGuildDmUserId(guildId: string): string | null {

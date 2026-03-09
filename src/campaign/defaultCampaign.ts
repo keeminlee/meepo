@@ -2,6 +2,11 @@
  * Default campaign slug used when no campaign is specified (no guild context, no --campaign flag).
  * Env: DEFAULT_CAMPAIGN_SLUG (e.g. "faeterra-main" or "default").
  *
+ * Compatibility rule:
+ * - This helper exists for legacy/non-guild read paths.
+ * - New durable campaign scope writes should use explicit scope creation flows
+ *   (awaken meta slug creation or showtime campaign records), not this fallback.
+ *
  * Resolution order for campaign-scoped features:
  * 1. Explicit (e.g. --campaign faeterra-main)
  * 2. From guild (guild_config.campaign_slug or slugify(guildName))

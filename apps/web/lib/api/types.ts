@@ -21,9 +21,21 @@ export type CampaignSessionsResponse = {
   campaign: CampaignSummary;
 };
 
+export type UpdateCampaignNameRequest = {
+  campaignName: string;
+};
+
+export type UpdateCampaignNameResponse = CampaignSessionsResponse;
+
 export type SessionDetailResponse = {
   session: SessionDetail;
 };
+
+export type UpdateSessionLabelRequest = {
+  label: string | null;
+};
+
+export type UpdateSessionLabelResponse = SessionDetailResponse;
 
 export type SessionTranscriptResponse = {
   sessionId: string;

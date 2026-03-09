@@ -8,6 +8,7 @@ import {
   setGuildDmUserId,
   setGuildHomeTextChannelId,
   setGuildHomeVoiceChannelId,
+  setGuildMetaCampaignSlug,
 } from "../../campaign/guildConfig.js";
 import type { CommitSpec } from "../../scripts/awakening/_schema.js";
 import type { CommitContext } from "./commitActionRegistry.js";
@@ -21,6 +22,12 @@ export async function handleSetGuildConfigCommit(ctx: CommitContext, commit: Com
     case "campaign_slug":
       if (typeof value !== "string") throw new Error("set_guild_config.campaign_slug must be a string");
       setGuildCampaignSlug(ctx.guildId, value.trim());
+      return;
+    case "meta_campaign_slug":
+      if (typeof value !== "string" && value !== null) {
+        throw new Error("set_guild_config.meta_campaign_slug must be string|null");
+      }
+      setGuildMetaCampaignSlug(ctx.guildId, typeof value === "string" && value.trim().length > 0 ? value.trim() : null);
       return;
     case "home_text_channel_id":
       setGuildHomeTextChannelId(ctx.guildId, typeof value === "string" && value.trim().length > 0 ? value.trim() : null);

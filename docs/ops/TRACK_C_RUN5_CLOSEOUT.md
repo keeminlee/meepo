@@ -40,6 +40,41 @@ Finalize Track C as a secure Discord-authenticated archive access layer with exp
 - TODO: explicit dev-bypass-only-local behavior smoke.
 - TODO: authenticated session precedence over bypass override smoke.
 
+## Closed Alpha P0 Manual Auth Checklist
+
+Execution status: `Pending live Discord run` (cannot be completed from static code review alone).
+
+Required validations before inviting users:
+
+1. Unauthorized session URL denial
+- Test with signed-in user outside target guild:
+  - `/campaigns/<slug>/sessions/<sessionId>`
+- Expected:
+  - 404-style denial with no transcript/recap data leakage.
+
+2. Guild membership filtering
+- Verify dashboard/session visibility is constrained to `authorizedGuildIds`.
+- Expected:
+  - No campaign/session visibility outside authorized guild set.
+
+3. Multi-guild separation
+- Test user in Guild A + Guild B.
+- Expected:
+  - Guild-scoped data remains isolated.
+  - No cross-guild session/transcript/recap exposure.
+
+4. Dev bypass precedence safety
+- Verify authenticated session behavior takes precedence over bypass override.
+- Verify bypass remains local-only.
+
+### Execution Record
+
+- Owner:
+- Date (UTC):
+- Environment:
+- Result: PASS/FAIL
+- Notes:
+
 ## Final Doctrine
 
 - Auth.js + Discord OAuth is the primary auth model.

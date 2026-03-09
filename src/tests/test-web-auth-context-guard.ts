@@ -85,4 +85,47 @@ describe("web auth context guard", () => {
     expect(context.authorizedGuildIds).toEqual(["guild-session"]);
     expect(context.primaryGuildId).toBe("guild-session");
   });
+
+  it("hydrates display fields from durable metadata when session snapshot is id-only", () => {
+    const context = resolveWebAuthContextFromInputs({
+      headerGuild: null,
+      searchParams: {},
+      bypassFlag: "0",
+      nodeEnv: "development",
+      sessionUser: {
+        id: "user-3",
+        name: "Tester 3",
+        globalName: null,
+      },
+      sessionGuilds: [{ id: "guild-cached" }],
+      guildMetadataById: new Map([
+        ["guild-cached", { guildName: "Cached Guild", guildIcon: "https://cdn.example/icon.png" }],
+      ]),
+    });
+
+    expect(context.authorizedGuildIds).toEqual(["guild-cached"]);
+    expect(context.authorizedGuilds[0]).toEqual({
+      id: "guild-cached",
+      name: "Cached Guild",
+      iconUrl: "https://cdn.example/icon.png",
+    });
+  });
+
+  it("keeps auth/session contract compact when no display metadata is present", () => {
+    const context = resolveWebAuthContextFromInputs({
+      headerGuild: null,
+      searchParams: {},
+      bypassFlag: "0",
+      nodeEnv: "development",
+      sessionUser: {
+        id: "user-4",
+        name: "Tester 4",
+        globalName: null,
+      },
+      sessionGuilds: [{ id: "guild-compact" }],
+    });
+
+    expect(context.authorizedGuildIds).toEqual(["guild-compact"]);
+    expect(context.authorizedGuilds[0]).toEqual({ id: "guild-compact" });
+  });
 });

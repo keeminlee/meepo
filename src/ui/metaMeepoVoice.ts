@@ -553,6 +553,13 @@ export const metaMeepoVoice = {
     summary(): string {
       const lines = [
         header("/meepo Command Help"),
+        "",
+        "Start a session:",
+        "`/meepo showtime start`",
+        "",
+        "View your sessions:",
+        "`https://meepo.online/dashboard`",
+        "",
         "`/meepo awaken` — Awaken Meepo and run setup checks.",
         "`/meepo sleep` — Put Meepo to sleep and end the active session.",
         "`/meepo talk` — Enable voice replies (requires awake + connected voice + TTS).",

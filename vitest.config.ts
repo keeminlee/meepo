@@ -1,12 +1,19 @@
 import { defineConfig } from "vitest/config";
+import path from "node:path";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "apps/web"),
+    },
+  },
   test: {
     environment: "node",
     setupFiles: ["src/tests/setup.ts"],
     include: [
       "src/tests/test-campaign-db-isolation.ts",
       "src/tests/test-campaign-fallback-log-dedupe.ts",
+      "src/tests/test-campaign-scope-foundations.ts",
       "src/tests/test-guild-mapping-auto-create.ts",
       "src/tests/test-db-bootstrap-legacy-index-compat.ts",
       "src/tests/test-stopline-no-getdb-runtime.ts",
@@ -39,6 +46,7 @@ export default defineConfig({
       "src/tests/test-meepo-wake-ambient.ts",
       "src/tests/test-meepo-wake-response-gating.ts",
       "src/tests/test-meepo-awaken-ordering.ts",
+      "src/tests/test-meepo-showtime-end-leaves-voice.ts",
       "src/tests/test-meepo-awaken-component-gating.ts",
       "src/tests/test-awaken-continue-custom-id.ts",
       "src/tests/test-meepo-settings-awaken-params.ts",
@@ -75,6 +83,11 @@ export default defineConfig({
       "src/tests/test-session-recaps-api.ts",
       "src/tests/test-web-auth-context-guard.ts",
       "src/tests/test-web-active-campaign-resolver.ts",
+      "src/tests/test-web-dashboard-phaseb.ts",
+      "src/tests/test-web-recap-visibility.ts",
+      "src/tests/test-web-phase55-authority-and-recaps.ts",
+      "src/tests/test-web-compendium-dm-permissions.ts",
+      "src/tests/test-web-landing-constellation.ts",
       "src/tests/test-web-discord-guild-cache-policy.ts",
       "src/tests/test-web-scope-guards.ts",
       "src/tests/test-lab-session-resolve.ts",
