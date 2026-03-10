@@ -78,6 +78,19 @@ const DEFAULT_DATA_ROOT = "data";
 
 const readDbCache = new Map<string, Database.Database | null>();
 
+type CampaignDbSource = "scoped" | "legacy";
+
+type CampaignDbCandidate = {
+  dbPath: string;
+  source: CampaignDbSource;
+};
+
+type CampaignDbHandle = {
+  db: Database.Database;
+  dbPath: string;
+  source: CampaignDbSource;
+};
+
 function sanitizeScopeToken(value: string, fallback: string): string {
   const normalized = value
     .trim()
@@ -217,10 +230,77 @@ function resolveCampaignDbPath(args: { campaignSlug: string; guildId?: string | 
   return null;
 }
 
+function resolveCampaignDbPathCandidates(args: { campaignSlug: string; guildId?: string | null }): CampaignDbCandidate[] {
+  const dataRoot = resolveDataRoot();
+  const campaignsDir = resolveCampaignsDir();
+  const campaignSlug = args.campaignSlug.trim();
+
+  const candidateDirs: Array<{ dir: string; source: CampaignDbSource }> = [];
+  if (args.guildId && args.guildId.trim().length > 0) {
+    candidateDirs.push({
+      dir: path.join(dataRoot, campaignsDir, buildCampaignScopeDirName({ guildId: args.guildId, campaignSlug })),
+      source: "scoped",
+    });
+  }
+  candidateDirs.push({
+    dir: path.join(dataRoot, campaignsDir, campaignSlug),
+    source: "legacy",
+  });
+
+  const out: CampaignDbCandidate[] = [];
+  const seen = new Set<string>();
+  for (const candidateDir of candidateDirs) {
+    if (!fs.existsSync(candidateDir.dir)) continue;
+    for (const fileName of resolveDbFilenameCandidates()) {
+      const dbPath = path.join(candidateDir.dir, fileName);
+      if (!fs.existsSync(dbPath) || seen.has(dbPath)) continue;
+      seen.add(dbPath);
+      out.push({ dbPath, source: candidateDir.source });
+    }
+  }
+
+  return out;
+}
+
 function getCampaignDb(args: { campaignSlug: string; guildId?: string | null }): Database.Database | null {
   const dbPath = resolveCampaignDbPath(args);
   if (!dbPath) return null;
   return openReadOnlyDb(dbPath);
+}
+
+function getCampaignDbCandidates(args: { campaignSlug: string; guildId?: string | null }): CampaignDbHandle[] {
+  const candidates = resolveCampaignDbPathCandidates(args);
+  const out: CampaignDbHandle[] = [];
+  for (const candidate of candidates) {
+    const db = openReadOnlyDb(candidate.dbPath);
+    if (!db) continue;
+    out.push({ db, dbPath: candidate.dbPath, source: candidate.source });
+  }
+  return out;
+}
+
+function sessionsTableHasGuildIdColumn(db: Database.Database): boolean {
+  try {
+    const columns = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name?: string }>;
+    return columns.some((column) => column.name === "guild_id");
+  } catch {
+    return false;
+  }
+}
+
+function warnSessionReader(args: {
+  reason: string;
+  guildId: string;
+  campaignSlug: string;
+  dbPath: string;
+  source: CampaignDbSource;
+  rowCount?: number;
+}): void {
+  console.warn(
+    `[web-read] ${args.reason} guild_id=${args.guildId} campaign_slug=${args.campaignSlug} source=${args.source} db_path=${args.dbPath}${
+      typeof args.rowCount === "number" ? ` row_count=${args.rowCount}` : ""
+    }`
+  );
 }
 
 export function getGuildCampaignSlug(guildId: string): string | null {
@@ -532,26 +612,99 @@ export function listSessionsForGuildCampaign(args: {
   campaignSlug: string;
   limit: number;
 }): ArchiveSessionRow[] {
-  const db = getCampaignDb({ campaignSlug: args.campaignSlug, guildId: args.guildId });
-  if (!db) return [];
-
   const boundedLimit = Math.max(1, Math.min(100, Math.trunc(args.limit)));
+  const guildId = args.guildId.trim();
+  const campaignSlug = args.campaignSlug.trim();
+  const dbCandidates = getCampaignDbCandidates({ campaignSlug, guildId });
+  if (dbCandidates.length === 0) return [];
 
-  try {
-    const rows = db
-      .prepare(
-        `SELECT session_id, guild_id, status, label, started_at_ms, started_by_id, source
-         FROM sessions
-         WHERE guild_id = ?
-         ORDER BY started_at_ms DESC
-         LIMIT ?`
-      )
-      .all(args.guildId, boundedLimit) as ArchiveSessionRow[];
+  for (const candidate of dbCandidates) {
+    const hasGuildColumn = sessionsTableHasGuildIdColumn(candidate.db);
 
-    return rows;
-  } catch {
-    return [];
+    try {
+      if (hasGuildColumn) {
+        const exactRows = candidate.db
+          .prepare(
+            `SELECT session_id, guild_id, status, label, started_at_ms, started_by_id, source
+             FROM sessions
+             WHERE guild_id = ?
+             ORDER BY started_at_ms DESC
+             LIMIT ?`
+          )
+          .all(guildId, boundedLimit) as ArchiveSessionRow[];
+
+        if (exactRows.length > 0) {
+          return exactRows;
+        }
+
+        const trimmedRows = candidate.db
+          .prepare(
+            `SELECT session_id, guild_id, status, label, started_at_ms, started_by_id, source
+             FROM sessions
+             WHERE TRIM(guild_id) = ?
+             ORDER BY started_at_ms DESC
+             LIMIT ?`
+          )
+          .all(guildId, boundedLimit) as ArchiveSessionRow[];
+
+        if (trimmedRows.length > 0) {
+          warnSessionReader({
+            reason: "guild_trim_match",
+            guildId,
+            campaignSlug,
+            dbPath: candidate.dbPath,
+            source: candidate.source,
+            rowCount: trimmedRows.length,
+          });
+          return trimmedRows;
+        }
+
+        warnSessionReader({
+          reason: "source_empty",
+          guildId,
+          campaignSlug,
+          dbPath: candidate.dbPath,
+          source: candidate.source,
+          rowCount: 0,
+        });
+        continue;
+      }
+
+      const legacyRows = candidate.db
+        .prepare(
+          `SELECT session_id, ? as guild_id, status, label, started_at_ms, started_by_id, source
+           FROM sessions
+           ORDER BY started_at_ms DESC
+           LIMIT ?`
+        )
+        .all(guildId, boundedLimit) as ArchiveSessionRow[];
+
+      if (legacyRows.length > 0) {
+        warnSessionReader({
+          reason: "missing_guild_column",
+          guildId,
+          campaignSlug,
+          dbPath: candidate.dbPath,
+          source: candidate.source,
+          rowCount: legacyRows.length,
+        });
+        return legacyRows;
+      }
+
+      warnSessionReader({
+        reason: "source_empty",
+        guildId,
+        campaignSlug,
+        dbPath: candidate.dbPath,
+        source: candidate.source,
+        rowCount: 0,
+      });
+    } catch {
+      continue;
+    }
   }
+
+  return [];
 }
 
 export function findSessionByGuildAndId(args: {
@@ -559,23 +712,76 @@ export function findSessionByGuildAndId(args: {
   campaignSlug: string;
   sessionId: string;
 }): ArchiveSessionRow | null {
-  const db = getCampaignDb({ campaignSlug: args.campaignSlug, guildId: args.guildId });
-  if (!db) return null;
+  const guildId = args.guildId.trim();
+  const campaignSlug = args.campaignSlug.trim();
+  const sessionId = args.sessionId.trim();
+  const dbCandidates = getCampaignDbCandidates({ campaignSlug, guildId });
+  if (dbCandidates.length === 0) return null;
 
-  try {
-    const row = db
-      .prepare(
-        `SELECT session_id, guild_id, status, label, started_at_ms, started_by_id, source
-         FROM sessions
-         WHERE guild_id = ? AND session_id = ?
-         LIMIT 1`
-      )
-      .get(args.guildId, args.sessionId) as ArchiveSessionRow | undefined;
+  for (const candidate of dbCandidates) {
+    const hasGuildColumn = sessionsTableHasGuildIdColumn(candidate.db);
 
-    return row ?? null;
-  } catch {
-    return null;
+    try {
+      if (hasGuildColumn) {
+        const exactRow = candidate.db
+          .prepare(
+            `SELECT session_id, guild_id, status, label, started_at_ms, started_by_id, source
+             FROM sessions
+             WHERE guild_id = ? AND session_id = ?
+             LIMIT 1`
+          )
+          .get(guildId, sessionId) as ArchiveSessionRow | undefined;
+        if (exactRow) return exactRow;
+
+        const trimmedRow = candidate.db
+          .prepare(
+            `SELECT session_id, guild_id, status, label, started_at_ms, started_by_id, source
+             FROM sessions
+             WHERE TRIM(guild_id) = ? AND session_id = ?
+             LIMIT 1`
+          )
+          .get(guildId, sessionId) as ArchiveSessionRow | undefined;
+        if (trimmedRow) {
+          warnSessionReader({
+            reason: "guild_trim_match",
+            guildId,
+            campaignSlug,
+            dbPath: candidate.dbPath,
+            source: candidate.source,
+            rowCount: 1,
+          });
+          return trimmedRow;
+        }
+
+        continue;
+      }
+
+      const legacyRow = candidate.db
+        .prepare(
+          `SELECT session_id, ? as guild_id, status, label, started_at_ms, started_by_id, source
+           FROM sessions
+           WHERE session_id = ?
+           LIMIT 1`
+        )
+        .get(guildId, sessionId) as ArchiveSessionRow | undefined;
+
+      if (legacyRow) {
+        warnSessionReader({
+          reason: "missing_guild_column",
+          guildId,
+          campaignSlug,
+          dbPath: candidate.dbPath,
+          source: candidate.source,
+          rowCount: 1,
+        });
+        return legacyRow;
+      }
+    } catch {
+      continue;
+    }
   }
+
+  return null;
 }
 
 export function updateSessionLabel(args: {

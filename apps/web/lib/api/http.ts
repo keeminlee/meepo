@@ -37,26 +37,45 @@ function appendQuery(url: URL, query?: FetchJsonOptions["query"]): void {
   }
 }
 
+const CANONICAL_PROD_ORIGIN = "https://meepo.online";
+
+function normalizeOrigin(value: string): string {
+  return value.trim().replace(/\/+$/, "").toLowerCase();
+}
+
 async function resolveApiBaseUrl(): Promise<string> {
   if (typeof window !== "undefined") {
     return "";
   }
 
+  const isProduction = process.env.NODE_ENV === "production";
+
   const fromEnv = process.env.MEEPO_WEB_INTERNAL_ORIGIN ?? process.env.NEXT_PUBLIC_SITE_URL;
   if (fromEnv && fromEnv.trim().length > 0) {
-    return fromEnv.replace(/\/$/, "");
+    const normalized = fromEnv.replace(/\/$/, "");
+    if (isProduction && normalizeOrigin(normalized).startsWith("http://")) {
+      throw new Error("MEEPO_WEB_INTERNAL_ORIGIN/NEXT_PUBLIC_SITE_URL must use https in production.");
+    }
+    return normalized;
   }
 
   try {
     const nextHeaders = await import("next/headers");
     const headerStore = await nextHeaders.headers();
     const host = headerStore.get("x-forwarded-host") ?? headerStore.get("host");
-    const proto = headerStore.get("x-forwarded-proto") ?? "http";
+    const proto = headerStore.get("x-forwarded-proto") ?? (isProduction ? "https" : "http");
     if (host) {
+      if (isProduction && proto !== "https") {
+        return CANONICAL_PROD_ORIGIN;
+      }
       return `${proto}://${host}`;
     }
   } catch {
     // Fallback below.
+  }
+
+  if (isProduction) {
+    return CANONICAL_PROD_ORIGIN;
   }
 
   return "http://localhost:3000";

@@ -79,6 +79,42 @@ type NextAuthOptionsWithTrustHost = NextAuthOptions & {
 };
 
 const isProduction = process.env.NODE_ENV === "production";
+const CANONICAL_PROD_ORIGIN = "https://meepo.online";
+
+function normalizeOrigin(value: string): string {
+  return value.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+function sanitizeTokenGuildSnapshot(value: unknown): Array<{ id: string }> {
+  return toTokenGuildIds(value).map((id) => ({ id }));
+}
+
+function assertProductionAuthEnvironment(): void {
+  if (!isProduction) return;
+
+  const authSecret = process.env.AUTH_SECRET?.trim() ?? "";
+  if (authSecret.length === 0) {
+    throw new Error("AUTH_SECRET must be set in production.");
+  }
+
+  const nextAuthUrl = process.env.NEXTAUTH_URL?.trim() ?? "";
+  const authUrl = process.env.AUTH_URL?.trim() ?? "";
+  const expected = normalizeOrigin(CANONICAL_PROD_ORIGIN);
+
+  if (nextAuthUrl.length === 0 || normalizeOrigin(nextAuthUrl) !== expected) {
+    throw new Error(`NEXTAUTH_URL must be ${CANONICAL_PROD_ORIGIN} in production.`);
+  }
+
+  if (authUrl.length === 0 || normalizeOrigin(authUrl) !== expected) {
+    throw new Error(`AUTH_URL must be ${CANONICAL_PROD_ORIGIN} in production.`);
+  }
+
+  if (process.env.DEV_WEB_BYPASS === "1") {
+    throw new Error("DEV_WEB_BYPASS must be disabled in production.");
+  }
+}
+
+assertProductionAuthEnvironment();
 
 async function fetchDiscordGuilds(accessToken: string): Promise<DiscordGuild[]> {
   const response = await fetch("https://discord.com/api/users/@me/guilds", {
@@ -135,6 +171,8 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
   ],
   callbacks: {
     async jwt({ token, account, profile }) {
+      token.discordGuilds = sanitizeTokenGuildSnapshot(token.discordGuilds);
+
       const nowMs = Date.now();
       const ttlMs = resolveGuildSnapshotTtlMs(process.env.MEEPO_WEB_DISCORD_GUILDS_TTL_MS);
       const previousLastSyncedAtMs =
@@ -277,7 +315,7 @@ export const authOptions: NextAuthOptionsWithTrustHost = {
           : "session_snapshot";
 
       session.discord = {
-        guilds: Array.isArray(token.discordGuilds) ? token.discordGuilds : [],
+        guilds: sanitizeTokenGuildSnapshot(token.discordGuilds),
         source,
         lastSyncedAtMs: typeof token.discordGuildsLastSyncedAtMs === "number" ? token.discordGuildsLastSyncedAtMs : null,
         lastRefreshAttemptAtMs:
