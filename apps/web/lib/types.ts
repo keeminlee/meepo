@@ -37,6 +37,7 @@ export type CampaignSummary = {
   editable?: boolean;
   persisted?: boolean;
   canWrite?: boolean;
+  readOnlyReason?: "not_campaign_dm" | "demo_mode";
 };
 
 export type TranscriptEntry = {

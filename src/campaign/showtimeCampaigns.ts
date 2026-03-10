@@ -11,13 +11,14 @@ export type ShowtimeCampaignRecord = {
   campaign_name: string;
   created_at_ms: number;
   created_by_user_id: string | null;
+  dm_user_id: string | null;
 };
 
 export function listShowtimeCampaigns(guildId: string): ShowtimeCampaignRecord[] {
   const db = getControlDb();
   return db
     .prepare(
-      `SELECT guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id
+      `SELECT guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id, dm_user_id
        FROM guild_campaigns
        WHERE guild_id = ?
        ORDER BY created_at_ms ASC, campaign_slug ASC`
@@ -38,6 +39,7 @@ export function createShowtimeCampaign(args: {
   guildId: string;
   campaignName: string;
   createdByUserId?: string | null;
+  dmUserId?: string | null;
 }): ShowtimeCampaignRecord {
   const campaignName = args.campaignName.trim();
   if (!campaignName) {
@@ -53,10 +55,12 @@ export function createShowtimeCampaign(args: {
   );
   const createdAtMs = Date.now();
 
+  const dmUserId = args.dmUserId?.trim() || args.createdByUserId?.trim() || null;
+
   db.prepare(
-    `INSERT INTO guild_campaigns (guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(args.guildId, slug, campaignName, createdAtMs, args.createdByUserId ?? null);
+    `INSERT INTO guild_campaigns (guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id, dm_user_id)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(args.guildId, slug, campaignName, createdAtMs, args.createdByUserId ?? null, dmUserId);
 
   return {
     guild_id: args.guildId,
@@ -64,5 +68,6 @@ export function createShowtimeCampaign(args: {
     campaign_name: campaignName,
     created_at_ms: createdAtMs,
     created_by_user_id: args.createdByUserId ?? null,
+    dm_user_id: dmUserId,
   };
 }

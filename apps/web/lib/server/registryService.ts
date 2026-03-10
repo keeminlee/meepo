@@ -294,11 +294,11 @@ async function assertAuthorizedCampaign(campaignSlug: string, searchParams?: Que
 
 async function assertCampaignEditable(campaignSlug: string, searchParams?: QueryInput) {
   const campaign = await getAuthorizedCampaign(campaignSlug, searchParams);
-  if (campaign.editable === false) {
-    throw new WebDataError("invalid_request", 422, "This campaign is read-only.");
+  if (campaign.editable === false || campaign.readOnlyReason === "demo_mode") {
+    throw new WebDataError("invalid_request", 422, "This compendium is read-only in system demo mode.");
   }
   if (!campaign.canWrite) {
-    throw new WebDataError("unauthorized", 403, "Write access is restricted to the guild DM for this archive scope.");
+    throw new WebDataError("unauthorized", 403, "This compendium is read-only because you are not the DM for this campaign.");
   }
   return campaign;
 }

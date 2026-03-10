@@ -1673,12 +1673,29 @@ function applyMigrations(db: Database.Database) {
         campaign_name TEXT NOT NULL,
         created_at_ms INTEGER NOT NULL,
         created_by_user_id TEXT,
+        dm_user_id TEXT,
         PRIMARY KEY (guild_id, campaign_slug)
       );
 
       CREATE INDEX idx_guild_campaigns_guild_created
       ON guild_campaigns(guild_id, created_at_ms DESC);
     `);
+  } else {
+    const guildCampaignColumns = db.pragma("table_info(guild_campaigns)") as any[];
+    const hasDmUserId = guildCampaignColumns.some((c: any) => c.name === "dm_user_id");
+    if (!hasDmUserId) {
+      console.log("Migrating: Adding dm_user_id to guild_campaigns");
+      db.exec("ALTER TABLE guild_campaigns ADD COLUMN dm_user_id TEXT");
+
+      // Hybrid legacy backfill: only copy clear historical ownership signal.
+      db.exec(`
+        UPDATE guild_campaigns
+        SET dm_user_id = TRIM(created_by_user_id)
+        WHERE dm_user_id IS NULL
+          AND created_by_user_id IS NOT NULL
+          AND TRIM(created_by_user_id) <> ''
+      `);
+    }
   }
 
   // Migration: MeepoContext substrate tables (Sprint 1)

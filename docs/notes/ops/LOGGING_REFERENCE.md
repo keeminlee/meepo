@@ -110,7 +110,6 @@ Legacy environment variable for voice debugging. Use `LOG_LEVEL=debug LOG_SCOPES
 **Files:** `src/overlay/server.ts`, `src/bot.ts`
 
 **Logs:**
-- `Auto-joined voice channel and listening for speaking events` — Overlay voice join
 - `Built tokens for 8 characters` — Token configuration loaded
 - `WebSocket client disconnected` — Browser client disconnect
 - Connection errors, port startup failures
@@ -198,18 +197,14 @@ Legacy environment variable for voice debugging. Use `LOG_LEVEL=debug LOG_SCOPES
 ---
 
 ### `meepo` (INFO default)
-**Files:** `src/meepo/state.ts`, `src/meepo/autoJoinVoice.ts`, `src/meepo/nickname.ts`, `src/meepo/autoSleep.ts`
+**Files:** `src/meepo/state.ts`, `src/meepo/nickname.ts`, `src/meepo/autoSleep.ts`
 
 **Info-level logs:**
 - `Woke up as form_id: meepo` — Startup state
 - `Transforming: meepo → xoblob` — Form change
-- `Joined General voice channel and started STT` — Auto-join result
 - `Sleeping Meepo in guild after 10 minutes of inactivity` — Auto-sleep
 
 **Debug-level logs:**
-- `MEEPO_HOME_VOICE_CHANNEL_ID not set, skipping auto-join` — Config missing
-- `Already in General voice channel` — Idempotent check
-- `Enabled STT for existing connection` — STT activation
 - `Nickname set to: Xoblob (Echo)` — Nickname update
 
 **Warn-level logs:**

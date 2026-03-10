@@ -40,71 +40,73 @@ export function SessionHeader({ session, searchParams }: SessionHeaderProps) {
         <div>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-5xl font-serif italic">{sessionLabel}</h1>
-            {!isEditing ? (
-              <button
-                type="button"
-                className="rounded-full border border-border px-3 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
-                onClick={() => {
-                  setDraftLabel(label ?? "");
-                  setIsEditing(true);
-                  setErrorMessage(null);
-                }}
-              >
-                Edit label
-              </button>
-            ) : (
-              <form
-                className="inline-flex items-center gap-2"
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  const previous = label;
-                  const normalized = draftLabel.trim();
-                  if (normalized.length > 80) {
-                    setErrorMessage("Session label must be 80 characters or fewer.");
-                    return;
-                  }
-
-                  const nextLabel = normalized.length > 0 ? normalized : null;
-                  setErrorMessage(null);
-                  setLabel(nextLabel);
-                  setIsEditing(false);
-
-                  try {
-                    await updateSessionLabelApi(session.id, { label: nextLabel }, searchParams);
-                  } catch (error) {
-                    setLabel(previous);
-                    if (error instanceof WebApiError) {
-                      setErrorMessage(error.message);
-                    } else {
-                      setErrorMessage("Unable to update session label right now.");
-                    }
-                    router.refresh();
-                    return;
-                  }
-
-                  router.refresh();
-                }}
-              >
-                <input
-                  value={draftLabel}
-                  maxLength={80}
-                  onChange={(event) => setDraftLabel(event.currentTarget.value)}
-                  className="rounded-md border border-border bg-background px-2 py-1 text-sm"
-                />
-                <button type="submit" className="rounded-full border border-primary/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">Save</button>
+            {session.canWrite ? (
+              !isEditing ? (
                 <button
                   type="button"
-                  className="rounded-full border border-border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+                  className="rounded-full border border-border px-3 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
                   onClick={() => {
                     setDraftLabel(label ?? "");
-                    setIsEditing(false);
+                    setIsEditing(true);
                     setErrorMessage(null);
                   }}
                 >
-                  Cancel
+                  Edit label
                 </button>
-              </form>
-            )}
+              ) : (
+                <form
+                  className="inline-flex items-center gap-2"
+                  onSubmit={async (event) => {
+                    event.preventDefault();
+                    const previous = label;
+                    const normalized = draftLabel.trim();
+                    if (normalized.length > 80) {
+                      setErrorMessage("Session label must be 80 characters or fewer.");
+                      return;
+                    }
+
+                    const nextLabel = normalized.length > 0 ? normalized : null;
+                    setErrorMessage(null);
+                    setLabel(nextLabel);
+                    setIsEditing(false);
+
+                    try {
+                      await updateSessionLabelApi(session.id, { label: nextLabel }, searchParams);
+                    } catch (error) {
+                      setLabel(previous);
+                      if (error instanceof WebApiError) {
+                        setErrorMessage(error.message);
+                      } else {
+                        setErrorMessage("Unable to update session label right now.");
+                      }
+                      router.refresh();
+                      return;
+                    }
+
+                    router.refresh();
+                  }}
+                >
+                  <input
+                    value={draftLabel}
+                    maxLength={80}
+                    onChange={(event) => setDraftLabel(event.currentTarget.value)}
+                    className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                  />
+                  <button type="submit" className="rounded-full border border-primary/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">Save</button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+                    onClick={() => {
+                      setDraftLabel(label ?? "");
+                      setIsEditing(false);
+                      setErrorMessage(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </form>
+              )
+            ) : null}
           </div>
           <p className="mt-2 text-sm uppercase tracking-widest text-primary/70">{session.campaignName}</p>
           {errorMessage ? <p className="mt-2 text-sm text-rose-400">{errorMessage}</p> : null}

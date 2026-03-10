@@ -2202,6 +2202,7 @@ async function handleShowtimeStart(interaction: any, ctx: CommandCtx): Promise<v
       guildId,
       campaignName: String(newCampaignNameInput ?? ""),
       createdByUserId: interaction.user.id,
+      dmUserId: interaction.user.id,
     });
     selectedCampaignSlug = created.campaign_slug;
     selectedCampaignName = created.campaign_name;
@@ -2216,6 +2217,7 @@ async function handleShowtimeStart(interaction: any, ctx: CommandCtx): Promise<v
         guildId,
         campaignName: "Campaign Alpha",
         createdByUserId: interaction.user.id,
+        dmUserId: interaction.user.id,
       });
       selectedCampaignSlug = created.campaign_slug;
       selectedCampaignName = created.campaign_name;
@@ -3037,6 +3039,31 @@ async function handleStatus(interaction: any, ctx: CommandCtx): Promise<void> {
 
   const activeSessionSummary = activeSession ? summarizeSession(activeSession) : "No active session";
   const voiceLabel = voiceState ? "Connected" : "Not connected";
+  const guildCampaigns = listShowtimeCampaigns(guildId);
+  const campaignDmLines = guildCampaigns.length === 0
+    ? ["- (none)"]
+    : await Promise.all(
+      guildCampaigns.map(async (campaign) => {
+        const ownerId = campaign.dm_user_id?.trim() || null;
+        const campaignLabel = `${campaign.campaign_name} (${campaign.campaign_slug})`;
+        if (!ownerId) {
+          return `- ${campaignLabel}: Unassigned`;
+        }
+
+        let ownerDisplay = "Unknown member";
+        try {
+          const member = interaction.guild ? await interaction.guild.members.fetch(ownerId) : null;
+          const displayName = member?.displayName?.trim();
+          if (displayName && displayName.length > 0) {
+            ownerDisplay = displayName;
+          }
+        } catch {
+          ownerDisplay = "Unknown member";
+        }
+
+        return `- ${campaignLabel}: ${ownerDisplay}`;
+      })
+    );
 
   const nextStep = lifecycle === "Dormant"
     ? "Use /meepo awaken to initialize Meepo."
@@ -3109,6 +3136,7 @@ async function handleStatus(interaction: any, ctx: CommandCtx): Promise<void> {
       voiceState: voiceLabel,
       session: activeSessionSummary,
       campaign: ctx.campaignSlug,
+      campaignDmLines,
       nextStep,
       isDevUser: isDevViewer,
       devDiagnosticsLines,
@@ -3122,6 +3150,7 @@ export const meepo = {
   data: new SlashCommandBuilder()
     .setName("meepo")
     .setDescription("Minimal Meepo controls.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand((sub) =>
       sub
         .setName("awaken")

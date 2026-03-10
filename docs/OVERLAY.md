@@ -82,7 +82,7 @@ Browser Client (overlay/overlay.html)
 ```env
 # Required in .env
 OVERLAY_PORT=7777                       # HTTP + WebSocket server port
-OVERLAY_VOICE_CHANNEL_ID=<channel_id>   # Voice channel to auto-join on bot startup
+OVERLAY_VOICE_CHANNEL_ID=<channel_id>   # Voice channel used for presence tracking
 DM_ROLE_ID=<role_id>                    # Optional: Discord role for DM token
 ```
 
@@ -161,8 +161,7 @@ if (oldState.channelId === OVERLAY_VOICE_CHANNEL_ID) {
 ```
 
 **Initial Setup:**
-- On bot startup, iterator over existing channel members and emit presence=true
-- Set Meepo's presence=true when joining
+- Presence is updated through `voiceStateUpdate` and explicit Meepo join/leave events
 - Set Meepo's presence=false when disconnecting
 
 ### 3. Speaking Detection
@@ -446,7 +445,6 @@ order.push('meepo');                            // Meepo last
 ## Integration Points from Recent Commits
 
 **src/bot.ts:**
-- On `ready` event: Auto-join overlay voice channel, set initial presence for members + Meepo
 - On `voiceStateUpdate` event: Track joins/leaves, call `overlayEmitPresence(userId, true/false)`
 
 **src/commands/meepo.ts:**

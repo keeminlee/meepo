@@ -71,6 +71,7 @@ export default async function CampaignCompendiumPage({ params, searchParams }: P
         initialRegistry={registry}
         searchParams={query}
         isEditable={campaign.editable !== false && Boolean(campaign.canWrite)}
+        readOnlyReason={campaign.readOnlyReason}
       />
     </ArchiveShell>
   );

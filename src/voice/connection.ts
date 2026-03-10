@@ -9,6 +9,7 @@ import { getVoiceState, setVoiceState, clearVoiceState } from "./state.js";
 import { stopReceiver } from "./receiver.js";
 import { cleanupSpeaker } from "./speaker.js";
 import { overlayEmitPresence } from "../overlay/server.js";
+import { getEnvBool } from "../config/rawEnv.js";
 
 const voiceLog = log.withScope("voice");
 const overlayLog = log.withScope("overlay");
@@ -78,6 +79,8 @@ export function leaveVoice(guildId: string): void {
  * - State cleanup on Destroyed
  */
 function setupDisconnectHandlers(connection: VoiceConnection, guildId: string): void {
+  const autoReconnectEnabled = getEnvBool("VOICE_AUTO_RECONNECT", process.env.NODE_ENV === "production");
+
   connection.on("stateChange", (oldState, newState) => {
     voiceLog.debug(`Voice state: ${oldState.status} → ${newState.status}`);
 
@@ -95,6 +98,12 @@ function setupDisconnectHandlers(connection: VoiceConnection, guildId: string): 
 
     // Attempt reconnection on disconnect (short window)
     if (newState.status === VoiceConnectionStatus.Disconnected) {
+      if (!autoReconnectEnabled) {
+        voiceLog.debug("Voice disconnected, auto-reconnect disabled; destroying connection");
+        connection.destroy();
+        return;
+      }
+
       voiceLog.debug(`Voice disconnected, attempting to reconnect...`);
       
       entersState(connection, VoiceConnectionStatus.Ready, 5_000)

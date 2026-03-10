@@ -17,7 +17,7 @@ import {
 } from "@/lib/server/readData/archiveReadStore";
 import { assertSessionGuildInAuthorizedScope, ScopeGuardError } from "@/lib/server/scopeGuards";
 import type { SessionArtifactStatus, SessionDetail } from "@/lib/types";
-import { assertUserCanWriteGuildArchive, canUserWriteGuildArchive } from "@/lib/server/writeAuthority";
+import { assertUserCanWriteCampaignArchive, canUserWriteCampaignArchive } from "@/lib/server/writeAuthority";
 
 export type CanonicalSessionDetail = {
   guildId: string;
@@ -161,8 +161,9 @@ export async function updateWebSessionLabel(args: {
       searchParams: args.searchParams,
     });
 
-    assertUserCanWriteGuildArchive({
+    assertUserCanWriteCampaignArchive({
       guildId,
+      campaignSlug,
       userId: auth.user?.id ?? null,
     });
 
@@ -298,7 +299,11 @@ export async function getWebSessionDetail(args: {
       transcriptStatus: canonical.transcriptStatus,
       recapStatus: canonical.recapStatus,
       warnings: canonical.warnings,
-      canWrite: canUserWriteGuildArchive({ guildId: canonical.guildId, userId: auth.user?.id ?? null }),
+      canWrite: canUserWriteCampaignArchive({
+        guildId: canonical.guildId,
+        campaignSlug: canonical.campaignSlug,
+        userId: auth.user?.id ?? null,
+      }),
     });
   } catch (error) {
     throw mapToWebDataError(error);
@@ -322,8 +327,9 @@ export async function regenerateWebSessionRecap(args: {
       searchParams: args.searchParams,
     });
 
-    assertUserCanWriteGuildArchive({
+    assertUserCanWriteCampaignArchive({
       guildId,
+      campaignSlug,
       userId: auth.user?.id ?? null,
     });
 

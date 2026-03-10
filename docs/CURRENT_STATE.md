@@ -462,7 +462,6 @@ Recap      Emotion Beats         LLM Response
 - **Voice Loop:** Closed STT → LLM → TTS with feedback loop protection
 - **Anti-noise Gating:** Configurable threshold to filter background noise
 - **Voice State Tracking:** Guild-scoped connection management
-- **Auto-join Voice:** Meepo automatically joins General voice when awakening (via `/meepo awaken` or auto-awaken)
 - **STT Always-On:** STT automatically enabled when Meepo joins any voice channel
 
 #### Text I/O
@@ -482,7 +481,7 @@ Recap      Emotion Beats         LLM Response
 - Persona-driven system prompts with registry validation
 
 #### Session Management
-- **Meepo State Persistence:** Active state (`is_active=1`) persists across bot restarts; Meepo auto-restores and rejoins voice
+- **Meepo State Persistence:** Active state (`is_active=1`) persists across bot restarts
 - **Session Lifecycle:**
   - **Dormant -> Awakened:** `/meepo awaken` performs one-time guild initialization and enables Ambient behavior
   - **Awakened Ambient -> Showtime:** `/meepo showtime start` starts a canon live session
@@ -681,7 +680,6 @@ latches
   - Scaled 75% larger (140px tokens, 28px gaps) for better OBS visibility
   - WebSocket-based speaking & presence state with auto-reconnect
   - URL: `http://localhost:7777/overlay` (configure as OBS Browser Source)
-- **Auto-Join Voice on Wake** (Meepo joins General voice channel automatically when waking) ✨ **NEW Feb 15**
 - **STT Always-On** (STT enabled by default when joining voice, no manual toggle needed) ✨ **NEW Feb 15**
 - **Adaptive Presence Tracking** (Overlay visibility tied to voice channel membership) ✨ **NEW Feb 15**
   - voiceStateUpdate handler tracks Discord member joins/leaves
@@ -727,8 +725,8 @@ ANNOUNCEMENT_CHANNEL_ID=<id>        # Discord channel for /meepo announce remind
 
 # Overlay (OBS)
 OVERLAY_PORT=7777                   # HTTP + WebSocket server port
-OVERLAY_VOICE_CHANNEL_ID=<id>      # Auto-join on bot startup (speaking detection)
-MEEPO_HOME_VOICE_CHANNEL_ID=<id>   # Auto-join when Meepo wakes/restores
+OVERLAY_VOICE_CHANNEL_ID=<id>      # Voice channel used for overlay presence tracking
+MEEPO_HOME_VOICE_CHANNEL_ID=<id>   # Optional default for manual voice join flows
 
 # Voice
 VOICE_CHUNK_SIZE_MS=60000           # Audio chunk size
@@ -793,8 +791,7 @@ src/
 │   ├── triggers.ts                 # Address detection
 │   ├── nickname.ts                 # Discord nickname management
 │   ├── knowledge.ts                # Foundational memories (INITIAL_MEMORIES)
-│   ├── autoSleep.ts                # Inactivity-based session cleanup
-│   └── autoJoinVoice.ts            # Auto-join General voice on wake
+│   └── autoSleep.ts                # Inactivity-based session cleanup
 │
 ├── personas/
 │   ├── index.ts                    # Registry + StyleSpec system

@@ -142,6 +142,7 @@ export function getDemoCampaignSummary(): CampaignSummary {
     editable: false,
     persisted: false,
     canWrite: false,
+    readOnlyReason: "demo_mode",
   };
 }
 

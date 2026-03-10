@@ -6,7 +6,6 @@ import { getActiveMeepo, wakeMeepo, transformMeepo } from "./meepo/state.js";
 import { getEffectivePersonaId, getMindspace, setActivePersonaId } from "./meepo/personaState.js";
 import { getGuildDefaultPersonaId, getGuildDmUserId, resolveCampaignSlug } from "./campaign/guildConfig.js";
 import { getPersona } from "./personas/index.js";
-import { autoJoinGeneralVoice } from "./meepo/autoJoinVoice.js";
 import { startAutoSleepChecker } from "./meepo/autoSleep.js";
 import { getActiveSession } from "./sessions/sessions.js";
 import { getGuildMode } from "./sessions/sessionRuntime.js";
@@ -48,11 +47,7 @@ import { RECALL_SAFETY, boundedItems, checkAndRecordRecallThrottle } from "./rec
 import { getTranscriptLines } from "./ledger/transcripts.js";
 import { randomUUID } from "node:crypto";
 import { startOverlayServer, overlayEmitPresence } from "./overlay/server.js";
-import { joinVoice } from "./voice/connection.js";
-import { startReceiver } from "./voice/receiver.js";
-import { setVoiceState } from "./voice/state.js";
 import { cfg, printConfigSnapshot } from "./config/env.js";
-import { getEnvBool } from "./config/rawEnv.js";
 import {
   getOrCreateTraceId,
   runWithObservabilityContext,
@@ -245,16 +240,6 @@ client.once("ready", async () => {
       bootLog.info(
         `Meepo restored guild=${guild.id}: form=${activeMeepo.form_id}, channel=${activeMeepo.channel_id}, session continues`
       );
-
-      try {
-        await autoJoinGeneralVoice({
-          client,
-          guildId: guild.id,
-          channelId: activeMeepo.channel_id,
-        });
-      } catch (err: any) {
-        bootLog.warn(`Failed to auto-join voice on restore guild=${guild.id}: ${err.message ?? err}`);
-      }
     }
   }
 
@@ -264,57 +249,6 @@ client.once("ready", async () => {
   // Start context action worker (separate from heartbeat enqueue path)
   startMeepoContextActionWorker();
 
-  const configuredOverlayGuildId = cfg.discord.guildId;
-  // Auto-join overlay voice channel (for speaking detection, independent of Meepo sessions)
-  // Configurable via OVERLAY_AUTOJOIN=true (disabled by default)
-  const overlayVoiceChannelId = cfg.overlay.voiceChannelId;
-  const overlayAutoJoinEnabled = getEnvBool("OVERLAY_AUTOJOIN", false);
-  
-  if (overlayAutoJoinEnabled && configuredOverlayGuildId && overlayVoiceChannelId) {
-    try {
-      const guild = await client.guilds.fetch(configuredOverlayGuildId);
-      const channel = await guild.channels.fetch(overlayVoiceChannelId);
-      
-      if (!channel || !channel.isVoiceBased()) {
-        overlayLog.warn(`Channel ${overlayVoiceChannelId} is not a voice channel`);
-        return;
-      }
-
-      const connection = await joinVoice({
-        guildId: configuredOverlayGuildId,
-        channelId: overlayVoiceChannelId,
-        adapterCreator: guild.voiceAdapterCreator,
-      });
-
-      // Set voice state with STT enabled for overlay channel
-      setVoiceState(configuredOverlayGuildId, {
-        channelId: overlayVoiceChannelId,
-        connection,
-        guild,
-        sttEnabled: true, // ← Enable STT for overlay speaking detection
-        hushEnabled: cfg.voice.hushDefault,
-        connectedAt: Date.now(),
-      });
-
-      startReceiver(configuredOverlayGuildId);
-
-      // Set initial presence for users already in the channel
-      if (channel.isVoiceBased()) {
-        channel.members.forEach((member) => {
-          overlayEmitPresence(member.id, true);
-          overlayLog.debug(`Initial presence: ${member.displayName} (${member.id})`);
-        });
-      }
-
-      // Set Meepo's presence (bot is in voice)
-      overlayEmitPresence("meepo", true);
-      overlayLog.debug(`Set Meepo presence: true`);
-
-      overlayLog.info(`Auto-joined voice channel and listening for speaking events`);
-    } catch (err: any) {
-      overlayLog.error(`Failed to auto-join voice channel: ${err.message ?? err}`);
-    }
-  }
 });
 
 // Track voice channel presence for overlay (who's in voice)
@@ -457,13 +391,6 @@ client.on("messageCreate", async (message: any) => {
       if (guild) {
         await setBotNicknameForPersona(guild, "meepo");
       }
-      
-      // Auto-join General voice channel on wake
-      await autoJoinGeneralVoice({
-        client,
-        guildId: message.guildId,
-        channelId: message.channelId,
-      });
       
       // Log the auto-awaken action
       appendLedgerEntry({

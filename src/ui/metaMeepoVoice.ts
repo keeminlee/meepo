@@ -31,6 +31,7 @@ type StatusSnapshotInput = {
   voiceState: "Connected" | "Not connected";
   session: string;
   campaign: string;
+  campaignDmLines?: string[];
   nextStep: string;
   isDevUser: boolean;
   devDiagnosticsLines?: string[];
@@ -229,6 +230,9 @@ export const metaMeepoVoice = {
         `Voice: ${input.voiceState}`,
         `Session: ${input.session}`,
         `Campaign: ${input.campaign}`,
+        ...(input.campaignDmLines && input.campaignDmLines.length > 0
+          ? ["", header("Campaign DMs"), ...input.campaignDmLines]
+          : []),
         "",
         "Next step:",
         input.nextStep,

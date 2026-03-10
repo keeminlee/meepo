@@ -29,7 +29,15 @@ type CampaignRegistryManagerProps = {
   initialRegistry: RegistrySnapshotDto;
   searchParams?: Record<string, string | string[] | undefined>;
   isEditable?: boolean;
+  readOnlyReason?: "not_campaign_dm" | "demo_mode";
 };
+
+function getReadOnlyMessage(reason?: "not_campaign_dm" | "demo_mode"): string {
+  if (reason === "not_campaign_dm") {
+    return "This compendium is read-only because you are not the DM for this campaign.";
+  }
+  return "This compendium is read-only in system demo mode.";
+}
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof WebApiError) {
@@ -54,6 +62,7 @@ export function CampaignRegistryManager({
   initialRegistry,
   searchParams,
   isEditable = true,
+  readOnlyReason,
 }: CampaignRegistryManagerProps) {
   const [registry, setRegistry] = useState(initialRegistry);
   const [activeTab, setActiveTab] = useState<RegistryCategoryKey | "pending" | "ignore">("pcs");
@@ -254,7 +263,7 @@ export function CampaignRegistryManager({
             </p>
             {!isEditable ? (
               <p className="mt-2 text-xs uppercase tracking-wider text-amber-200/90">
-                System demo mode: compendium is read-only.
+                {getReadOnlyMessage(readOnlyReason)}
               </p>
             ) : null}
           </div>

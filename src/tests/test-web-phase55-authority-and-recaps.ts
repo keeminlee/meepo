@@ -72,6 +72,7 @@ async function setupGuildCampaignAndSession(args: {
   guildId: string;
   dmUserId: string;
   playerUserId: string;
+  campaignDmUserId?: string;
 }): Promise<{ campaignSlug: string; sessionId: string }> {
   await setAuth({ userId: args.playerUserId, guilds: [{ id: args.guildId, name: "Guild One" }] });
 
@@ -93,7 +94,8 @@ async function setupGuildCampaignAndSession(args: {
   const campaign = createShowtimeCampaign({
     guildId: args.guildId,
     campaignName: "Campaign Alpha",
-    createdByUserId: args.dmUserId,
+    createdByUserId: args.campaignDmUserId ?? args.dmUserId,
+    dmUserId: args.campaignDmUserId ?? args.dmUserId,
   });
   setGuildCampaignSlug(args.guildId, campaign.campaign_slug);
 
@@ -135,6 +137,32 @@ describe("Phase 5.5 write authority enforcement", () => {
     expect(renamed.name).toBe("DM Rename");
   });
 
+  test("guild DM is denied when campaign owner is a different user", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-phase55-auth-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const guildId = "guild-1";
+    const guildDmUserId = "dm-1";
+    const campaignOwnerUserId = "dm-2";
+    const playerUserId = "player-1";
+    const { campaignSlug } = await setupGuildCampaignAndSession({
+      guildId,
+      dmUserId: guildDmUserId,
+      campaignDmUserId: campaignOwnerUserId,
+      playerUserId,
+    });
+
+    await setAuth({ userId: guildDmUserId, guilds: [{ id: guildId, name: "Guild One" }] });
+    await expect(
+      updateWebCampaignName({ campaignSlug, campaignName: "Guild DM Rename Attempt" })
+    ).rejects.toMatchObject({ code: "unauthorized", status: 403 });
+
+    await setAuth({ userId: campaignOwnerUserId, guilds: [{ id: guildId, name: "Guild One" }] });
+    const renamed = await updateWebCampaignName({ campaignSlug, campaignName: "Campaign Owner Rename" });
+    expect(renamed.name).toBe("Campaign Owner Rename");
+  });
+
   test("non-DM is denied session label edit and DM is allowed", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-phase55-auth-"));
     tempDirs.push(tempDir);
@@ -154,6 +182,33 @@ describe("Phase 5.5 write authority enforcement", () => {
     await setAuth({ userId: dmUserId, guilds: [{ id: guildId, name: "Guild One" }] });
     const updated = await updateWebSessionLabel({ sessionId, label: "DM Label" });
     expect(updated.label).toBe("DM Label");
+  });
+
+  test("guild DM cannot edit session labels when campaign owner differs", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-phase55-auth-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const guildId = "guild-1";
+    const guildDmUserId = "dm-1";
+    const campaignOwnerUserId = "dm-2";
+    const playerUserId = "player-1";
+    const { sessionId } = await setupGuildCampaignAndSession({
+      guildId,
+      dmUserId: guildDmUserId,
+      campaignDmUserId: campaignOwnerUserId,
+      playerUserId,
+    });
+
+    await setAuth({ userId: guildDmUserId, guilds: [{ id: guildId, name: "Guild One" }] });
+    await expect(updateWebSessionLabel({ sessionId, label: "Guild DM Label Attempt" })).rejects.toMatchObject({
+      code: "unauthorized",
+      status: 403,
+    });
+
+    await setAuth({ userId: campaignOwnerUserId, guilds: [{ id: guildId, name: "Guild One" }] });
+    const updated = await updateWebSessionLabel({ sessionId, label: "Campaign Owner Label" });
+    expect(updated.label).toBe("Campaign Owner Label");
   });
 
   test("non-DM is denied recap regenerate before capability checks; DM reaches capability gate", async () => {

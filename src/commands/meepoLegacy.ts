@@ -4,7 +4,6 @@ import { getActivePersonaId, getMindspace, setActivePersonaId } from "../meepo/p
 import { getGuildDefaultPersonaId, resolveCampaignSlug, setGuildCampaignSlug, setGuildDefaultPersonaId } from "../campaign/guildConfig.js";
 import { getAvailableForms, getPersona } from "../personas/index.js";
 import { setBotNicknameForPersona } from "../meepo/nickname.js";
-import { autoJoinGeneralVoice } from "../meepo/autoJoinVoice.js";
 import { overlayEmitPresence } from "../overlay/server.js";
 import { appendLedgerEntry } from "../ledger/ledger.js";
 import { logSystemEvent } from "../ledger/system.js";
@@ -602,13 +601,6 @@ export const meepo = {
       if (interaction.guild) {
         await setBotNicknameForPersona(interaction.guild, "meepo");
       }
-
-      // Auto-join General voice channel on wake
-      await autoJoinGeneralVoice({
-        client: interaction.client,
-        guildId,
-        channelId,
-      });
 
       await interaction.reply({
         content:

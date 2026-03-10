@@ -14,7 +14,7 @@ import {
 import { getDemoCampaignSummary } from "@/lib/server/demoCampaign";
 import { ScopeGuardError } from "@/lib/server/scopeGuards";
 import { WebDataError } from "@/lib/mappers/errorMappers";
-import { assertUserCanWriteGuildArchive, canUserWriteGuildArchive } from "@/lib/server/writeAuthority";
+import { assertUserCanWriteCampaignArchive, canUserWriteCampaignArchive } from "@/lib/server/writeAuthority";
 import type { CampaignSummary, DashboardModel, SessionArtifactStatus, SessionSummary } from "@/lib/types";
 
 type QueryInput = Record<string, string | string[] | undefined> | undefined;
@@ -199,7 +199,7 @@ async function listWebCampaignForGuild(args: {
   guildId: string;
   guildName?: string;
   guildIconUrl?: string;
-  canWrite?: boolean;
+  authorizedUserId?: string | null;
 }): Promise<{ campaigns: CampaignSummary[]; wordsRecorded: number }> {
   const guildDisplayName = resolveGuildDisplayName({ guildId: args.guildId, guildName: args.guildName });
   const guildIconUrl = resolveGuildIconUrl(args.guildIconUrl);
@@ -231,13 +231,19 @@ async function listWebCampaignForGuild(args: {
     const campaignName = getGuildCampaignDisplayName({ guildId: args.guildId, campaignSlug })
       ?? prettifyCampaignSlug(campaignSlug);
 
+    const canWrite = canUserWriteCampaignArchive({
+      guildId: args.guildId,
+      campaignSlug,
+      userId: args.authorizedUserId ?? null,
+    });
+
     campaigns.push({
       slug: campaignSlug,
       guildId: args.guildId,
       name: campaignName,
       guildName: guildDisplayName,
       guildIconUrl,
-      isDm: args.canWrite ?? false,
+      isDm: canWrite,
       description: buildCampaignDescription(guildDisplayName),
       sessionCount: sessions.length,
       lastSessionDate: sessions[0]?.session.date ?? null,
@@ -245,7 +251,8 @@ async function listWebCampaignForGuild(args: {
       type: "user",
       editable: true,
       persisted: true,
-      canWrite: args.canWrite ?? false,
+      canWrite,
+      ...(canWrite ? {} : { readOnlyReason: "not_campaign_dm" as const }),
     });
 
     wordsRecorded += sessions.reduce((sum, entry) => sum + entry.wordCount, 0);
@@ -258,7 +265,6 @@ export async function listWebCampaignsForGuilds(args: {
   authorizedGuildIds: string[];
   authorizedGuilds?: WebAuthorizedGuild[];
   authorizedUserId?: string | null;
-  canWriteByGuildId?: Map<string, boolean>;
   includeDemoFallback?: boolean;
 }): Promise<{ campaigns: CampaignSummary[]; wordsRecorded: number }> {
   const guildNameMap = new Map<string, string>();
@@ -288,9 +294,7 @@ export async function listWebCampaignsForGuilds(args: {
         guildId,
         guildName: guildNameMap.get(guildId),
         guildIconUrl: guildIconMap.get(guildId),
-        canWrite:
-          args.canWriteByGuildId?.get(guildId)
-          ?? canUserWriteGuildArchive({ guildId, userId: args.authorizedUserId ?? null }),
+        authorizedUserId: args.authorizedUserId ?? null,
       })
     )
   );
@@ -415,6 +419,7 @@ export async function getWebCampaignDetail(args: {
   });
   const guildDisplayName = resolveGuildDisplayName({ guildId, guildName: resolvedScope.guildName });
   const guildIconUrl = resolveGuildIconUrl(resolvedScope.guildIconUrl);
+  const canWrite = canUserWriteCampaignArchive({ guildId, campaignSlug: args.campaignSlug, userId: auth.user?.id ?? null });
 
   return {
     slug: args.campaignSlug,
@@ -423,7 +428,7 @@ export async function getWebCampaignDetail(args: {
       ?? prettifyCampaignSlug(args.campaignSlug),
     guildName: guildDisplayName,
     guildIconUrl,
-    isDm: canUserWriteGuildArchive({ guildId, userId: auth.user?.id ?? null }),
+    isDm: canWrite,
     description: buildCampaignDescription(guildDisplayName),
     sessionCount: sessions.length,
     lastSessionDate: sessions[0]?.session.date ?? null,
@@ -431,7 +436,8 @@ export async function getWebCampaignDetail(args: {
     type: "user",
     editable: true,
     persisted: true,
-    canWrite: canUserWriteGuildArchive({ guildId, userId: auth.user?.id ?? null }),
+    canWrite,
+    ...(canWrite ? {} : { readOnlyReason: "not_campaign_dm" as const }),
   };
 }
 
@@ -468,8 +474,9 @@ export async function updateWebCampaignName(args: {
     throw new ScopeGuardError("Campaign is out of scope for the authorized guild set.");
   }
 
-  assertUserCanWriteGuildArchive({
+  assertUserCanWriteCampaignArchive({
     guildId: ownerGuildId,
+    campaignSlug,
     userId: auth.user?.id ?? null,
   });
 
@@ -477,8 +484,8 @@ export async function updateWebCampaignName(args: {
   const db = getControlDb();
   const now = Date.now();
   db.prepare(
-    `INSERT INTO guild_campaigns (guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id)
-     VALUES (?, ?, ?, ?, NULL)
+     `INSERT INTO guild_campaigns (guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id, dm_user_id)
+      VALUES (?, ?, ?, ?, NULL, NULL)
      ON CONFLICT(guild_id, campaign_slug)
      DO UPDATE SET campaign_name = excluded.campaign_name`
   ).run(ownerGuildId, campaignSlug, campaignName, now);

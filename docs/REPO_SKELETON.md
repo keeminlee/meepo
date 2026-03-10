@@ -128,7 +128,6 @@ src\ledger\system.ts
 src\ledger\transcripts.ts
 src\llm\client.ts
 src\llm\prompts.ts
-src\meepo\autoJoinVoice.ts
 src\meepo\autoSleep.ts
 src\meepo\knowledge.ts
 src\meepo\nickname.ts

@@ -47,6 +47,22 @@ describe("metaMeepoVoice contract", () => {
     expect(output).not.toContain("**Legacy / Lab Notes**");
   });
 
+  test("status snapshot renders campaign DM roster in public section", () => {
+    const output = metaMeepoVoice.status.snapshot({
+      lifecycleState: "Ready",
+      voiceState: "Connected",
+      session: "No active session",
+      campaign: "campaign_alpha",
+      campaignDmLines: ["- Campaign Alpha (campaign_alpha): DM One"],
+      nextStep: "Use /meepo showtime start to begin a session.",
+      isDevUser: false,
+    });
+
+    expect(output).toContain("**Campaign DMs**");
+    expect(output).toContain("Campaign Alpha (campaign_alpha): DM One");
+    expect(output).not.toContain("(12345)");
+  });
+
   test("sessions view output keeps core section anchors", () => {
     const lines = metaMeepoVoice.sessions.viewLines({
       sessionId: "session-1",

@@ -10,6 +10,8 @@ import {
   getWebRegistrySnapshot,
   updateWebRegistryEntry,
 } from "../../apps/web/lib/server/registryService";
+import { getWebCampaignDetail } from "../../apps/web/lib/server/campaignReaders";
+import { getDemoCampaignSummary } from "../../apps/web/lib/server/demoCampaign";
 
 process.env.DISCORD_TOKEN ??= "test-token";
 process.env.OPENAI_API_KEY ??= "test-openai-key";
@@ -99,6 +101,35 @@ function makeUniqueCampaignName(base: string, tempDir: string): string {
 }
 
 describe("compendium DM-only write enforcement", () => {
+  test("campaign detail exposes read-only reason for non-owner and editable state for owner", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-web-compendium-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const guildId = "guild-1";
+    const dmUserId = "dm-1";
+    const playerUserId = "player-1";
+    const campaignSlug = await setupCampaign({
+      guildId,
+      dmUserId,
+      campaignName: makeUniqueCampaignName("Compendium Alpha", tempDir),
+    });
+
+    await setAuth({ userId: dmUserId, guilds: [{ id: guildId, name: "Guild One" }] });
+    const ownerCampaign = await getWebCampaignDetail({ campaignSlug });
+    expect(ownerCampaign?.canWrite).toBe(true);
+    expect(ownerCampaign?.readOnlyReason).toBeUndefined();
+
+    await setAuth({ userId: playerUserId, guilds: [{ id: guildId, name: "Guild One" }] });
+    const nonOwnerCampaign = await getWebCampaignDetail({ campaignSlug });
+    expect(nonOwnerCampaign?.canWrite).toBe(false);
+    expect(nonOwnerCampaign?.readOnlyReason).toBe("not_campaign_dm");
+
+    const demoCampaign = getDemoCampaignSummary();
+    expect(demoCampaign.canWrite).toBe(false);
+    expect(demoCampaign.readOnlyReason).toBe("demo_mode");
+  });
+
   test("DM can create and update compendium entries", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-web-compendium-"));
     tempDirs.push(tempDir);

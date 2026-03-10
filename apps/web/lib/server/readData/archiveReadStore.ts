@@ -18,6 +18,7 @@ export type GuildCampaignRecord = {
   campaign_name: string;
   created_at_ms: number;
   created_by_user_id: string | null;
+  dm_user_id: string | null;
 };
 
 export type GuildConfigState = {
@@ -234,7 +235,7 @@ export function getGuildCampaignRecord(args: {
   try {
     const row = db
       .prepare(
-        `SELECT guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id
+        `SELECT guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id, dm_user_id
          FROM guild_campaigns
          WHERE guild_id = ? AND campaign_slug = ?
          LIMIT 1`
@@ -253,7 +254,7 @@ export function listGuildCampaignRecords(guildId: string): GuildCampaignRecord[]
   try {
     const rows = db
       .prepare(
-        `SELECT guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id
+        `SELECT guild_id, campaign_slug, campaign_name, created_at_ms, created_by_user_id, dm_user_id
          FROM guild_campaigns
          WHERE guild_id = ?
          ORDER BY created_at_ms ASC, campaign_slug ASC`
