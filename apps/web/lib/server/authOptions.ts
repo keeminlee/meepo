@@ -89,7 +89,7 @@ function sanitizeTokenGuildSnapshot(value: unknown): Array<{ id: string }> {
   return toTokenGuildIds(value).map((id) => ({ id }));
 }
 
-function assertProductionAuthEnvironment(): void {
+export function assertProductionAuthEnvironment(): void {
   if (!isProduction) return;
 
   const authSecret = process.env.AUTH_SECRET?.trim() ?? "";
@@ -113,8 +113,6 @@ function assertProductionAuthEnvironment(): void {
     throw new Error("DEV_WEB_BYPASS must be disabled in production.");
   }
 }
-
-assertProductionAuthEnvironment();
 
 async function fetchDiscordGuilds(accessToken: string): Promise<DiscordGuild[]> {
   const response = await fetch("https://discord.com/api/users/@me/guilds", {
