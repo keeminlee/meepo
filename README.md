@@ -104,6 +104,13 @@ Useful local web env toggles:
 - `NEXTAUTH_URL=http://localhost:3000`
 - `DEV_WEB_BYPASS=1` to allow local header/query guild override in non-production
 
+Production auth requirements:
+
+- Canonical OAuth origin is `https://meepo.online`.
+- `https://starstory.online` must be redirect-only at reverse proxy.
+- `NEXTAUTH_URL` and `AUTH_URL` must both match canonical origin in production.
+- Run `deploy/ec2/auth-runtime-preflight.sh` before production auth troubleshooting.
+
 Run 1 auth note:
 
 - Web login now uses Discord OAuth (`identify guilds`) via Auth.js session cookies.

@@ -2,10 +2,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { resolveWebAuthContext } from "../../apps/web/lib/server/authContext";
 import { WebDataError } from "../../apps/web/lib/mappers/errorMappers";
 import { getWebSessionDetail } from "../../apps/web/lib/server/sessionReaders";
+import { findSessionByGuildAndId, listSessionsForGuildCampaign } from "../../apps/web/lib/server/readData/archiveReadStore";
 
 process.env.DISCORD_TOKEN ??= "test-token";
 process.env.OPENAI_API_KEY ??= "test-openai-key";
@@ -65,6 +67,60 @@ async function upsertSessionInCampaignDb(args: {
     args.startedAtMs
   );
   db.close();
+}
+
+function buildScopedCampaignDir(root: string, guildId: string, campaignSlug: string): string {
+  return path.join(root, "campaigns", `g_${guildId.toLowerCase()}__c_${campaignSlug.toLowerCase()}`);
+}
+
+function buildLegacyCampaignDir(root: string, campaignSlug: string): string {
+  return path.join(root, "campaigns", campaignSlug);
+}
+
+function createSessionsDb(args: { dbPath: string; withGuildColumn: boolean }): Database.Database {
+  fs.mkdirSync(path.dirname(args.dbPath), { recursive: true });
+  const db = new Database(args.dbPath);
+
+  if (args.withGuildColumn) {
+    db.exec(
+      `CREATE TABLE sessions (
+        session_id TEXT PRIMARY KEY,
+        guild_id TEXT,
+        status TEXT,
+        label TEXT,
+        started_at_ms INTEGER,
+        started_by_id TEXT,
+        source TEXT
+      );`
+    );
+  } else {
+    db.exec(
+      `CREATE TABLE sessions (
+        session_id TEXT PRIMARY KEY,
+        status TEXT,
+        label TEXT,
+        started_at_ms INTEGER,
+        started_by_id TEXT,
+        source TEXT
+      );`
+    );
+  }
+
+  return db;
+}
+
+function insertSessionWithGuild(db: Database.Database, args: { sessionId: string; guildId: string; startedAtMs: number }): void {
+  db.prepare(
+    `INSERT INTO sessions (session_id, guild_id, status, label, started_at_ms, started_by_id, source)
+     VALUES (?, ?, 'completed', ?, ?, 'dm-user', 'live')`
+  ).run(args.sessionId, args.guildId, `Session ${args.sessionId}`, args.startedAtMs);
+}
+
+function insertSessionLegacy(db: Database.Database, args: { sessionId: string; startedAtMs: number }): void {
+  db.prepare(
+    `INSERT INTO sessions (session_id, status, label, started_at_ms, started_by_id, source)
+     VALUES (?, 'completed', ?, ?, 'dm-user', 'live')`
+  ).run(args.sessionId, `Session ${args.sessionId}`, args.startedAtMs);
 }
 
 afterEach(() => {
@@ -214,5 +270,103 @@ describe("web session scope disambiguation", () => {
         searchParams: { guild_id: "guild-1", campaign_slug: beta.campaign_slug },
       })
     ).rejects.toMatchObject({ code: "not_found", status: 404 } satisfies Partial<WebDataError>);
+  });
+});
+
+describe("archive read-store fallback policy", () => {
+  test("uses same-campaign legacy DB when scoped DB is empty", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-web-read-fallback-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const scoped = createSessionsDb({
+      dbPath: path.join(buildScopedCampaignDir(tempDir, "guild-1", "alpha"), "db.sqlite"),
+      withGuildColumn: true,
+    });
+    scoped.close();
+
+    const legacy = createSessionsDb({
+      dbPath: path.join(buildLegacyCampaignDir(tempDir, "alpha"), "db.sqlite"),
+      withGuildColumn: true,
+    });
+    insertSessionWithGuild(legacy, { sessionId: "legacy-s1", guildId: "guild-1", startedAtMs: Date.now() });
+    legacy.close();
+
+    const rows = listSessionsForGuildCampaign({ guildId: "guild-1", campaignSlug: "alpha", limit: 20 });
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.session_id).toBe("legacy-s1");
+  });
+
+  test("uses schema-compat query when sessions table has no guild_id column", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-web-read-fallback-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const legacy = createSessionsDb({
+      dbPath: path.join(buildLegacyCampaignDir(tempDir, "alpha"), "db.sqlite"),
+      withGuildColumn: false,
+    });
+    insertSessionLegacy(legacy, { sessionId: "legacy-no-guild", startedAtMs: Date.now() });
+    legacy.close();
+
+    const rows = listSessionsForGuildCampaign({ guildId: "guild-1", campaignSlug: "alpha", limit: 20 });
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.session_id).toBe("legacy-no-guild");
+    expect(rows[0]?.guild_id).toBe("guild-1");
+
+    const found = findSessionByGuildAndId({ guildId: "guild-1", campaignSlug: "alpha", sessionId: "legacy-no-guild" });
+    expect(found?.session_id).toBe("legacy-no-guild");
+    expect(found?.guild_id).toBe("guild-1");
+  });
+
+  test("matches whitespace-polluted guild_id rows via trim-safe comparison", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-web-read-fallback-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const scoped = createSessionsDb({
+      dbPath: path.join(buildScopedCampaignDir(tempDir, "guild-1", "alpha"), "db.sqlite"),
+      withGuildColumn: true,
+    });
+    insertSessionWithGuild(scoped, { sessionId: "trimmed-s1", guildId: " guild-1 ", startedAtMs: Date.now() });
+    scoped.close();
+
+    const rows = listSessionsForGuildCampaign({ guildId: "guild-1", campaignSlug: "alpha", limit: 20 });
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.session_id).toBe("trimmed-s1");
+
+    const found = findSessionByGuildAndId({ guildId: "guild-1", campaignSlug: "alpha", sessionId: "trimmed-s1" });
+    expect(found?.session_id).toBe("trimmed-s1");
+  });
+
+  test("does not bleed scoped wrong-guild rows and still recovers same-campaign legacy rows", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-web-read-fallback-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const scoped = createSessionsDb({
+      dbPath: path.join(buildScopedCampaignDir(tempDir, "guild-1", "alpha"), "db.sqlite"),
+      withGuildColumn: true,
+    });
+    insertSessionWithGuild(scoped, { sessionId: "scoped-wrong-guild", guildId: "guild-2", startedAtMs: Date.now() - 5000 });
+    scoped.close();
+
+    const legacy = createSessionsDb({
+      dbPath: path.join(buildLegacyCampaignDir(tempDir, "alpha"), "db.sqlite"),
+      withGuildColumn: true,
+    });
+    insertSessionWithGuild(legacy, { sessionId: "legacy-correct-guild", guildId: "guild-1", startedAtMs: Date.now() });
+    legacy.close();
+
+    const rows = listSessionsForGuildCampaign({ guildId: "guild-1", campaignSlug: "alpha", limit: 20 });
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.session_id).toBe("legacy-correct-guild");
+    expect(rows[0]?.guild_id).toBe("guild-1");
+
+    const wrongGuild = findSessionByGuildAndId({ guildId: "guild-1", campaignSlug: "alpha", sessionId: "scoped-wrong-guild" });
+    expect(wrongGuild).toBeNull();
+
+    const correctGuild = findSessionByGuildAndId({ guildId: "guild-1", campaignSlug: "alpha", sessionId: "legacy-correct-guild" });
+    expect(correctGuild?.session_id).toBe("legacy-correct-guild");
   });
 });

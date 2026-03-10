@@ -2,6 +2,12 @@
 
 This document records the production failure modes we hit on `meepo.online` and the safeguards to prevent regressions.
 
+Canonical production auth policy:
+
+- Canonical auth origin is `https://meepo.online`.
+- `https://starstory.online` is redirect-only and must not serve an independent OAuth flow.
+- Discord OAuth redirect URI must remain exact and canonical: `https://meepo.online/api/auth/callback/discord`.
+
 ## Incident Summary
 
 Observed symptoms during Discord callback (`/api/auth/callback/discord`):
@@ -36,6 +42,7 @@ Type safety alignment in `apps/web/types/next-auth.d.ts`:
 
 ## Deployment Checklist (Required)
 
+0. Run runtime truth preflight before changing auth/debugging.
 1. Build from latest source in `apps/web`.
 2. Remove stale build artifacts before building.
 3. Restart `meepo-web` service.
@@ -44,6 +51,9 @@ Type safety alignment in `apps/web/types/next-auth.d.ts`:
 Reference commands:
 
 ```bash
+cd /home/meepo/meepo-bot
+/bin/bash deploy/ec2/auth-runtime-preflight.sh
+
 cd /home/meepo/meepo-bot/apps/web
 rm -rf .next
 NODE_OPTIONS=--max-old-space-size=768 npm run build
@@ -110,6 +120,15 @@ When editing auth callbacks:
 4. Confirm no `State cookie was missing` in app logs.
 5. Confirm no `upstream sent too big header` in nginx logs.
 6. Confirm authenticated dashboard renders.
+
+## Stability Acceptance Gates
+
+1. `5/5` logged-out Discord sign-ins succeed on `https://meepo.online`.
+2. Callback path has no `502` and no `State cookie was missing`.
+3. Nginx error log has no `upstream sent too big header` during callback runs.
+4. Session cookies remain secure and origin-consistent across refresh/navigation.
+5. `https://starstory.online` always redirects and never serves independent auth pages.
+6. Browser does not show unsafe/certificate warnings on either public domain.
 
 ## Notes
 

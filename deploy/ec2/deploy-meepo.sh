@@ -36,6 +36,9 @@ npm run build
 
 cd "$APP_DIR"
 
+echo "[deploy] running auth runtime preflight"
+/bin/bash "$APP_DIR/deploy/ec2/auth-runtime-preflight.sh"
+
 echo "[deploy] reloading systemd"
 sudo systemctl daemon-reload
 
