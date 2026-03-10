@@ -139,9 +139,9 @@ function getLegacyRecapRow(db: ReturnType<typeof getRecapDbForGuild>["db"], sess
         source_hash: artifact.source_hash,
         strategy_version: artifact.strategy_version ?? "session-recaps-legacy-artifact-v1",
         meta_json: artifact.meta_json,
-        concise_text: content,
+        concise_text: "",
         balanced_text: content,
-        detailed_text: content,
+        detailed_text: "",
       };
     }
   } catch {
@@ -179,9 +179,9 @@ function getLegacyRecapRow(db: ReturnType<typeof getRecapDbForGuild>["db"], sess
         source_hash: null,
         strategy_version: "session-recaps-legacy-meecap-v1",
         meta_json: null,
-        concise_text: narrative,
+        concise_text: "",
         balanced_text: narrative,
-        detailed_text: narrative,
+        detailed_text: "",
       };
     }
   } catch {

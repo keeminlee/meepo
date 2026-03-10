@@ -1,4 +1,5 @@
 import "dotenv/config";
+import fs from "node:fs";
 import path from "node:path";
 import type { BargeInMode, Config, LogFormat, LogLevel, MeepoMode, SttProvider, TtsProvider } from "./types.js";
 import { redactConfigSnapshot } from "./redact.js";
@@ -53,6 +54,39 @@ function enumOf<T extends string>(name: string, allowed: readonly T[], def: T): 
   throw new Error(`Invalid value for ${name}: ${v}. Allowed: ${allowed.join(", ")}`);
 }
 
+function resolveDefaultDataRoot(): string {
+  const candidates = [
+    path.resolve(process.cwd(), "data"),
+    path.resolve(process.cwd(), "..", "..", "data"),
+  ];
+
+  const scoreRoot = (root: string): number => {
+    if (!fs.existsSync(root)) return -1;
+    let score = 0;
+    if (fs.existsSync(path.join(root, "campaigns"))) score += 4;
+    if (fs.existsSync(path.join(root, "control", "control.sqlite"))) score += 4;
+    if (fs.existsSync(path.join(root, "bot.sqlite"))) score += 2;
+    return score;
+  };
+
+  let best = candidates[0];
+  let bestScore = scoreRoot(best);
+
+  for (const candidate of candidates.slice(1)) {
+    const score = scoreRoot(candidate);
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+
+  if (bestScore >= 0) {
+    return best;
+  }
+
+  return candidates[0];
+}
+
 // Deprecated keys: keep list, warn once if present
 const DEPRECATED: Record<string, string> = {
   DEBUG_VOICE: "Use LOG_LEVEL=debug with LOG_SCOPES filters instead.",
@@ -80,7 +114,7 @@ export function loadConfig(): Config {
   const loggingLevel = enumOf<LogLevel>("LOG_LEVEL", ["error", "warn", "info", "debug", "trace"] as const, "info");
   const voiceDebug = optBool("DEBUG_VOICE", false) || loggingLevel === "debug" || loggingLevel === "trace";
 
-  const dataRoot = opt("DATA_ROOT") ?? "./data";
+  const dataRoot = opt("DATA_ROOT") ?? resolveDefaultDataRoot();
   const campaignsDir = opt("DATA_CAMPAIGNS_DIR") ?? "campaigns";
   const dbFilename = opt("DATA_DB_FILENAME") ?? "db.sqlite";
   const explicitDbPath = opt("DATA_DB_PATH");
@@ -110,7 +144,7 @@ export function loadConfig(): Config {
     },
 
     db: {
-      path: optAny(["DATA_DB_PATH", "DB_PATH"]) ?? "./data/bot.sqlite",
+      path: optAny(["DATA_DB_PATH", "DB_PATH"]) ?? path.join(dataRoot, "bot.sqlite"),
       filename: dbFilename,
     },
 

@@ -195,9 +195,9 @@ test("getSessionRecap falls back to legacy session_artifacts recap when canonica
   const loaded = getSessionRecap(guildId, sessionId);
 
   expect(loaded).toBeTruthy();
-  expect(loaded?.views.concise).toBe("Legacy artifact recap body");
+  expect(loaded?.views.concise).toBe("");
   expect(loaded?.views.balanced).toBe("Legacy artifact recap body");
-  expect(loaded?.views.detailed).toBe("Legacy artifact recap body");
+  expect(loaded?.views.detailed).toBe("");
   expect(loaded?.modelVersion).toBe("legacy-artifact-v1");
   expect(loaded?.sourceHash).toBe("hash-legacy-artifact");
 });
@@ -245,9 +245,9 @@ test("getSessionRecap falls back to legacy meecaps narrative when canonical row 
   const loaded = getSessionRecap(guildId, sessionId);
 
   expect(loaded).toBeTruthy();
-  expect(loaded?.views.concise).toBe("Legacy meecap narrative body");
+  expect(loaded?.views.concise).toBe("");
   expect(loaded?.views.balanced).toBe("Legacy meecap narrative body");
-  expect(loaded?.views.detailed).toBe("Legacy meecap narrative body");
+  expect(loaded?.views.detailed).toBe("");
   expect(loaded?.modelVersion).toBe("session-recaps-legacy-meecap-v1");
   expect(loaded?.engine).toBe("legacy-model");
 });

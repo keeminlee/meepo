@@ -267,6 +267,52 @@ describe("Phase 5.5 recap source visibility", () => {
     const detail = await getWebSessionDetail({ sessionId });
     expect(detail.recap?.source).toBe("canonical");
     expect(detail.recap?.balanced).toContain("Canonical balanced");
+    expect(detail.recapReadiness).toBe("ready");
+  });
+
+  test("session detail exposes failed recap readiness from lifecycle status events", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "meepo-phase55-recap-readiness-"));
+    tempDirs.push(tempDir);
+    configureHermeticEnv(tempDir);
+
+    const guildId = "guild-1";
+    const dmUserId = "dm-1";
+    const playerUserId = "player-1";
+    const { campaignSlug, sessionId } = await setupGuildCampaignAndSession({ guildId, dmUserId, playerUserId });
+
+    const { getDbForCampaign } = await import("../db.js");
+    const campaignDb = getDbForCampaign(campaignSlug);
+    campaignDb.prepare("DELETE FROM session_recaps WHERE session_id = ?").run(sessionId);
+    campaignDb.prepare("DELETE FROM session_artifacts WHERE session_id = ? AND artifact_type = 'recap_final'").run(sessionId);
+    campaignDb.prepare("DELETE FROM meecaps WHERE session_id = ?").run(sessionId);
+    campaignDb
+      .prepare(
+        `INSERT INTO ledger_entries (
+          id, guild_id, channel_id, message_id, author_id, author_name,
+          timestamp_ms, content, content_norm, session_id, tags, source, narrative_weight
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        `${sessionId}-recap-status-failed`,
+        guildId,
+        "channel-1",
+        `${sessionId}-recap-status-failed-msg`,
+        "system",
+        "SYSTEM",
+        Date.now(),
+        JSON.stringify({ event_type: "SESSION_RECAP_STATUS", readiness: "failed", reason: "postsession_retries_exhausted" }),
+        null,
+        sessionId,
+        "system,SESSION_RECAP_STATUS",
+        "system",
+        "secondary"
+      );
+    campaignDb.close();
+
+    await setAuth({ userId: playerUserId, guilds: [{ id: guildId, name: "Guild One" }] });
+    const detail = await getWebSessionDetail({ sessionId });
+    expect(detail.recap).toBeNull();
+    expect(detail.recapReadiness).toBe("failed");
   });
 
   test("session detail exposes legacy artifact recap source when canonical row is absent", async () => {
@@ -293,7 +339,9 @@ describe("Phase 5.5 recap source visibility", () => {
     await setAuth({ userId: playerUserId, guilds: [{ id: guildId, name: "Guild One" }] });
     const detail = await getWebSessionDetail({ sessionId });
     expect(detail.recap?.source).toBe("legacy_artifact");
-    expect(detail.recap?.concise).toContain("Legacy artifact recap");
+    expect(detail.recap?.balanced).toContain("Legacy artifact recap");
+    expect(detail.recap?.concise).toBe("");
+    expect(detail.recap?.detailed).toBe("");
   });
 
   test("session detail exposes legacy meecap source when canonical + artifact rows are absent", async () => {
@@ -322,5 +370,7 @@ describe("Phase 5.5 recap source visibility", () => {
     const detail = await getWebSessionDetail({ sessionId });
     expect(detail.recap?.source).toBe("legacy_meecap");
     expect(detail.recap?.balanced).toContain("Legacy meecap narrative");
+    expect(detail.recap?.concise).toBe("");
+    expect(detail.recap?.detailed).toBe("");
   });
 });

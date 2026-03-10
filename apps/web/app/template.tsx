@@ -26,6 +26,11 @@ function resolveMode(pathname: string): Mode {
 
 export default function Template({ children }: TemplateProps) {
   const pathname = usePathname();
+
+  if (pathname.startsWith("/openalpha")) {
+    return children;
+  }
+
   const [hydrated, setHydrated] = useState(false);
   const [phase, setPhase] = useState<"idle" | "out" | "in">("idle");
   const [activePath, setActivePath] = useState(pathname);

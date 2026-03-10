@@ -1,5 +1,6 @@
 import type {
   ArchiveRecap as CanonicalSessionRecap,
+  ArchiveRecapReadiness,
   ArchiveSessionRow as Session,
   ArchiveTranscript as SessionTranscript,
 } from "@/lib/server/readData/archiveReadStore";
@@ -42,6 +43,10 @@ export function mapCanonicalRecapToWebRecap(recap: CanonicalSessionRecap | null)
     generatedAt: new Date(recap.generatedAt).toISOString(),
     modelVersion: recap.modelVersion,
     source: recap.source,
+    engine: recap.engine,
+    sourceHash: recap.sourceHash,
+    strategyVersion: recap.strategyVersion,
+    metaJson: recap.metaJson,
   };
 }
 
@@ -51,6 +56,7 @@ export function buildSessionDetail(args: {
   session: Session;
   transcript: SessionTranscript | null;
   recap: CanonicalSessionRecap | null;
+  recapReadiness: ArchiveRecapReadiness;
   transcriptStatus: SessionArtifactStatus;
   recapStatus: SessionArtifactStatus;
   warnings?: string[];
@@ -73,6 +79,7 @@ export function buildSessionDetail(args: {
     source,
     transcript: mapCanonicalTranscriptToWebTranscript(args.transcript),
     recap: mapCanonicalRecapToWebRecap(args.recap),
+    recapReadiness: args.recapReadiness,
     artifacts: {
       transcript: args.transcriptStatus,
       recap: args.recapStatus,

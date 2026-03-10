@@ -9,7 +9,26 @@ process.env.OPENAI_API_KEY ??= "test-openai-key";
 
 const tempDirs: string[] = [];
 const ensureBronzeTranscriptExportCachedMock = vi.fn(() => ({ cacheHit: false }));
-const generateSessionRecapMock = vi.fn(async () => ({ cacheHit: false }));
+const generateSessionRecapMock = vi.fn(async () => ({
+  concise: "",
+  balanced: "Generated recap",
+  detailed: "",
+  engine: "megameecap",
+  source_hash: "hash-1",
+  strategy_version: "session-recaps-v2",
+  meta_json: JSON.stringify({
+    model_version: "session-recaps-v2",
+    styles: {
+      concise: { cacheHit: false, sourceHash: "hash-1" },
+      balanced: { cacheHit: false, sourceHash: "hash-1" },
+      detailed: { cacheHit: false, sourceHash: "hash-1" },
+    },
+  }),
+  generated_at_ms: Date.now(),
+  created_at_ms: Date.now(),
+  updated_at_ms: Date.now(),
+  source: "canonical",
+}));
 const joinVoiceMock = vi.fn();
 const leaveVoiceMock = vi.fn();
 const stopReceiverMock = vi.fn();
@@ -30,8 +49,8 @@ vi.mock("../sessions/transcriptExport.js", () => ({
   ensureBronzeTranscriptExportCached: ensureBronzeTranscriptExportCachedMock,
 }));
 
-vi.mock("../sessions/recapEngine.js", () => ({
-  generateSessionRecap: generateSessionRecapMock,
+vi.mock("../sessions/recapService.js", () => ({
+  generateSessionRecapContract: generateSessionRecapMock,
 }));
 
 vi.mock("../voice/connection.js", () => ({
@@ -254,7 +273,7 @@ describe("/meepo lifecycle run 1", () => {
     tempDirs.push(tempDir);
     configureHermeticEnv(tempDir);
 
-    generateSessionRecapMock.mockRejectedValueOnce(new Error("artifact failure"));
+    generateSessionRecapMock.mockRejectedValue(new Error("artifact failure"));
 
     const { meepo } = await import("../commands/meepo.js");
     const { getDbForCampaign } = await import("../db.js");

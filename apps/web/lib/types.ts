@@ -7,6 +7,8 @@ export type SessionArtifactStatus =
   | "missing"
   | "unavailable";
 
+export type SessionRecapReadiness = "pending" | "ready" | "failed";
+
 export type SessionSummary = {
   id: string;
   label: string | null;
@@ -54,6 +56,10 @@ export type SessionRecap = {
   generatedAt: string;
   modelVersion: string;
   source?: "canonical" | "legacy_artifact" | "legacy_meecap";
+  engine?: string | null;
+  sourceHash?: string | null;
+  strategyVersion?: string | null;
+  metaJson?: string | null;
 };
 
 export type SessionDetail = {
@@ -68,6 +74,7 @@ export type SessionDetail = {
   guildId: string;
   transcript: TranscriptEntry[];
   recap: SessionRecap | null;
+  recapReadiness: SessionRecapReadiness;
   artifacts: {
     transcript: SessionArtifactStatus;
     recap: SessionArtifactStatus;

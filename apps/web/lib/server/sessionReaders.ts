@@ -8,6 +8,7 @@ import {
   findSessionByGuildAndId,
   getGuildCampaignSlug,
   listGuildCampaignRecords,
+  readSessionRecapReadiness,
   readSessionRecap,
   readSessionTranscript,
   updateSessionLabel,
@@ -25,6 +26,7 @@ export type CanonicalSessionDetail = {
   session: ArchiveSessionRow;
   transcript: ArchiveTranscript | null;
   recap: ArchiveRecap | null;
+  recapReadiness: "pending" | "ready" | "failed";
   transcriptStatus: SessionArtifactStatus;
   recapStatus: SessionArtifactStatus;
   warnings: string[];
@@ -207,6 +209,7 @@ export async function getCanonicalSessionDetail(args: {
   const warnings: string[] = [];
   let transcript = null as ArchiveTranscript | null;
   let recap: ArchiveRecap | null = null;
+  let recapReadiness: "pending" | "ready" | "failed" = "pending";
   let transcriptStatus: SessionArtifactStatus = "missing";
   let recapStatus: SessionArtifactStatus = "missing";
 
@@ -237,12 +240,21 @@ export async function getCanonicalSessionDetail(args: {
     recap = null;
   }
 
+  recapReadiness = readSessionRecapReadiness({
+    guildId,
+    campaignSlug,
+    sessionId: args.sessionId,
+    recap,
+    sessionStatus: session.status,
+  });
+
   return {
     guildId,
     campaignSlug,
     session,
     transcript,
     recap,
+    recapReadiness,
     transcriptStatus,
     recapStatus,
     warnings,
@@ -296,6 +308,7 @@ export async function getWebSessionDetail(args: {
       session: canonical.session,
       transcript: canonical.transcript,
       recap: canonical.recap,
+      recapReadiness: canonical.recapReadiness,
       transcriptStatus: canonical.transcriptStatus,
       recapStatus: canonical.recapStatus,
       warnings: canonical.warnings,
@@ -336,8 +349,8 @@ export async function regenerateWebSessionRecap(args: {
     // Recap generation requires OpenAI at execution time; read paths remain independent.
     assertOpenAiConfigured();
 
-    const { regenerateSessionRecap } = await import("../../../../src/sessions/sessionRecaps");
-    await regenerateSessionRecap({
+    const { regenerateSessionRecapContract } = await import("../../../../src/sessions/recapService");
+    await regenerateSessionRecapContract({
       guildId,
       campaignSlug,
       sessionId: args.sessionId,

@@ -1,0 +1,80 @@
+.openAlphaRoot {
+  position: relative;
+  width: 100vw;
+  min-height: 100vh;
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(118, 148, 219, 0.09), transparent 44%),
+    radial-gradient(circle at 72% 22%, rgba(85, 108, 174, 0.08), transparent 42%),
+    linear-gradient(180deg, #02040b 0%, #010208 56%, #000106 100%);
+}
+
+.skyLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.skyGrain {
+  position: absolute;
+  inset: -20%;
+  opacity: 0.12;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.08) 0.6px, transparent 0.6px);
+  background-size: 3px 3px;
+  mix-blend-mode: screen;
+  animation: drift 48s linear infinite;
+}
+
+.star {
+  position: absolute;
+  display: block;
+  border-radius: 999px;
+  background: rgba(236, 242, 255, 0.9);
+  box-shadow: 0 0 8px rgba(196, 212, 255, 0.3);
+  animation: pulse var(--pulse-ms) ease-in-out infinite;
+  animation-delay: var(--delay-ms);
+}
+
+.interactionLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: auto;
+}
+
+.overlayLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 0.95;
+  }
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+
+  to {
+    transform: translate3d(5%, 2%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skyGrain,
+  .star {
+    animation: none;
+  }
+}

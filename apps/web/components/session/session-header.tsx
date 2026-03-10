@@ -26,6 +26,61 @@ export function SessionHeader({ session, searchParams }: SessionHeaderProps) {
     () => formatSessionDisplayTitle({ label, sessionId: session.id }),
     [label, session.id]
   );
+  const statusChips = useMemo(() => {
+    const chips = [
+      {
+        label: session.status === "in_progress" ? "In progress" : "Completed",
+        tone: statusTone,
+      },
+      {
+        label: `Source ${session.source}`,
+        tone: "info" as const,
+      },
+      {
+        label: `Recap ${session.recapReadiness}`,
+        tone:
+          session.recapReadiness === "ready"
+            ? "success"
+            : session.recapReadiness === "failed"
+              ? "danger"
+              : "warning",
+      },
+      {
+        label:
+          session.artifacts.recap === "available"
+            ? "Recap ready"
+            : `Recap ${session.artifacts.recap}`,
+        tone:
+          session.artifacts.recap === "available"
+            ? "success"
+            : session.artifacts.recap === "unavailable"
+              ? "danger"
+              : "warning",
+      },
+      {
+        label:
+          session.artifacts.transcript === "available"
+            ? "Transcript ready"
+            : `Transcript ${session.artifacts.transcript}`,
+        tone:
+          session.artifacts.transcript === "available"
+            ? "success"
+            : session.artifacts.transcript === "unavailable"
+              ? "danger"
+              : "warning",
+      },
+    ];
+
+    const seen = new Set<string>();
+    return chips.filter((chip) => {
+      const key = chip.label.trim().toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }, [session.artifacts.recap, session.artifacts.transcript, session.recapReadiness, session.source, session.status, statusTone]);
 
   return (
     <header className="space-y-4">
@@ -111,10 +166,9 @@ export function SessionHeader({ session, searchParams }: SessionHeaderProps) {
           <p className="mt-2 text-sm uppercase tracking-widest text-primary/70">{session.campaignName}</p>
           {errorMessage ? <p className="mt-2 text-sm text-rose-400">{errorMessage}</p> : null}
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <StatusChip label={session.status === "in_progress" ? "In progress" : "Completed"} tone={statusTone} />
-            <StatusChip label={`Source ${session.source}`} tone="info" />
-            <StatusChip label={session.artifacts.recap === "available" ? "Recap ready" : `Recap ${session.artifacts.recap}`} tone={session.artifacts.recap === "available" ? "success" : session.artifacts.recap === "unavailable" ? "danger" : "warning"} />
-            <StatusChip label={session.artifacts.transcript === "available" ? "Transcript ready" : `Transcript ${session.artifacts.transcript}`} tone={session.artifacts.transcript === "available" ? "success" : session.artifacts.transcript === "unavailable" ? "danger" : "warning"} />
+            {statusChips.map((chip) => (
+              <StatusChip key={chip.label} label={chip.label} tone={chip.tone} />
+            ))}
           </div>
         </div>
         <div className="inline-flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">

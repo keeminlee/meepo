@@ -70,6 +70,8 @@ export type ArchiveRecap = {
   };
 };
 
+export type ArchiveRecapReadiness = "pending" | "ready" | "failed";
+
 const DEFAULT_CAMPAIGNS_DIR = "campaigns";
 const DEFAULT_DB_FILENAME = "db.sqlite";
 const DEFAULT_DATA_ROOT = "data";
@@ -782,9 +784,9 @@ export function readSessionRecap(args: {
         metaJson: artifact.meta_json,
         source: "legacy_artifact",
         views: {
-          concise: content,
+          concise: "",
           balanced: content,
-          detailed: content,
+          detailed: "",
         },
       };
     }
@@ -825,9 +827,9 @@ export function readSessionRecap(args: {
         metaJson: null,
         source: "legacy_meecap",
         views: {
-          concise: narrative,
+          concise: "",
           balanced: narrative,
-          detailed: narrative,
+          detailed: "",
         },
       };
     }
@@ -836,4 +838,51 @@ export function readSessionRecap(args: {
   }
 
   return null;
+}
+
+export function readSessionRecapReadiness(args: {
+  guildId: string;
+  campaignSlug: string;
+  sessionId: string;
+  sessionStatus: ArchiveSessionRow["status"];
+  recap: ArchiveRecap | null;
+}): ArchiveRecapReadiness {
+  const db = getCampaignDb({ campaignSlug: args.campaignSlug, guildId: args.guildId });
+  if (!db) {
+    return args.recap ? "ready" : "pending";
+  }
+
+  try {
+    const row = db
+      .prepare(
+        `SELECT content
+         FROM ledger_entries
+         WHERE session_id = ?
+           AND source = 'system'
+           AND tags = 'system,SESSION_RECAP_STATUS'
+         ORDER BY timestamp_ms DESC, id DESC
+         LIMIT 1`
+      )
+      .get(args.sessionId) as { content: string | null } | undefined;
+
+    const payloadText = row?.content?.trim();
+    if (payloadText) {
+      const parsed = JSON.parse(payloadText) as { readiness?: unknown };
+      if (parsed.readiness === "pending" || parsed.readiness === "ready" || parsed.readiness === "failed") {
+        return parsed.readiness;
+      }
+    }
+  } catch {
+    // Fall through to deterministic inference for older sessions.
+  }
+
+  if (args.recap) {
+    return "ready";
+  }
+
+  if (args.sessionStatus === "completed" || args.sessionStatus === "active") {
+    return "pending";
+  }
+
+  return "failed";
 }

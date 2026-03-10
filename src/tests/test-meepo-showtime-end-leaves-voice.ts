@@ -9,7 +9,26 @@ process.env.OPENAI_API_KEY ??= "test-openai-key";
 
 const tempDirs: string[] = [];
 const ensureBronzeTranscriptExportCachedMock = vi.fn(() => ({ cacheHit: false }));
-const generateSessionRecapMock = vi.fn(async () => ({ cacheHit: false }));
+const generateSessionRecapMock = vi.fn(async () => ({
+  concise: "",
+  balanced: "Generated recap",
+  detailed: "",
+  engine: "megameecap",
+  source_hash: "hash-1",
+  strategy_version: "session-recaps-v2",
+  meta_json: JSON.stringify({
+    model_version: "session-recaps-v2",
+    styles: {
+      concise: { cacheHit: false, sourceHash: "hash-1" },
+      balanced: { cacheHit: false, sourceHash: "hash-1" },
+      detailed: { cacheHit: false, sourceHash: "hash-1" },
+    },
+  }),
+  generated_at_ms: Date.now(),
+  created_at_ms: Date.now(),
+  updated_at_ms: Date.now(),
+  source: "canonical",
+}));
 const voiceSpeakMock = vi.fn();
 const joinVoiceMock = vi.fn();
 const leaveVoiceMock = vi.fn();
@@ -31,8 +50,8 @@ vi.mock("../sessions/transcriptExport.js", () => ({
   ensureBronzeTranscriptExportCached: ensureBronzeTranscriptExportCachedMock,
 }));
 
-vi.mock("../sessions/recapEngine.js", () => ({
-  generateSessionRecap: generateSessionRecapMock,
+vi.mock("../sessions/recapService.js", () => ({
+  generateSessionRecapContract: generateSessionRecapMock,
 }));
 
 vi.mock("../voice/connection.js", () => ({
@@ -250,7 +269,26 @@ describe("showtime lifecycle hardening", () => {
     tempDirs.push(tempDir);
     configureHermeticEnv(tempDir);
 
-    generateSessionRecapMock.mockResolvedValue({ cacheHit: false });
+    generateSessionRecapMock.mockResolvedValue({
+      concise: "",
+      balanced: "Generated recap",
+      detailed: "",
+      engine: "megameecap",
+      source_hash: "hash-1",
+      strategy_version: "session-recaps-v2",
+      meta_json: JSON.stringify({
+        model_version: "session-recaps-v2",
+        styles: {
+          concise: { cacheHit: false, sourceHash: "hash-1" },
+          balanced: { cacheHit: false, sourceHash: "hash-1" },
+          detailed: { cacheHit: false, sourceHash: "hash-1" },
+        },
+      }),
+      generated_at_ms: Date.now(),
+      created_at_ms: Date.now(),
+      updated_at_ms: Date.now(),
+      source: "canonical",
+    });
 
     const { meepo } = await import("../commands/meepo.js");
     const { getDbForCampaign } = await import("../db.js");
@@ -334,6 +372,12 @@ describe("showtime lifecycle hardening", () => {
       expect(typeof payload.strategy).toBe("string");
     }
 
+    const recapStatusRows = rows
+      .filter((item) => item.tags === "system,SESSION_RECAP_STATUS")
+      .map((item) => JSON.parse(item.content) as Record<string, unknown>);
+    expect(recapStatusRows.some((payload) => payload.readiness === "pending")).toBe(true);
+    expect(recapStatusRows.some((payload) => payload.readiness === "ready")).toBe(true);
+
     const recapGenerated = payloadFor("SESSION_RECAP_GENERATED");
     assertCanonical(recapGenerated, "SESSION_RECAP_GENERATED");
     expect(typeof recapGenerated.strategy).toBe("string");
@@ -364,7 +408,7 @@ describe("showtime lifecycle hardening", () => {
     tempDirs.push(tempDir);
     configureHermeticEnv(tempDir);
 
-    generateSessionRecapMock.mockRejectedValueOnce(new Error("recap failure"));
+    generateSessionRecapMock.mockRejectedValue(new Error("recap failure"));
 
     const { meepo } = await import("../commands/meepo.js");
     const { getDbForCampaign } = await import("../db.js");
@@ -382,7 +426,7 @@ describe("showtime lifecycle hardening", () => {
     await meepo.execute(buildInteraction({ subcommand: "start", subcommandGroup: "showtime" }), execCtx);
     voiceConnected = true;
     await meepo.execute(buildInteraction({ subcommand: "end", subcommandGroup: "showtime" }), execCtx);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 900));
 
     const eventDb = getDbForCampaign("campaign_alpha");
     const rows = eventDb
@@ -403,9 +447,17 @@ describe("showtime lifecycle hardening", () => {
       .filter((item) => item.tags === "system,RECAP_GENERATE")
       .map((item) => JSON.parse(item.content) as Record<string, unknown>);
     expect(recapGenerateRows.some((payload) => payload.outcome === "start")).toBe(true);
-    const recapFailure = recapGenerateRows.find((payload) => payload.outcome === "failure");
+    const recapFailures = recapGenerateRows.filter((payload) => payload.outcome === "failure");
+    expect(recapFailures.length).toBeGreaterThanOrEqual(1);
+    const recapFailure = recapFailures.at(-1);
     expect(recapFailure).toBeTruthy();
     expect(String(recapFailure?.error ?? "")).toContain("recap failure");
+
+    const recapStatusRows = rows
+      .filter((item) => item.tags === "system,SESSION_RECAP_STATUS")
+      .map((item) => JSON.parse(item.content) as Record<string, unknown>);
+    expect(recapStatusRows.some((payload) => payload.readiness === "pending")).toBe(true);
+    expect(recapStatusRows.some((payload) => payload.readiness === "failed")).toBe(true);
 
     const kickoffError = JSON.parse(
       String(

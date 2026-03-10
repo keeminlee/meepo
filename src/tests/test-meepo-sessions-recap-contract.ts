@@ -32,6 +32,30 @@ const ensureBronzeTranscriptExportCachedMock = vi.fn(() => ({
   cacheHit: true,
 }));
 
+function buildCanonicalRecapContract(overrides?: Partial<any>) {
+  return {
+    concise: "# Recap\n\nGenerated concise recap",
+    balanced: "# Recap\n\nGenerated recap",
+    detailed: "# Recap\n\nGenerated detailed recap",
+    engine: "megameecap",
+    source_hash: "hash-1",
+    strategy_version: "session-recaps-v2",
+    meta_json: JSON.stringify({
+      model_version: "session-recaps-v2",
+      styles: {
+        concise: { cacheHit: false, sourceHash: "hash-1" },
+        balanced: { cacheHit: false, sourceHash: "hash-1" },
+        detailed: { cacheHit: false, sourceHash: "hash-1" },
+      },
+    }),
+    generated_at_ms: Date.now(),
+    created_at_ms: Date.now(),
+    updated_at_ms: Date.now(),
+    source: "canonical" as const,
+    ...overrides,
+  };
+}
+
 vi.mock("../campaign/guildConfig.js", () => ({
   getGuildCanonPersonaId: vi.fn(() => null),
   getGuildCanonPersonaMode: vi.fn(() => "meta"),
@@ -98,21 +122,8 @@ vi.mock("../security/isElevated.js", () => ({
   isElevated: vi.fn(() => true),
 }));
 
-vi.mock("../sessions/recapEngine.js", () => ({
-  generateSessionRecap: vi.fn(async () => ({
-    text: "# Recap\n\nGenerated recap",
-    createdAtMs: Date.now(),
-    strategy: "balanced",
-    engine: "megameecap",
-    strategyVersion: "megameecap-v1",
-    sourceTranscriptHash: "hash-1",
-    cacheHit: false,
-    artifactPaths: {
-      recapPath: "recap.md",
-      metaPath: "recap.meta.json",
-    },
-    sourceRange: { startLine: 0, endLine: 10, lineCount: 11 },
-  })),
+vi.mock("../sessions/recapService.js", () => ({
+  generateSessionRecapContract: vi.fn(async () => buildCanonicalRecapContract()),
 }));
 
 vi.mock("../sessions/sessions.js", () => ({
@@ -308,30 +319,15 @@ describe("/meepo sessions recap contract", () => {
 
   test("sessions recap short-circuits duplicate in-flight requests", async () => {
     sessionById = { ...baseSession, session_id: "session-inflight-1", label: "Arc Inflight" };
-    const { generateSessionRecap } = await import("../sessions/recapEngine.js");
+    const { generateSessionRecapContract } = await import("../sessions/recapService.js");
     let markStarted: (() => void) | null = null;
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
-    vi.mocked(generateSessionRecap).mockImplementationOnce(async () => {
+    vi.mocked(generateSessionRecapContract).mockImplementationOnce(async () => {
       markStarted?.();
       await new Promise((resolve) => setTimeout(resolve, 75));
-      return {
-        text: "# Recap\n\nGenerated recap",
-        createdAtMs: Date.now(),
-        strategy: "balanced",
-        engine: "megameecap",
-        strategyVersion: "megameecap-v1",
-        baseVersion: "megameecap-base-v1",
-        finalVersion: "megameecap-final-v1",
-        sourceTranscriptHash: "hash-1",
-        cacheHit: false,
-        artifactPaths: {
-          recapPath: "recap.md",
-          metaPath: "recap.meta.json",
-        },
-        sourceRange: { startLine: 0, endLine: 10, lineCount: 11 },
-      };
+      return buildCanonicalRecapContract();
     });
 
     const { meepo } = await import("../commands/meepo.js");
@@ -383,7 +379,7 @@ describe("/meepo sessions recap contract", () => {
 
     await meepo.execute(secondInteraction, ctx);
 
-    expect(generateSessionRecap).toHaveBeenCalledTimes(1);
+    expect(generateSessionRecapContract).toHaveBeenCalledTimes(1);
     expect(secondReply).toHaveBeenCalledTimes(1);
     const secondPayload = secondReply.mock.calls.at(0)?.[0];
     expect(secondPayload?.content).toContain("already being generated");
@@ -394,7 +390,7 @@ describe("/meepo sessions recap contract", () => {
   test("sessions recap cooldown blocks immediate repeat request", async () => {
     sessionById = { ...baseSession, session_id: "session-cooldown-1", label: "Arc Cooldown" };
 
-    const { generateSessionRecap } = await import("../sessions/recapEngine.js");
+    const { generateSessionRecapContract } = await import("../sessions/recapService.js");
     const { meepo } = await import("../commands/meepo.js");
 
     const ctx = {
@@ -442,7 +438,7 @@ describe("/meepo sessions recap contract", () => {
     await meepo.execute(firstInteraction, ctx);
     await meepo.execute(secondInteraction, ctx);
 
-    expect(generateSessionRecap).toHaveBeenCalledTimes(1);
+    expect(generateSessionRecapContract).toHaveBeenCalledTimes(1);
     expect(secondReply).toHaveBeenCalledTimes(1);
     const payload = secondReply.mock.calls.at(0)?.[0];
     expect(payload?.content).toContain("requested very recently");
@@ -452,12 +448,12 @@ describe("/meepo sessions recap contract", () => {
   test("sessions recap force does not bypass hard concurrency cap", async () => {
     sessionById = { ...baseSession, session_id: "session-cap-1", label: "Arc Cap" };
 
-    const { generateSessionRecap } = await import("../sessions/recapEngine.js");
+    const { generateSessionRecapContract } = await import("../sessions/recapService.js");
     let releaseRecap!: (value: any) => void;
     const blockedRecap = new Promise<any>((resolve) => {
       releaseRecap = resolve;
     });
-    vi.mocked(generateSessionRecap).mockImplementationOnce(async () => blockedRecap);
+    vi.mocked(generateSessionRecapContract).mockImplementationOnce(async () => blockedRecap);
 
     const { meepo } = await import("../commands/meepo.js");
 
@@ -510,31 +506,18 @@ describe("/meepo sessions recap contract", () => {
       ctx
     );
 
-    expect(generateSessionRecap).toHaveBeenCalledTimes(1);
+    expect(generateSessionRecapContract).toHaveBeenCalledTimes(1);
     const payload = secondReply.mock.calls.at(0)?.[0];
     expect(payload?.content).toContain("at capacity");
 
-    releaseRecap({
-      text: "# Recap\n\nGenerated recap",
-      createdAtMs: Date.now(),
-      strategy: "balanced",
-      engine: "megameecap",
-      strategyVersion: "megameecap-v1",
-      sourceTranscriptHash: "hash-1",
-      cacheHit: false,
-      artifactPaths: {
-        recapPath: "recap.md",
-        metaPath: "recap.meta.json",
-      },
-      sourceRange: { startLine: 0, endLine: 10, lineCount: 11 },
-    });
+    releaseRecap(buildCanonicalRecapContract());
     await firstCall;
   });
 
   test("sessions recap force bypasses cooldown and logs bypass", async () => {
     sessionById = { ...baseSession, session_id: "session-cooldown-force", label: "Arc Force" };
 
-    const { generateSessionRecap } = await import("../sessions/recapEngine.js");
+    const { generateSessionRecapContract } = await import("../sessions/recapService.js");
     const { logSystemEvent } = await import("../ledger/system.js");
     const { meepo } = await import("../commands/meepo.js");
 
@@ -583,7 +566,7 @@ describe("/meepo sessions recap contract", () => {
     await meepo.execute(firstInteraction, ctx);
     await meepo.execute(secondInteraction, ctx);
 
-    expect(generateSessionRecap).toHaveBeenCalledTimes(2);
+    expect(generateSessionRecapContract).toHaveBeenCalledTimes(2);
     expect(secondReply).not.toHaveBeenCalled();
 
     const bypassEvent = vi
@@ -593,7 +576,7 @@ describe("/meepo sessions recap contract", () => {
   });
 
   test("sessions recap cooldown key is scoped by session and guild", async () => {
-    const { generateSessionRecap } = await import("../sessions/recapEngine.js");
+    const { generateSessionRecapContract } = await import("../sessions/recapService.js");
     const { meepo } = await import("../commands/meepo.js");
 
     const baseCtx = {
@@ -668,7 +651,7 @@ describe("/meepo sessions recap contract", () => {
       { ...baseCtx, guildId: "guild-scope-2" }
     );
 
-    expect(generateSessionRecap).toHaveBeenCalledTimes(3);
+    expect(generateSessionRecapContract).toHaveBeenCalledTimes(3);
   });
 
   test("sessions view shows most recent final style", async () => {

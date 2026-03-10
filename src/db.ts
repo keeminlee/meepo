@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { cfg } from "./config/env.js";
 import { getEnv } from "./config/rawEnv.js";
@@ -63,7 +64,20 @@ function ensureDirFor(dbPath: string) {
 
 function getSchemaSql(): string {
   if (schemaSqlCache) return schemaSqlCache;
-  const schemaPath = path.join(process.cwd(), "src", "db", "schema.sql");
+
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(moduleDir, "db", "schema.sql"),
+    path.resolve(process.cwd(), "src", "db", "schema.sql"),
+    path.resolve(process.cwd(), "..", "src", "db", "schema.sql"),
+    path.resolve(process.cwd(), "..", "..", "src", "db", "schema.sql"),
+  ];
+
+  const schemaPath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!schemaPath) {
+    throw new Error(`schema.sql not found. Checked: ${candidates.join(" | ")}`);
+  }
+
   schemaSqlCache = fs.readFileSync(schemaPath, "utf8");
   return schemaSqlCache;
 }

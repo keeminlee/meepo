@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Download, RefreshCw } from "lucide-react";
+import { EmptyState } from "@/components/shared/empty-state";
 import { regenerateSessionRecapApi } from "@/lib/api/sessions";
 import { WebApiError } from "@/lib/api/http";
-import type { RecapTab, SessionRecap } from "@/lib/types";
+import type { RecapTab, SessionArtifactStatus, SessionRecap } from "@/lib/types";
 
 const TABS: Array<{ id: RecapTab; label: string }> = [
   { id: "concise", label: "Concise" },
@@ -21,7 +22,7 @@ type RecapTabsProps = {
   searchParams?: Record<string, string | string[] | undefined>;
   canRegenerate: boolean;
   showRegenerateUnavailableBanner?: boolean;
-  status?: "available" | "missing" | "unavailable";
+  status?: SessionArtifactStatus;
   emptyDescription?: string;
   warnings?: string[];
 };
@@ -39,6 +40,12 @@ function mapRegenerateError(error: unknown): string {
     if (error.code === "not_found") {
       return "This session is no longer available for regeneration.";
     }
+    if (error.code === "ambiguous_session_scope") {
+      return "The session scope is ambiguous and cannot be used for regeneration.";
+    }
+    if (error.code === "recap_unavailable") {
+      return "Recap is unavailable for this session.";
+    }
     if (error.code === "transcript_unavailable") {
       return "Recap generation needs transcript data, but transcript lines are currently unavailable.";
     }
@@ -50,6 +57,18 @@ function mapRegenerateError(error: unknown): string {
     }
     if (error.code === "discord_refresh_unconfigured") {
       return "This environment is missing Discord refresh configuration required by generation dependencies.";
+    }
+
+    if (error.code === "invalid_request") {
+      return error.message;
+    }
+
+    if (error.code === "conflict") {
+      return error.message;
+    }
+
+    if (error.message && error.message.trim().length > 0) {
+      return `Recap regeneration failed (${error.code}): ${error.message}`;
     }
   }
 
@@ -105,6 +124,15 @@ function resolveDefaultTab(recap: SessionRecap | null): RecapTab {
   return "balanced";
 }
 
+function normalizeRecapLines(recapText: string): string[] {
+  return recapText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^-+\s*/, ""))
+    .filter(Boolean);
+}
+
 export function RecapTabs({
   recap,
   sessionId,
@@ -145,11 +173,13 @@ export function RecapTabs({
     } as const;
   }, [recap]);
 
-  useEffect(() => {
-    if (!availableTabs[activeTab]) {
-      setActiveTab(resolveDefaultTab(recap));
-    }
-  }, [activeTab, availableTabs, recap]);
+  const scopedSearchParams = useMemo(
+    () => ({
+      ...searchParams,
+      campaign_slug: campaignSlug,
+    }),
+    [campaignSlug, searchParams]
+  );
 
   async function handleRegenerateRecap() {
     setIsPending(true);
@@ -158,7 +188,7 @@ export function RecapTabs({
       await regenerateSessionRecapApi(
         sessionId,
         { reason: "manual-web-regenerate" },
-        searchParams
+        scopedSearchParams
       );
       setBanner({
         tone: "success",
@@ -177,7 +207,14 @@ export function RecapTabs({
 
   const recapBaseName = `${campaignSlug}-${sessionId}-recap`;
   const activeRecapText = recap ? recap[activeTab] : "";
+  const activeRecapLines = useMemo(() => normalizeRecapLines(activeRecapText), [activeRecapText]);
   const isTabEnabled = (tab: RecapTab) => availableTabs[tab];
+  const shouldShowLegacyNotice = Boolean(
+    recap
+    && recap.source
+    && recap.source !== "canonical"
+    && activeRecapText.trim().length > 0
+  );
 
   return (
     <div className="rounded-2xl card-glass">
@@ -196,17 +233,14 @@ export function RecapTabs({
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => {
-                    if (enabled) setActiveTab(tab.id);
-                  }}
-                  disabled={!enabled}
+                  onClick={() => setActiveTab(tab.id)}
                   title={enabled ? tab.label : "This recap style is unavailable"}
                   className={`rounded-md px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-all ${
-                    activeTab === tab.id && enabled
+                    activeTab === tab.id
                       ? "bg-primary text-primary-foreground"
                       : enabled
                         ? "text-muted-foreground hover:text-foreground"
-                        : "cursor-not-allowed text-muted-foreground/40"
+                        : "text-muted-foreground/40"
                   }`}
                 >
                   {tab.label}
@@ -244,20 +278,37 @@ export function RecapTabs({
       <div className="space-y-4 p-6">
         {recap ? (
           <>
-            <p className="text-lg italic leading-relaxed text-foreground/90">{activeRecapText}</p>
-            <div className="rounded-xl border border-border/60 bg-background/35 px-3 py-2 text-[11px] uppercase tracking-widest text-muted-foreground">
-              Generated {new Date(recap.generatedAt).toLocaleString()}
-            </div>
-            {recap.source && recap.source !== "canonical" ? (
+            {activeRecapLines.length > 0 ? (
+              <>
+                <div className="space-y-2 text-sm leading-relaxed text-foreground/90">
+                  {activeRecapLines.map((line, index) => (
+                    <div key={`${activeTab}-${index}`} className="flex gap-2">
+                      <span className="text-amber-400">✦</span>
+                      <span>{line}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="rounded-xl border border-border/60 bg-background/35 px-3 py-2 text-[11px] uppercase tracking-widest text-muted-foreground">
+                  Generated {new Date(recap.generatedAt).toLocaleString()}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">No recap exists in this style yet.</p>
+                <p className="text-sm text-muted-foreground">Hit regenerate to create it.</p>
+              </>
+            )}
+            {shouldShowLegacyNotice ? (
               <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
                 This recap was loaded from a legacy store ({recap.source}). Regenerate recap to canonicalize it.
               </div>
             ) : null}
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            {emptyDescription ?? "No recap is currently available for this session."}
-          </p>
+          <EmptyState
+            title={status === "missing" ? "No recap yet" : "Recap unavailable"}
+            description={emptyDescription ?? "No recap is currently available for this session."}
+          />
         )}
         {warnings.length > 0 ? (
           <p className="text-xs text-amber-200/90">Warnings: {warnings[0]}</p>

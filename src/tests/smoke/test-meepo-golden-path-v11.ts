@@ -174,8 +174,9 @@ vi.mock("../../sessions/sessions.js", () => ({
   }),
 }));
 
-vi.mock("../../sessions/recapEngine.js", () => ({
-  generateSessionRecap: vi.fn(async ({ sessionId, strategy }: any) => {
+vi.mock("../../sessions/recapService.js", () => ({
+  generateSessionRecapContract: vi.fn(async ({ sessionId }: any) => {
+    const strategy = "balanced";
     baseExists = true;
     recapArtifact = {
       id: "artifact-1",
@@ -196,16 +197,25 @@ vi.mock("../../sessions/recapEngine.js", () => ({
     };
 
     return {
-      text: recapArtifact.content_text,
-      createdAtMs: recapArtifact.created_at_ms,
-      strategy,
+      concise: "",
+      balanced: recapArtifact.content_text,
+      detailed: "",
       engine: "megameecap",
-      strategyVersion: "megameecap-final-v1",
-      baseVersion: "megameecap-base-v1",
-      finalVersion: "megameecap-final-v1",
-      sourceTranscriptHash: recapArtifact.source_hash,
-      cacheHit: false,
-      artifactPaths: { recapPath: "recap.md", metaPath: "recap.meta.json" },
+      source_hash: recapArtifact.source_hash,
+      strategy_version: "megameecap-final-v1",
+      meta_json: JSON.stringify({
+        model_version: "session-recaps-v2",
+        base_version: "megameecap-base-v1",
+        styles: {
+          concise: { cacheHit: false, sourceHash: recapArtifact.source_hash },
+          balanced: { cacheHit: false, sourceHash: recapArtifact.source_hash },
+          detailed: { cacheHit: false, sourceHash: recapArtifact.source_hash },
+        },
+      }),
+      generated_at_ms: recapArtifact.created_at_ms,
+      created_at_ms: recapArtifact.created_at_ms,
+      updated_at_ms: recapArtifact.created_at_ms,
+      source: "canonical",
     };
   }),
 }));

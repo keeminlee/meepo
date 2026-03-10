@@ -50,8 +50,10 @@ import {
   listSessions,
   startSession,
 } from "../sessions/sessions.js";
-import { generateSessionRecap } from "../sessions/recapEngine.js";
-import type { RecapStrategy } from "../sessions/recapEngine.js";
+import {
+  generateSessionRecapContract,
+  type SessionRecapContract,
+} from "../sessions/recapService.js";
 import { ensureBronzeTranscriptExportCached } from "../sessions/transcriptExport.js";
 import {
   buildSessionArtifactStem,
@@ -155,6 +157,8 @@ type SessionArtifactRow = {
   size_bytes: number | null;
 };
 
+type RecapStrategy = "concise" | "balanced" | "detailed";
+
 const DEFAULT_RECAP_STRATEGY: RecapStrategy = "balanced";
 const RECAP_STRATEGIES: RecapStrategy[] = ["detailed", "balanced", "concise"];
 const setupWarningDigestByGuild = new Map<string, string>();
@@ -162,6 +166,8 @@ const TRANSCRIPT_EXPORT_TIME_BUDGET_MS = 1500;
 const MAX_INLINE_ATTACHMENT_BYTES = 24 * 1024 * 1024;
 const RECAP_COOLDOWN_MS = 30_000;
 const RECAP_MAX_CONCURRENT_PER_GUILD = 1;
+const RECAP_POSTSESSION_MAX_ATTEMPTS = 3;
+const RECAP_POSTSESSION_RETRY_DELAY_MS = 250;
 const inFlightRecapRequests = new Set<string>();
 const inFlightRecapCountByGuild = new Map<string, number>();
 const recapCooldownByKey = new Map<string, number>();
@@ -169,6 +175,41 @@ const meepoCommandLog = log.withScope("meepo", {
   requireGuildContext: true,
   callsite: "commands/meepo.ts",
 });
+
+function parseRecapMetaJson(metaJson: string | null): Record<string, unknown> {
+  if (!metaJson) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(metaJson) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function getRecapTextByStrategy(recap: SessionRecapContract, strategy: RecapStrategy): string {
+  if (strategy === "concise") {
+    return recap.concise;
+  }
+  if (strategy === "detailed") {
+    return recap.detailed;
+  }
+  return recap.balanced;
+}
+
+function getRecapStyleMeta(recapMeta: Record<string, unknown>, strategy: RecapStrategy): Record<string, unknown> {
+  const styles = recapMeta.styles;
+  if (!styles || typeof styles !== "object") {
+    return {};
+  }
+  const styleMeta = (styles as Record<string, unknown>)[strategy];
+  return styleMeta && typeof styleMeta === "object" ? (styleMeta as Record<string, unknown>) : {};
+}
+
+async function delayMs(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 type AwakenBoundaryCode =
   | "ERR_AWAKEN_MODEL"
@@ -1602,6 +1643,49 @@ function buildCanonicalShowtimeEventPayload(args: {
   };
 }
 
+function emitSessionRecapReadiness(args: {
+  guildId: string;
+  channelId: string;
+  campaignSlug: string;
+  sessionId: string;
+  traceId?: string | null;
+  readiness: "pending" | "ready" | "failed";
+  strategy: RecapStrategy;
+  attempt: number;
+  maxAttempts: number;
+  reason: string;
+  error?: string;
+  retryDelayMs?: number;
+}): void {
+  logSystemEvent({
+    guildId: args.guildId,
+    channelId: args.channelId,
+    eventType: "SESSION_RECAP_STATUS",
+    content: JSON.stringify(
+      buildCanonicalShowtimeEventPayload({
+        eventType: "SESSION_RECAP_STATUS",
+        guildId: args.guildId,
+        campaignSlug: args.campaignSlug,
+        sessionId: args.sessionId,
+        traceId: args.traceId ?? null,
+        outcome: args.readiness === "failed" ? "failure" : "success",
+        error: args.error,
+        extra: {
+          readiness: args.readiness,
+          strategy: args.strategy,
+          attempt: args.attempt,
+          max_attempts: args.maxAttempts,
+          reason: args.reason,
+          retry_delay_ms: args.retryDelayMs ?? 0,
+        },
+      })
+    ),
+    authorId: "system",
+    authorName: "SYSTEM",
+    narrativeWeight: "secondary",
+  });
+}
+
 async function ensureVoiceConnection(interaction: any, guildId: string): Promise<{
   joinedVoiceChannelId: string | null;
   stayPutNotice: string | null;
@@ -1936,37 +2020,23 @@ function kickoffShowtimeArtifactsAsync(args: {
 
       const strategy = getGuildDefaultRecapStyle(args.guildId) ?? DEFAULT_RECAP_STRATEGY;
 
-      logSystemEvent({
+      emitSessionRecapReadiness({
         guildId: args.guildId,
         channelId: args.channelId,
-        eventType: "RECAP_GENERATE",
-        content: JSON.stringify(
-          buildCanonicalShowtimeEventPayload({
-            eventType: "RECAP_GENERATE",
-            guildId: args.guildId,
-            campaignSlug: args.campaignSlug,
-            sessionId: args.sessionId,
-            traceId: args.ctx.trace_id,
-            outcome: "start",
-            extra: {
-              strategy,
-            },
-          })
-        ),
-        authorId: "system",
-        authorName: "SYSTEM",
-        narrativeWeight: "secondary",
+        campaignSlug: args.campaignSlug,
+        sessionId: args.sessionId,
+        traceId: args.ctx.trace_id,
+        readiness: "pending",
+        strategy,
+        attempt: 0,
+        maxAttempts: RECAP_POSTSESSION_MAX_ATTEMPTS,
+        reason: "showtime_async_kickoff_started",
       });
 
-      let recapResult: { cacheHit: boolean };
-      try {
-        recapResult = await generateSessionRecap({
-          guildId: args.guildId,
-          sessionId: args.sessionId,
-          campaignSlug: args.campaignSlug,
-          strategy,
-        });
-      } catch (error) {
+      let recapResult: SessionRecapContract | null = null;
+      let successfulAttempt = 0;
+
+      for (let attempt = 1; attempt <= RECAP_POSTSESSION_MAX_ATTEMPTS; attempt += 1) {
         logSystemEvent({
           guildId: args.guildId,
           channelId: args.channelId,
@@ -1978,10 +2048,11 @@ function kickoffShowtimeArtifactsAsync(args: {
               campaignSlug: args.campaignSlug,
               sessionId: args.sessionId,
               traceId: args.ctx.trace_id,
-              outcome: "failure",
-              error: error instanceof Error ? error.message : String(error),
+              outcome: "start",
               extra: {
                 strategy,
+                attempt,
+                max_attempts: RECAP_POSTSESSION_MAX_ATTEMPTS,
               },
             })
           ),
@@ -1989,8 +2060,86 @@ function kickoffShowtimeArtifactsAsync(args: {
           authorName: "SYSTEM",
           narrativeWeight: "secondary",
         });
-        throw error;
+
+        try {
+          recapResult = await generateSessionRecapContract({
+            guildId: args.guildId,
+            sessionId: args.sessionId,
+            campaignSlug: args.campaignSlug,
+          });
+          successfulAttempt = attempt;
+          break;
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logSystemEvent({
+            guildId: args.guildId,
+            channelId: args.channelId,
+            eventType: "RECAP_GENERATE",
+            content: JSON.stringify(
+              buildCanonicalShowtimeEventPayload({
+                eventType: "RECAP_GENERATE",
+                guildId: args.guildId,
+                campaignSlug: args.campaignSlug,
+                sessionId: args.sessionId,
+                traceId: args.ctx.trace_id,
+                outcome: "failure",
+                error: errorMessage,
+                extra: {
+                  strategy,
+                  attempt,
+                  max_attempts: RECAP_POSTSESSION_MAX_ATTEMPTS,
+                },
+              })
+            ),
+            authorId: "system",
+            authorName: "SYSTEM",
+            narrativeWeight: "secondary",
+          });
+
+          const exhausted = attempt >= RECAP_POSTSESSION_MAX_ATTEMPTS;
+          if (exhausted) {
+            emitSessionRecapReadiness({
+              guildId: args.guildId,
+              channelId: args.channelId,
+              campaignSlug: args.campaignSlug,
+              sessionId: args.sessionId,
+              traceId: args.ctx.trace_id,
+              readiness: "failed",
+              strategy,
+              attempt,
+              maxAttempts: RECAP_POSTSESSION_MAX_ATTEMPTS,
+              reason: "postsession_retries_exhausted",
+              error: errorMessage,
+            });
+            throw error;
+          }
+
+          emitSessionRecapReadiness({
+            guildId: args.guildId,
+            channelId: args.channelId,
+            campaignSlug: args.campaignSlug,
+            sessionId: args.sessionId,
+            traceId: args.ctx.trace_id,
+            readiness: "pending",
+            strategy,
+            attempt,
+            maxAttempts: RECAP_POSTSESSION_MAX_ATTEMPTS,
+            reason: "retry_scheduled",
+            error: errorMessage,
+            retryDelayMs: RECAP_POSTSESSION_RETRY_DELAY_MS,
+          });
+
+          await delayMs(RECAP_POSTSESSION_RETRY_DELAY_MS);
+        }
       }
+
+      if (!recapResult) {
+        throw new Error("Recap generation exhausted retries without result.");
+      }
+
+      const recapMeta = parseRecapMetaJson(recapResult.meta_json);
+      const recapStyleMeta = getRecapStyleMeta(recapMeta, strategy);
+      const recapCacheHit = recapStyleMeta.cacheHit === true;
 
       logSystemEvent({
         guildId: args.guildId,
@@ -2005,7 +2154,9 @@ function kickoffShowtimeArtifactsAsync(args: {
             traceId: args.ctx.trace_id,
             extra: {
               strategy,
-              cache_hit: recapResult.cacheHit,
+              cache_hit: recapCacheHit,
+              attempt: successfulAttempt,
+              max_attempts: RECAP_POSTSESSION_MAX_ATTEMPTS,
             },
           })
         ),
@@ -2025,14 +2176,30 @@ function kickoffShowtimeArtifactsAsync(args: {
             campaignSlug: args.campaignSlug,
             sessionId: args.sessionId,
             traceId: args.ctx.trace_id,
+            outcome: "success",
             extra: {
               strategy,
+              attempt: successfulAttempt,
+              max_attempts: RECAP_POSTSESSION_MAX_ATTEMPTS,
             },
           })
         ),
         authorId: "system",
         authorName: "SYSTEM",
         narrativeWeight: "secondary",
+      });
+
+      emitSessionRecapReadiness({
+        guildId: args.guildId,
+        channelId: args.channelId,
+        campaignSlug: args.campaignSlug,
+        sessionId: args.sessionId,
+        traceId: args.ctx.trace_id,
+        readiness: "ready",
+        strategy,
+        attempt: successfulAttempt,
+        maxAttempts: RECAP_POSTSESSION_MAX_ATTEMPTS,
+        reason: "canonical_recap_generated",
       });
 
       meepoCommandLog.info("Showtime artifact kickoff succeeded", {
@@ -2602,31 +2769,47 @@ async function handleSessionsRecap(interaction: any, ctx: CommandCtx): Promise<v
       narrativeWeight: "secondary",
     });
 
-    const recap = await generateSessionRecap({
+    const recap = await generateSessionRecapContract({
       guildId,
       sessionId: session.session_id,
+      campaignSlug: ctx.campaignSlug,
       force,
-      strategy,
     });
 
+    const recapText = getRecapTextByStrategy(recap, strategy);
+    const recapMeta = parseRecapMetaJson(recap.meta_json);
+    const recapStyleMeta = getRecapStyleMeta(recapMeta, strategy);
+    const cacheHit = recapStyleMeta.cacheHit === true;
+    const sourceHash =
+      recap.source_hash ??
+      (typeof recapStyleMeta.sourceHash === "string" ? recapStyleMeta.sourceHash : null) ??
+      "unknown";
+    const finalVersion =
+      recap.strategy_version ??
+      (typeof recapMeta.model_version === "string" ? recapMeta.model_version : "session-recaps-v2");
+    const baseVersion =
+      typeof recapMeta.base_version === "string" && recapMeta.base_version.trim().length > 0
+        ? recapMeta.base_version
+        : finalVersion;
+
     const sessionLabel = getSessionDisplayLabel(session);
-    const previewText = recap.text.length > 700 ? `${recap.text.slice(0, 700)}…` : recap.text;
+    const previewText = recapText.length > 700 ? `${recapText.slice(0, 700)}…` : recapText;
     const fileStem = buildSessionArtifactStem({
       guildId,
       campaignSlug: ctx.campaignSlug,
       sessionId: session.session_id,
     });
     const fileName = `${fileStem}-recap-${strategy}.md`;
-    const file = new AttachmentBuilder(Buffer.from(recap.text, "utf8"), { name: fileName });
+    const file = new AttachmentBuilder(Buffer.from(recapText, "utf8"), { name: fileName });
 
     await interaction.editReply({
       content: metaMeepoVoice.sessions.recapResult({
-        cacheHit: recap.cacheHit,
+        cacheHit,
         sessionLabel,
-        strategy: recap.strategy,
-        finalVersion: recap.finalVersion,
-        baseVersion: recap.baseVersion,
-        sourceHashShort: recap.sourceTranscriptHash.slice(0, 12),
+        strategy,
+        finalVersion,
+        baseVersion,
+        sourceHashShort: sourceHash.slice(0, 12),
         previewText,
       }),
       files: [file],
