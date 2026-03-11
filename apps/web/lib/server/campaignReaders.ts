@@ -321,11 +321,12 @@ export async function getWebDashboardModel(args?: {
     auth = await resolveWebAuthContext(args?.searchParams);
   } catch (error) {
     if (error instanceof WebAuthError && error.reason === "unsigned") {
+      const demoCampaign = getDemoCampaignSummary();
       return {
         totalSessions: 0,
-        campaignCount: 0,
+        campaignCount: 1,
         wordsRecorded: 0,
-        campaigns: [],
+        campaigns: [demoCampaign],
         authState: "unsigned",
       };
     }
