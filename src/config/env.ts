@@ -246,6 +246,10 @@ export function loadConfig(): Config {
         .split(",")
         .map((value) => value.trim())
         .filter(Boolean),
+      dmUserIds: (opt("DM_USER_IDS") ?? "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
     },
 
     logging: {
@@ -329,6 +333,7 @@ export function printConfigSnapshot(cfg: Config): void {
     MEEPO_ACTION_LOGGING_ENABLED: cfg.meepoActionLogging.enabled,
     MEEPO_ACTION_LOGGING_INCLUDE_PROMPTS: cfg.meepoActionLogging.includePromptBodies,
     DEV_USER_IDS: cfg.access.devUserIds.join(","),
+    DM_USER_IDS: cfg.access.dmUserIds.join(","),
     LOG_LEVEL: cfg.logging.level,
     LOG_SCOPES: cfg.logging.scopes?.join(",") ?? "",
     LOG_FORMAT: cfg.logging.format,

@@ -122,6 +122,7 @@ export interface Config {
 
   access: {
     devUserIds: string[];
+    dmUserIds: string[];
   };
 
   logging: {

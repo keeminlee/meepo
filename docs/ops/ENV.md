@@ -11,11 +11,17 @@ This document defines the minimal runtime environment and command deploy contrac
 
 - `BOT_PREFIX` (default: `meepo:`)
 - `LATCH_SECONDS` (default: `90`)
+- `DM_ROLE_ID` (optional legacy global DM role fallback for operator surfaces)
+- `DM_USER_IDS` (comma-separated user IDs; global operator allowlist for DM/admin surfaces)
 - `DEV_USER_IDS` (comma-separated user IDs; `/lab` runtime allowlist)
 - `DEV_GUILD_IDS` (comma-separated guild IDs; `/lab` deploy scope)
 - `LOG_LEVEL`, `LOG_SCOPES`, `LOG_FORMAT`
 - `OVERLAY_PORT`
 - Overlay-specific vars if using overlay features
+
+Access model:
+- Operational elevated (`/meepo` DM/admin surfaces): admin permission OR guild-config `dm_role_id` OR guild-config `dm_user_id` OR global `DM_USER_IDS` (with optional `DM_ROLE_ID` fallback).
+- Developer elevated (`/lab`): `DEV_USER_IDS` only.
 
 Notes:
 - Runtime no longer requires `GUILD_ID` for core startup behavior.

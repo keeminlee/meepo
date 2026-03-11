@@ -97,6 +97,7 @@ export default defineConfig({
       "src/tests/test-web-landing-constellation.ts",
       "src/tests/test-web-discord-guild-cache-policy.ts",
       "src/tests/test-web-scope-guards.ts",
+      "src/tests/test-elevated-access.ts",
       "src/tests/test-lab-session-resolve.ts",
       "src/tests/test-lab-autocomplete-routing.ts",
       "src/tests/test-lab-wake.ts",
