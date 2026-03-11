@@ -43,18 +43,10 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     throw error;
   }
 
-  if (model.authState === "unsigned") {
-    return (
-      <ArchiveShell section="Dashboard">
-        <EmptyState
-          title="Sign in with Discord"
-          description="Sign in with Discord to access your campaigns."
-          actionLabel="Sign in with Discord"
-          actionHref={DISCORD_SIGN_IN_URL}
-        />
-      </ArchiveShell>
-    );
-  }
+  const isUnsigned = model.authState === "unsigned";
+  const visibleCampaigns = isUnsigned
+    ? model.campaigns.filter((campaign) => campaign.slug === "demo")
+    : model.campaigns;
 
   if (model.authState === "signed_in_no_authorized_guilds" || model.authState === "signed_in_no_meepo_installed") {
     return (
@@ -83,9 +75,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const guildBuckets = new Map<string, {
     guildName: string;
     guildIconUrl: string | null;
-    campaigns: Array<(typeof model.campaigns)[number]>;
+    campaigns: Array<(typeof visibleCampaigns)[number]>;
   }>();
-  for (const campaign of model.campaigns) {
+  for (const campaign of visibleCampaigns) {
     const key = campaign.guildId ?? campaign.guildName;
     if (!guildBuckets.has(key)) {
       guildBuckets.set(key, {
@@ -101,20 +93,29 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     <ArchiveShell section="Dashboard">
       <div className="space-y-8">
         <h1 className="text-4xl font-serif">Dashboard</h1>
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-          <div className="rounded-2xl card-glass p-6">
-            <div className="text-xs uppercase tracking-widest text-muted-foreground">Total Sessions</div>
-            <div className="mt-2 text-4xl font-bold text-primary">{model.totalSessions}</div>
+        {isUnsigned ? (
+          <EmptyState
+            title="Sign in with Discord"
+            description="Sign in with Discord to access your campaigns."
+            actionLabel="Sign in with Discord"
+            actionHref={DISCORD_SIGN_IN_URL}
+          />
+        ) : (
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+            <div className="rounded-2xl card-glass p-6">
+              <div className="text-xs uppercase tracking-widest text-muted-foreground">Total Sessions</div>
+              <div className="mt-2 text-4xl font-bold text-primary">{model.totalSessions}</div>
+            </div>
+            <div className="rounded-2xl card-glass p-6">
+              <div className="text-xs uppercase tracking-widest text-muted-foreground">Campaigns</div>
+              <div className="mt-2 text-4xl font-bold text-primary">{model.campaignCount}</div>
+            </div>
+            <div className="rounded-2xl card-glass p-6">
+              <div className="text-xs uppercase tracking-widest text-muted-foreground">Words Recorded</div>
+              <div className="mt-2 text-4xl font-bold text-primary">{model.wordsRecorded.toLocaleString()}</div>
+            </div>
           </div>
-          <div className="rounded-2xl card-glass p-6">
-            <div className="text-xs uppercase tracking-widest text-muted-foreground">Campaigns</div>
-            <div className="mt-2 text-4xl font-bold text-primary">{model.campaignCount}</div>
-          </div>
-          <div className="rounded-2xl card-glass p-6">
-            <div className="text-xs uppercase tracking-widest text-muted-foreground">Words Recorded</div>
-            <div className="mt-2 text-4xl font-bold text-primary">{model.wordsRecorded.toLocaleString()}</div>
-          </div>
-        </div>
+        )}
 
         <div className="space-y-8">
           {Array.from(guildBuckets.entries()).map(([key, bucket]) => (
