@@ -138,7 +138,7 @@ export function CampaignOverview({ campaign, searchParams }: CampaignOverviewPro
       </header>
 
       <div className="space-y-4">
-        {localSessions.map((session, index) => {
+        {localSessions.map((session) => {
           const displayTitle = formatSessionDisplayTitle({
             label: session.label,
             sessionId: session.id,
@@ -151,7 +151,6 @@ export function CampaignOverview({ campaign, searchParams }: CampaignOverviewPro
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-xs uppercase tracking-widest text-primary/80">Session {index + 1}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
                     <Link
                       href={{

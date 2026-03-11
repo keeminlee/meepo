@@ -69,6 +69,28 @@ vi.mock("../commands/missions.js", () => ({ missions: stubLegacyCommand }));
 vi.mock("../commands/goldmem.js", () => ({ goldmem: stubLegacyCommand }));
 
 describe("lab autocomplete routing", () => {
+  test("denies non-dev users with non-actionable autocomplete results", async () => {
+    const { lab } = await import("../commands/lab.js");
+
+    const respond = vi.fn(async () => {});
+    await lab.autocomplete({
+      user: { id: "not-dev" },
+      guildId: "g1",
+      guild: { name: "Guild" },
+      channelId: "c1",
+      options: {
+        getFocused: () => ({ name: "session", value: "arena" }),
+        getSubcommandGroup: () => "actions",
+        getSubcommand: () => "tail",
+      },
+      respond,
+    });
+
+    expect(listSessionsForAutocompleteMock).not.toHaveBeenCalled();
+    expect(listAnchorsForAutocompleteMock).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith([]);
+  });
+
   test("routes session autocomplete through shared session resolver", async () => {
     const { lab } = await import("../commands/lab.js");
 
