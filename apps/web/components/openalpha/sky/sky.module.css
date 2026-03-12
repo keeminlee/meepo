@@ -1,0 +1,177 @@
+.skyRenderer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.starNode {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+
+.protoStar {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  transform: scale(var(--star-scale));
+  transform-origin: center;
+  transition: transform 280ms ease, opacity 280ms ease;
+}
+
+.core {
+  position: absolute;
+  inset: 0;
+}
+
+.glowSvg {
+  width: 100%;
+  height: 100%;
+  opacity: var(--glow-intensity);
+  filter: drop-shadow(0 0 24px color-mix(in srgb, var(--glow-color) 65%, transparent));
+}
+
+.nucleus {
+  position: absolute;
+  inset: 78px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.96), transparent 42%),
+    radial-gradient(circle, color-mix(in srgb, var(--glow-color) 88%, white) 0%, var(--glow-color) 58%, transparent 100%);
+  box-shadow:
+    0 0 30px color-mix(in srgb, var(--glow-color) 82%, transparent),
+    0 0 90px color-mix(in srgb, var(--glow-color) 48%, transparent);
+}
+
+.orbits {
+  position: absolute;
+  inset: 0;
+}
+
+.orbit {
+  position: absolute;
+  inset: calc(18px + (var(--orbit-index) * 12px));
+  border: 1px solid color-mix(in srgb, var(--glow-color) 45%, transparent);
+  border-radius: 999px;
+  opacity: 0.55;
+  animation: orbitSpin var(--orbit-speed) linear infinite;
+}
+
+.orbit:nth-child(even) {
+  animation-direction: reverse;
+}
+
+.particles {
+  position: absolute;
+  inset: 8px;
+}
+
+.particle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  margin-top: -2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--glow-color) 75%, white);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--glow-color) 55%, transparent);
+  transform:
+    rotate(calc((360deg / var(--particle-total)) * var(--particle-index)))
+    translateY(calc(-56px - (var(--particle-index) * 3px)));
+  animation: particlePulse 2.8s ease-in-out infinite;
+  animation-delay: calc(var(--particle-index) * 110ms);
+  opacity: 0.45;
+}
+
+.label {
+  position: absolute;
+  left: 50%;
+  bottom: -20px;
+  transform: translateX(-50%);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(240, 244, 255, 0.78);
+  white-space: nowrap;
+}
+
+.protoStar[data-phase="forming"] .nucleus {
+  animation: formingPulse 1.8s ease-in-out infinite;
+}
+
+.protoStar[data-phase="active"] .nucleus,
+.protoStar[data-phase="chronicle"] .nucleus,
+.protoStar[data-phase="awakening-ready"] .nucleus,
+.protoStar[data-phase="awakened"] .nucleus,
+.protoStar[data-phase="recording"] .nucleus,
+.protoStar[data-phase="validation"] .nucleus,
+.protoStar[data-phase="permanent-pulse"] .nucleus {
+  animation: starPulse 2.6s ease-in-out infinite;
+}
+
+.protoStar[data-phase="collapsed"] {
+  opacity: 0.55;
+}
+
+.protoStar[data-permanent="true"] .orbit {
+  border-color: color-mix(in srgb, var(--glow-color) 68%, white);
+}
+
+@keyframes orbitSpin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes particlePulse {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+
+  50% {
+    opacity: 0.92;
+  }
+}
+
+@keyframes formingPulse {
+  0%,
+  100% {
+    transform: scale(0.9);
+  }
+
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes starPulse {
+  0%,
+  100% {
+    transform: scale(0.96);
+  }
+
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbit,
+  .particle,
+  .protoStar[data-phase="forming"] .nucleus,
+  .protoStar[data-phase="active"] .nucleus,
+  .protoStar[data-phase="chronicle"] .nucleus,
+  .protoStar[data-phase="awakening-ready"] .nucleus,
+  .protoStar[data-phase="awakened"] .nucleus,
+  .protoStar[data-phase="recording"] .nucleus,
+  .protoStar[data-phase="validation"] .nucleus,
+  .protoStar[data-phase="permanent-pulse"] .nucleus {
+    animation: none;
+  }
+}

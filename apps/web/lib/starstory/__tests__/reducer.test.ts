@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { NarrativeEvent } from "@/lib/starstory/events";
-import { reduceNarrativeState } from "@/lib/starstory/reducer";
-import { createInitialNarrativeState } from "@/lib/starstory/types";
+import type { NarrativeEvent } from "@/lib/starstory/domain/narrative";
+import { reduceNarrativeState, createInitialNarrativeState } from "@/lib/starstory/domain/narrative";
 import { buildHappyPathEvents } from "@/lib/starstory/__tests__/testUtils";
 
 describe("reduceNarrativeState", () => {
@@ -20,7 +19,7 @@ describe("reduceNarrativeState", () => {
     expect(state.isAwakened).toBe(true);
   });
 
-  it("accepts the collapse path and ends in STAR_COLLAPSED", () => {
+  it("loops rejected validation back to AWAKENED", () => {
     const events: NarrativeEvent[] = [
       { type: "PROTO_STAR_SPAWNED", at: 1, starId: "star-1" },
       { type: "PROTO_STAR_CLICKED", at: 2 },
@@ -43,7 +42,7 @@ describe("reduceNarrativeState", () => {
       state = result.state;
     }
 
-    expect(state.phase).toBe("STAR_COLLAPSED");
+    expect(state.phase).toBe("AWAKENED");
     expect(state.validationStatus).toBe("failed");
   });
 

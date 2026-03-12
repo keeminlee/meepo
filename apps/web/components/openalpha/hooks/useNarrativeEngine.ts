@@ -1,58 +1,80 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   createInitialNarrativeState,
   createNarrativeEngine,
   LocalStorageStarStoryStatePort,
   projectProtoStarState,
+  type NarrativeEngineState,
+  projectVisualState,
   type NarrativeEvent,
   type NarrativeStateEngine,
 } from "@/lib/starstory";
 
+let sharedEngine: NarrativeStateEngine | null = null;
+const SERVER_SNAPSHOT = createInitialNarrativeState(0);
+
+function subscribeOnServer(): () => void {
+  return () => {};
+}
+
+function getServerSnapshot(): NarrativeEngineState {
+  return SERVER_SNAPSHOT;
+}
+
+function getEngine(): NarrativeStateEngine {
+  if (!sharedEngine) {
+    sharedEngine = createNarrativeEngine(new LocalStorageStarStoryStatePort());
+  }
+
+  return sharedEngine;
+}
+
 export function useNarrativeEngine() {
-  const engineRef = useRef<NarrativeStateEngine | null>(null);
-  const [state, setState] = useState(createInitialNarrativeState);
+  const engine = typeof window === "undefined" ? null : getEngine();
+  const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
-    const engine = createNarrativeEngine(new LocalStorageStarStoryStatePort());
-    engineRef.current = engine;
-    setState(engine.getSnapshot());
-
-    return engine.subscribe((nextState) => {
-      setState(nextState);
-    });
+    setIsHydrated(true);
   }, []);
 
-  const engine = engineRef.current;
+  const state = useSyncExternalStore(
+    engine ? engine.subscribe : subscribeOnServer,
+    engine ? engine.getSnapshot : getServerSnapshot,
+    getServerSnapshot
+  );
+  const protoStar = projectProtoStarState(state);
+  const visualState = projectVisualState(protoStar);
 
   return {
     state,
-    protoStar: projectProtoStarState(state),
+    protoStar,
+    visualState,
     dispatch(event: NarrativeEvent) {
-      if (!engineRef.current) {
+      if (!engine) {
         return state;
       }
-      return engineRef.current.dispatch(event);
+      return engine.dispatch(event);
     },
     resetAll(nowMs?: number) {
-      if (!engineRef.current) {
+      if (!engine) {
         return state;
       }
-      return engineRef.current.resetAll(nowMs);
+      return engine.resetAll(nowMs);
     },
     clearSnapshotOnly() {
-      if (!engineRef.current) {
+      if (!engine) {
         return state;
       }
-      return engineRef.current.clearSnapshotOnly();
+      return engine.clearSnapshotOnly();
     },
     clearEventsOnly() {
-      if (!engineRef.current) {
+      if (!engine) {
         return state;
       }
-      return engineRef.current.clearEventsOnly();
+      return engine.clearEventsOnly();
     },
-    hasEngine: Boolean(engine),
+    hasEngine: isHydrated && Boolean(engine),
   };
 }

@@ -1,6 +1,4 @@
-import type { NarrativeEvent } from "@/lib/starstory/events";
-import type { StarStoryStatePort } from "@/lib/starstory/ports";
-import type { NarrativeEngineState } from "@/lib/starstory/types";
+import type { NarrativeEvent, NarrativeEngineState, StarStoryStatePort } from "@/lib/starstory/domain/narrative";
 
 export const STARSTORY_SNAPSHOT_STORAGE_KEY = "starstory.snapshot";
 export const STARSTORY_EVENTS_STORAGE_KEY = "starstory.events";

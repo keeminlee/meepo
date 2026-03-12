@@ -1,6 +1,4 @@
-import type { NarrativeEvent } from "@/lib/starstory/events";
-import type { StarStoryStatePort } from "@/lib/starstory/ports";
-import type { NarrativeEngineState } from "@/lib/starstory/types";
+import type { NarrativeEvent, NarrativeEngineState, StarStoryStatePort } from "@/lib/starstory/domain/narrative";
 
 export class MemoryStarStoryPort implements StarStoryStatePort {
   snapshot: NarrativeEngineState | null;

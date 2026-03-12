@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { replayEvents } from "@/lib/starstory/replay";
-import { createInitialNarrativeState } from "@/lib/starstory/types";
+import { replayEvents, createInitialNarrativeState } from "@/lib/starstory/domain/narrative";
 import { buildHappyPathEvents } from "@/lib/starstory/__tests__/testUtils";
 
 describe("replayEvents", () => {

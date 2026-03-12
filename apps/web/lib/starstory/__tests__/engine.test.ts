@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createNarrativeEngine } from "@/lib/starstory/engine";
-import { createInitialNarrativeState } from "@/lib/starstory/types";
+import { createNarrativeEngine, createInitialNarrativeState } from "@/lib/starstory/domain/narrative";
 import { buildHappyPathEvents, MemoryStarStoryPort } from "@/lib/starstory/__tests__/testUtils";
 
 describe("createNarrativeEngine", () => {

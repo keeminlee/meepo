@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { useNarrativeEngine } from "@/components/openalpha/hooks/useNarrativeEngine";
 import { MIN_TRANSCRIPT_THRESHOLD } from "@/lib/starstory";
+import { isDebugPanelEnabled } from "@/lib/starstory/debug/debugFlags";
 
 function buildStarId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -89,7 +90,7 @@ export function NarrativeDebugPanel() {
       return "Validate Chronicle only works during VALIDATION. Use Start Validation after the awakening/recording steps.";
     }
     if (engine.state.transcriptLineCount < MIN_TRANSCRIPT_THRESHOLD) {
-      return `Validate Chronicle is blocked: ${engine.state.transcriptLineCount}/${MIN_TRANSCRIPT_THRESHOLD} transcript lines. In VALIDATION below threshold, Reject Chronicle is the only legal outcome.`;
+      return `Validate Chronicle is blocked: ${engine.state.transcriptLineCount}/${MIN_TRANSCRIPT_THRESHOLD} transcript lines. Reject Chronicle loops the star back to AWAKENED so it can receive more lines immediately.`;
     }
     return `Validate Chronicle will dispatch CHRONICLE_VALIDATED and move the narrative to STAR_BORN because the transcript threshold is met (${engine.state.transcriptLineCount}/${MIN_TRANSCRIPT_THRESHOLD}).`;
   }, [engine.state.phase, engine.state.transcriptLineCount]);
@@ -106,34 +107,51 @@ export function NarrativeDebugPanel() {
 
   const snapshotText = useMemo(() => JSON.stringify(engine.state, null, 2), [engine.state]);
 
-  if (process.env.NODE_ENV !== "development") {
+  if (!isDebugPanelEnabled()) {
     return null;
   }
 
   return (
-    <aside
-      style={{
-        position: "absolute",
-        right: 16,
-        top: 16,
-        zIndex: 30,
-        width: 360,
-        maxWidth: "calc(100vw - 32px)",
-        borderRadius: 16,
-        padding: 16,
-        color: "#f8f4eb",
-        background: "rgba(6, 11, 24, 0.82)",
-        border: "1px solid rgba(255,255,255,0.14)",
-        boxShadow: "0 24px 60px rgba(0, 0, 0, 0.35)",
-        backdropFilter: "blur(18px)",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+    <>
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          zIndex: 9999,
+          padding: "4px 8px",
+          fontSize: 12,
+          fontWeight: 700,
+          letterSpacing: "0.08em",
+          color: "#ffffff",
+          background: "#c62828",
+        }}
+      >
+        STARSTORY DEV CONTROLS
+      </div>
+      <aside
+        style={{
+          position: "absolute",
+          right: 16,
+          top: 16,
+          zIndex: 30,
+          width: 360,
+          maxWidth: "calc(100vw - 32px)",
+          borderRadius: 16,
+          padding: 16,
+          color: "#f8f4eb",
+          background: "rgba(6, 11, 24, 0.82)",
+          border: "1px solid rgba(255,255,255,0.14)",
+          boxShadow: "0 24px 60px rgba(0, 0, 0, 0.35)",
+          backdropFilter: "blur(18px)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
         <strong style={{ fontSize: 14, letterSpacing: "0.04em", textTransform: "uppercase" }}>
           Narrative Debug
         </strong>
         <span style={{ opacity: 0.72, fontSize: 12 }}>{engine.hasEngine ? "hydrated" : "booting"}</span>
-      </div>
+        </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, marginBottom: 12 }}>
         <div>Phase: {engine.state.phase}</div>
@@ -241,7 +259,7 @@ export function NarrativeDebugPanel() {
           <button
             disabled={!canRejectValidation}
             style={canRejectValidation ? buttonStyle() : disabledButtonStyle()}
-            title="Rejects the chronicle only from VALIDATION and moves the narrative to STAR_COLLAPSED."
+            title="Rejects the chronicle only from VALIDATION and loops the narrative back to AWAKENED."
             onClick={() =>
               engine.dispatch({ type: "CHRONICLE_REJECTED", at: Date.now(), reason: "debug-rejection" })
             }
@@ -249,7 +267,7 @@ export function NarrativeDebugPanel() {
             Reject Chronicle
           </button>
           <span style={arrowStyle()}>-&gt;</span>
-          <span style={{ ...branchLabelStyle(), minWidth: 0 }}>STAR_COLLAPSED</span>
+          <span style={{ ...branchLabelStyle(), minWidth: 0 }}>AWAKENED</span>
         </div>
 
         <div style={flowRowStyle()}>
@@ -276,6 +294,7 @@ export function NarrativeDebugPanel() {
       >
         {snapshotText}
       </pre>
-    </aside>
+      </aside>
+    </>
   );
 }

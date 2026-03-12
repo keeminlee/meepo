@@ -1,3 +1,9 @@
+"use client";
+
+import { useMemo } from "react";
+import { SkyRenderer } from "@/components/openalpha/sky/SkyRenderer";
+import { positionStars } from "@/lib/starstory";
+import { useNarrativeEngine } from "@/components/openalpha/hooks/useNarrativeEngine";
 import styles from "./openalpha.module.css";
 
 type Star = {
@@ -26,6 +32,18 @@ const STARS: Star[] = [
 ];
 
 export function SkyLayer() {
+  const engine = useNarrativeEngine();
+  const stars = useMemo(
+    () =>
+      positionStars([
+        {
+          protoStar: engine.protoStar,
+          visual: engine.visualState,
+        },
+      ]),
+    [engine.protoStar, engine.visualState]
+  );
+
   return (
     <div className={styles.skyLayer} aria-hidden="true">
       <div className={styles.skyGrain} />
@@ -43,6 +61,7 @@ export function SkyLayer() {
           }}
         />
       ))}
+      <SkyRenderer stars={stars} />
     </div>
   );
 }
