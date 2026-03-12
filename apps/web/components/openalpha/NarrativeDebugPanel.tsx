@@ -3,7 +3,10 @@
 import { useMemo } from "react";
 import { useNarrativeEngine } from "@/components/openalpha/hooks/useNarrativeEngine";
 import { MIN_TRANSCRIPT_THRESHOLD } from "@/lib/starstory";
-import { isDebugPanelEnabled } from "@/lib/starstory/debug/debugFlags";
+
+type NarrativeDebugPanelProps = {
+  enabled?: boolean;
+};
 
 function buildStarId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -70,7 +73,7 @@ function branchLabelStyle(): React.CSSProperties {
   };
 }
 
-export function NarrativeDebugPanel() {
+export function NarrativeDebugPanel({ enabled = true }: NarrativeDebugPanelProps) {
   const engine = useNarrativeEngine();
   const canSpawn = engine.state.phase === "SKY_IDLE";
   const canClick = engine.state.phase === "PROTO_STAR_FORMING";
@@ -107,7 +110,7 @@ export function NarrativeDebugPanel() {
 
   const snapshotText = useMemo(() => JSON.stringify(engine.state, null, 2), [engine.state]);
 
-  if (!isDebugPanelEnabled()) {
+  if (!enabled) {
     return null;
   }
 

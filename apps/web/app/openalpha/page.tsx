@@ -13,7 +13,7 @@ export default function OpenAlphaPage() {
       <SkyLayer />
       <InteractionLayer />
       <OverlayLayer />
-      {showDebug ? <NarrativeDebugPanel /> : null}
+      {showDebug ? <NarrativeDebugPanel enabled={showDebug} /> : null}
     </main>
   );
 }
