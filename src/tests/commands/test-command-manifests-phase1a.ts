@@ -53,6 +53,12 @@ describe("Phase 1A command manifests", () => {
     const showtimeSubcommands = (showtimeGroup.options ?? []).map((option: any) => option.name).sort();
     expect(showtimeSubcommands).toEqual(["end", "start"]);
 
+    const showtimeStart = (showtimeGroup.options ?? []).find((option: any) => option.name === "start") as any;
+    expect(showtimeStart).toBeTruthy();
+
+    const showtimeStartOptionNames = (showtimeStart.options ?? []).map((option: any) => option.name).sort();
+    expect(showtimeStartOptionNames).toEqual(["campaign", "campaign_name"]);
+
     const settingsGroup = options.find((option) => option.name === "settings") as any;
     expect(settingsGroup).toBeTruthy();
     expect(settingsGroup.type).toBe(2);

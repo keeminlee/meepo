@@ -4,6 +4,7 @@ set -euo pipefail
 BRANCH="${1:-main}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEB_DIR="$ROOT_DIR/apps/web"
+BOT_ENV_FILE="${BOT_ENV_FILE:-/etc/meepo/meepo-bot.env}"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -40,6 +41,17 @@ rm -rf .next
 npm run build
 
 cd "$ROOT_DIR"
+
+if [ ! -f "$BOT_ENV_FILE" ]; then
+  echo "Expected bot env file at $BOT_ENV_FILE" >&2
+  exit 1
+fi
+
+echo "[deploy] deploying Discord slash commands"
+set -a
+source "$BOT_ENV_FILE"
+set +a
+npm run deploy:commands
 
 echo "[deploy] reloading systemd and restarting services"
 sudo systemctl daemon-reload
