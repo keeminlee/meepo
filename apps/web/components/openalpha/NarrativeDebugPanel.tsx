@@ -223,11 +223,11 @@ export function NarrativeDebugPanel({ enabled = true }: NarrativeDebugPanelProps
               engine.dispatch({
                 type: "TRANSCRIPT_UPDATED",
                 at: Date.now(),
-                transcriptLineCount: engine.state.transcriptLineCount + 5,
+                transcriptLineCount: engine.state.transcriptLineCount + 25,
               })
             }
           >
-            Add 5 Lines
+            Add 25 Lines
           </button>
           <span style={{ ...branchLabelStyle(), minWidth: 0 }}>
             {Math.min(engine.state.transcriptLineCount, MIN_TRANSCRIPT_THRESHOLD)}/{MIN_TRANSCRIPT_THRESHOLD}

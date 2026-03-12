@@ -33,7 +33,7 @@ function resolveAssetSrc(phase: ProtoStarRendererState["phase"]): string {
 
 function resolveVisualTuning(state: ProtoStarRendererState): ProtoStarVisualTuning {
   const clickProgress = clamp(state.clickCount / 5, 0, 1);
-  const transcriptProgress = clamp(state.transcriptLineCount / 100, 0, 1);
+  const transcriptProgress = Math.max(0, state.transcriptLineCount / 100);
   const brightnessBoost = clamp(state.brightness, 0, 1) * 0.08;
 
   switch (state.phase) {
