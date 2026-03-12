@@ -5,6 +5,8 @@ import { SkyLayer } from "@/components/openalpha/SkyLayer";
 import { isDebugPanelEnabled } from "@/lib/starstory/debug/debugFlags";
 import styles from "@/components/openalpha/openalpha.module.css";
 
+export const dynamic = "force-dynamic";
+
 export default function OpenAlphaPage() {
   const showDebug = isDebugPanelEnabled();
 
