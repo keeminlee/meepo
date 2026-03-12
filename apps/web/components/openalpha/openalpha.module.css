@@ -41,7 +41,7 @@
   position: absolute;
   inset: 0;
   z-index: 20;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .protoStarHitbox {
@@ -55,6 +55,7 @@
   border-radius: 999px;
   background: transparent;
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .protoStarHitbox:focus-visible {
