@@ -1,0 +1,10 @@
+deploy-meepo.sh
+install-runtime-assets.sh
+deploy/ec2/**
+deploy/env/**
+deploy/systemd/**
+meepo-bot.env.example
+meepo-web.env.example
+meepo-bot.service
+meepo-web.service
+.github/workflows/ci.yml

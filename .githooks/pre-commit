@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -x tools/stopline-protected-files.sh ]]; then
+  tools/stopline-protected-files.sh staged
+elif command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -ExecutionPolicy Bypass -File tools/stopline-protected-files.ps1 -Mode staged
+elif command -v powershell >/dev/null 2>&1; then
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools/stopline-protected-files.ps1 -Mode staged
+else
+  echo "WARN: no protected-file stopline runtime found; install bash or PowerShell" >&2
+fi
