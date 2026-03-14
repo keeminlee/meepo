@@ -8,6 +8,7 @@ This note covers the remaining production-side work after the repo change that a
 
 - `.github/deploy.yml` now runs the normal EC2 deploy hook and then runs `npm run deploy:commands` on the host.
 - The command deploy step sources `/etc/meepo/meepo-bot.env` before running so it can use the same Discord credentials as the bot runtime.
+- Repo-side automation is complete; the remaining work is production rollout validation and fallback readiness.
 
 ## Remaining Prod-Side Steps
 
@@ -30,6 +31,7 @@ This note covers the remaining production-side work after the repo change that a
 ## Operational Notes
 
 - Discord global command propagation may still take a short period after a successful deploy.
+- The production deploy flow is documented in `docs/runtime/ops/DEPLOY_FLOW.md`.
 - This workflow change does not replace the broader public-host and OAuth cutover work tracked in `docs/product/external-cutover-handoff.md`.
 - Manual fallback remains available: SSH to the host, source `/etc/meepo/meepo-bot.env`, then run `npm run deploy:commands` from `APP_DIR`.
 

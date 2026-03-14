@@ -91,3 +91,11 @@ These lifecycle events are emitted as `source=system` rows (`tags=system,<EVENT_
 1. Escalate immediately if unauthorized data is visible across guild boundaries.
 2. Escalate if fresh DM cannot complete canonical loop in `<=10 minutes`.
 3. Escalate if three consecutive onboarding attempts fail at the same step.
+
+## Deploy Triage References
+
+For deploy-specific incidents, use these operator docs.
+
+- `docs/runtime/ops/PRODUCTION_RUNBOOK.md`
+- `docs/runtime/ops/KNOWN_DEPLOY_FAILURES.md`
+- `docs/runtime/ops/DEPLOY_FLOW.md`

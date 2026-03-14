@@ -92,3 +92,11 @@ Notes:
 - Policy:
   - Strict runtime zones fail on raw `console.*`.
   - Structured logger usage is the required path in those zones.
+
+## Deploy Recovery Docs
+
+Production deploy recovery is documented separately.
+
+- `docs/runtime/ops/PRODUCTION_RUNBOOK.md`
+- `docs/runtime/ops/KNOWN_DEPLOY_FAILURES.md`
+- `docs/runtime/ops/DEPLOY_FLOW.md`
