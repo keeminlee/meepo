@@ -77,7 +77,7 @@ describe("formatUserFacingError", () => {
     expect(payload.retryable).toBe(false);
     expect(payload.correctiveActionRequired).toBe(true);
     expect(payload.content).toContain("no transcript artifact");
-    expect(payload.content).toContain("/meepo sessions recap");
+    expect(payload.content).toContain("web app");
   });
 
   test("no active session provides corrective next action", () => {
@@ -87,6 +87,7 @@ describe("formatUserFacingError", () => {
     expect(payload.failureClass).toBe("corrective");
     expect(payload.retryable).toBe(false);
     expect(payload.correctiveActionRequired).toBe(true);
-    expect(payload.content).toContain("/meepo sessions list");
+    expect(payload.content).toContain("web app");
+    expect(payload.content).toContain("/starstory showtime start");
   });
 });

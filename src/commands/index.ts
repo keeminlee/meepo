@@ -1,6 +1,6 @@
 import { Collection, type Client } from "discord.js";
 import { ping } from "./ping.js";
-import { meepo } from "./meepo.js";
+import { starstory } from "./starstory.js";
 import { lab } from "./lab.js";
 import { resolveCampaignSlug } from "../campaign/guildConfig.js";
 import { getDbForCampaign } from "../db.js";
@@ -55,11 +55,11 @@ function markRecentInteraction(interactionId: string): boolean {
   return true;
 }
 
-export const globalCommands = [ping, meepo];
+export const globalCommands = [ping, starstory];
 
 export const devGuildCommands = [lab];
 
-export const commandList = [ping, meepo, lab];
+export const commandList = [ping, starstory, lab];
 
 export const commandMap = new Collection(
   commandList.map((c: any) => [c.data.name, c])
@@ -106,7 +106,7 @@ export function registerHandlers(client: Client) {
         interaction.isModalSubmit?.()
       ) {
         const commandCtx = buildCommandCtx(interaction);
-        if (typeof (meepo as any).handleComponentInteraction === "function") {
+        if (typeof (starstory as any).handleComponentInteraction === "function") {
           const handled = await runWithObservabilityContext(
             {
               trace_id: commandCtx?.trace_id,
@@ -114,7 +114,7 @@ export function registerHandlers(client: Client) {
               guild_id: commandCtx?.guildId,
               campaign_slug: commandCtx?.campaignSlug,
             },
-            () => (meepo as any).handleComponentInteraction(interaction, commandCtx)
+            () => (starstory as any).handleComponentInteraction(interaction, commandCtx)
           );
           if (handled) return;
         }
@@ -125,6 +125,37 @@ export function registerHandlers(client: Client) {
       const cmd = commandMap.get(interaction.commandName);
       if (!cmd) {
         if (interaction.isChatInputCommand()) {
+          const subcommandGroup = interaction.options?.getSubcommandGroup?.(false) as string | null | undefined;
+          const subcommand = interaction.options?.getSubcommand?.(false) as string | null | undefined;
+
+          if (interaction.commandName === "meepo") {
+            const starstoryRedirects: Record<string, string> = {
+              awaken: "Use `/starstory awaken`.",
+              wake: "Use `/starstory awaken`.",
+              help: "Use `/starstory help`.",
+              status: "Use `/starstory status`.",
+            };
+
+            let content = "Moved: use `/starstory` commands instead.";
+            if (subcommandGroup === "showtime") {
+              content = `Moved: use "/starstory showtime ${subcommand ?? "start"}".`;
+            } else if (subcommandGroup === "settings") {
+              content = `Moved: use "/starstory settings ${subcommand ?? "show"}".`;
+            } else if (subcommandGroup === "sessions") {
+              content = "`/meepo sessions` is no longer part of the Closed Alpha public surface. Use `/starstory status` for live state and the web app for session history and recaps.";
+            } else if (subcommand === "talk" || subcommand === "hush") {
+              content = "`/meepo talk` and `/meepo hush` are retired. Use `/starstory settings talk_mode` if you still need to change the default voice mode.";
+            } else if (subcommand && starstoryRedirects[subcommand]) {
+              content = `Moved: ${starstoryRedirects[subcommand]}`;
+            }
+
+            await interaction.reply({
+              content,
+              ephemeral: true,
+            }).catch(() => {});
+            return;
+          }
+
           const movedToLabByCommandName: Record<string, string> = {
             goldmem: "/lab goldmem run",
             meeps: "/lab meeps <subcommand>",
@@ -201,7 +232,8 @@ export function registerHandlers(client: Client) {
       });
 
       const isAwakenCommand =
-        commandName === "meepo" && (subcommand === "awaken" || subcommand === "wake");
+        (commandName === "meepo" || commandName === "starstory") &&
+        (subcommand === "awaken" || subcommand === "wake");
       const finalContent = isAwakenCommand
         ? `${payload.content}\n[awaken-boundary-marker:global-v1]`
         : payload.content;

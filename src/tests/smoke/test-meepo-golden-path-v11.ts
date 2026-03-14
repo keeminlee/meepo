@@ -284,7 +284,7 @@ afterEach(() => {
 });
 
 describe("v1.1 golden path smoke (mocked)", () => {
-  test("wake -> showtime start -> recap -> view surfaces stable metadata", async () => {
+  test("wake -> showtime start succeeds and retired sessions surface guidance", async () => {
     const { meepo } = await import("../../commands/meepo.js");
     const mockDb = {
       prepare: vi.fn(() => ({
@@ -380,10 +380,14 @@ describe("v1.1 golden path smoke (mocked)", () => {
     expect(recapEditReply.mock.calls.length + recapReply.mock.calls.length).toBe(1);
     expect(viewReply).toHaveBeenCalledTimes(1);
 
+    const recapPayload = recapEditReply.mock.calls.at(0)?.[0] ?? recapReply.mock.calls.at(0)?.[0];
+    expect(recapPayload.content).toContain("retired from the Closed Alpha public surface");
+    expect(recapPayload.content).toContain("/starstory status");
+    expect(recapPayload.content).toContain("web app");
+
     const viewPayload = viewReply.mock.calls.at(0)?.[0];
-    expect(viewPayload.content).toContain("Recap");
-    expect(viewPayload.content).toContain("Final:");
-    expect(viewPayload.content).toContain("balanced");
-    expect(viewPayload.content).toContain("Base:");
+    expect(viewPayload.content).toContain("retired from the Closed Alpha public surface");
+    expect(viewPayload.content).toContain("/starstory status");
+    expect(viewPayload.content).toContain("web app");
   });
 });

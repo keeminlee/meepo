@@ -42,7 +42,7 @@ export function AppSidebar() {
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-[0_0_15px_var(--color-primary)]">
           <Sparkles className="h-5 w-5" />
         </div>
-        <span className="truncate text-xl font-bold italic tracking-tight">Meepo</span>
+        <span className="truncate text-xl font-bold italic tracking-tight">StarStory</span>
       </Link>
       <nav className="mt-2 flex-1 space-y-1 px-3">
         {items.map((item) => {

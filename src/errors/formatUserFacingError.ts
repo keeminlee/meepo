@@ -74,7 +74,7 @@ const CODE_FAILURE_CONTRACTS: Partial<Record<MeepoErrorCode, FailureContract>> =
     correctiveActionRequired: true,
   },
   ERR_NO_ACTIVE_SESSION: {
-    message: "⚠️ Meepo could not resolve that session. Pick a session from `/meepo sessions list` and try again.",
+    message: "⚠️ Meepo could not resolve that session. Pick a recent session in the web app or start one with `/starstory showtime start`.",
     failureClass: "corrective",
     retryable: false,
     correctiveActionRequired: true,
@@ -155,15 +155,15 @@ function withCorrectiveHints(message: string, err: MeepoError): string {
 
   const transcriptState = String(err.metadata?.transcript_state ?? "").trim();
   if (transcriptState === "missing_artifact") {
-    return `${message} This usually means the session exists but no transcript artifact has been generated yet. Try again shortly or regenerate artifacts via /meepo sessions recap.`;
+    return `${message} This usually means the session exists but no transcript artifact has been generated yet. Try again shortly or regenerate artifacts in the web app.`;
   }
   if (transcriptState === "export_failed") {
-    return `${message} Meepo could not build a transcript export for that session yet. Retry shortly, or regenerate session artifacts and then view again.`;
+    return `${message} Meepo could not build a transcript export for that session yet. Retry shortly, or regenerate session artifacts in the web app and then view again.`;
   }
   if (transcriptState === "time_budget_exceeded") {
     return `${message} Transcript export exceeded the interaction time budget. Re-run the command from scratch.`;
   }
-  return `${message} Try another session from /meepo sessions list, or retry after transcript export finishes.`;
+  return `${message} Try another recent session in the web app, or retry after transcript export finishes.`;
 }
 
 export function formatUserFacingError(

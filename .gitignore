@@ -1,6 +1,7 @@
 ﻿.env
 !.env.example
 .env.*
+.venv*
 
 data/
 # runtime scoped registry storage
