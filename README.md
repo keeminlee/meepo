@@ -1,13 +1,20 @@
-# Meepo Bot
+# StarStory Platform
 **PROD DISCORD APP LINK: https://discord.com/oauth2/authorize?client_id=1470521616747200524&permissions=1051648&integration_type=0&scope=bot+applications.commands**
 **DEV DISCORD APP LINK: https://discord.com/oauth2/authorize?client_id=1479618157650907276&permissions=3148800&integration_type=0&scope=bot+applications.commands**
 
 
-**Meepo** is a diegetic AI companion for tabletop RPG campaigns.  
-She sits quietly beside your party in Discord, listens as the story unfolds, and preserves the adventure in an append-only narrative ledger.
+**StarStory** is the platform for preserving tabletop RPG campaigns.  
+It sits beside your party in Discord, listens as the story unfolds, and preserves the adventure in an append-only narrative ledger.
 
-During the game, Meepo roleplays alongside your table as a small in-world presence.  
-After the game, she remembers what happened — helping you revisit moments, generate recaps, and build a living chronicle of your campaign.
+During the game, **Meepo** can still appear as the in-world archivist character.  
+After the game, StarStory helps you revisit what happened, generate recaps, and build a living chronicle of your campaign.
+
+Naming doctrine:
+
+- StarStory = platform
+- Chronicle = archive
+- Archivist = system role
+- Meepo = archivist character / internal codename
 
 The goal is simple:
 
@@ -65,10 +72,10 @@ To deploy `/lab` into dev guilds, set `DEV_GUILD_IDS` (comma-separated) before d
 DEV_GUILD_IDS=<guild_id_1>,<guild_id_2> npm run deploy:commands
 ```
 
-Once running, invite Meepo to your Discord server and awaken her with:
+Once running, invite StarStory to your Discord server and initialize it with:
 
 ```
-/meepo awaken
+/starstory awaken
 ```
 
 ### Run Web Archive Viewer (Next.js)
@@ -106,9 +113,9 @@ Useful local web env toggles:
 
 Production auth requirements:
 
-- Canonical OAuth origin is `https://meepo.online`.
-- `https://starstory.online` must be redirect-only at reverse proxy.
-- `NEXTAUTH_URL` and `AUTH_URL` must both match canonical origin in production.
+- Runtime canonical-origin cutover is still pending external ops work.
+- Current production auth/runtime expects `https://meepo.online` until that cutover is completed.
+- See [docs/product/external-cutover-handoff.md](docs/product/external-cutover-handoff.md) for the required out-of-repo follow-up.
 - Run `deploy/ec2/auth-runtime-preflight.sh` before production auth troubleshooting.
 
 Run 1 auth note:
@@ -124,38 +131,39 @@ Current web build note:
 
 ## Core Command Groups
 
-Meepo’s primary interactions are organized into a few command families.
+StarStory's current public Discord surface is intentionally narrow.
 
-### Presence & Interaction
+### Public Root
 ```
-meepo awaken | status | talk | hush | help
+/starstory
+```
+
+### Current Public Surface
+```
+/starstory awaken
+/starstory showtime start|end
+/starstory settings <subcommand>
+/starstory help
+/starstory status
 ```
 
 ### Production Surface Rules
 
-- In production, Meepo does not provide ambient conversational text replies in channel chat.
+- In production, StarStory does not provide ambient conversational text replies in channel chat.
 - Public interaction is slash-command and voice/session first.
-- `/meepo status` responds ephemerally and shows a concise public status view.
+- `/starstory status` responds ephemerally and shows a concise public status view.
 - Dev-only diagnostics and lab/legacy notes are shown only to dev-gated users.
 - Use `/lab` for internal diagnostics and debugging routes.
-
-### Configuration
-```
-meepo settings view | set
-```
-
-### Campaign Memory
-```
-meepo sessions list | view | recap
-```
+- `/starstory sessions ...` is no longer public.
+- `/starstory talk` and `/starstory hush` are retired from the public surface.
 
 See **[docs/CURRENT_STATE.md](docs/CURRENT_STATE.md)** for full command details and current readiness status.
 
 ---
 
-## What Meepo Does
+## What StarStory Does
 
-Meepo quietly builds a structured memory of your campaign as it unfolds.
+StarStory quietly builds a structured memory of your campaign as it unfolds.
 
 - **In-session listening**  
   Captures dialogue and events as they occur.
@@ -211,13 +219,13 @@ Start with the documentation map:
 
 ## Philosophy
 
-Meepo isn’t meant to replace a Dungeon Master or automate storytelling.
+StarStory isn’t meant to replace a Dungeon Master or automate storytelling.
 
-Instead, she acts as a **companion to the table** — a quiet witness to the adventure who helps preserve what happened.
+Instead, it acts as a **companion to the table** — a quiet witness to the adventure who helps preserve what happened.
 
 Campaigns often span months or years, and many stories fade once the game ends.
 
-Meepo exists so that, years later, someone can still ask:
+StarStory exists so that, years later, someone can still ask:
 
 > *“Remember when we fought the giant basilisk?”*
 

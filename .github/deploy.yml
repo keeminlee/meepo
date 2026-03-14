@@ -56,3 +56,11 @@ jobs:
           ssh -p "${{ secrets.EC2_PORT }}" \
             "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
             "APP_DIR=$APP_DIR /bin/bash $APP_DIR/deploy/ec2/deploy-meepo.sh"
+
+      - name: Deploy Discord commands
+        run: |
+          APP_DIR="${{ secrets.EC2_APP_DIR }}"
+          if [ -z "$APP_DIR" ]; then APP_DIR="/home/meepo/meepo-bot"; fi
+          ssh -p "${{ secrets.EC2_PORT }}" \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "set -a; . /etc/meepo/meepo-bot.env; set +a; cd $APP_DIR && npm run deploy:commands"

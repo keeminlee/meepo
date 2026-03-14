@@ -1,9 +1,43 @@
-# Meepo Bot - Current State (March 8, 2026)
+# StarStory Platform - Current State (March 14, 2026)
 
 For documentation navigation, start at [INDEX.md](INDEX.md).
 
-**Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress + Sprint 3 hardening closure complete + Track B web archive viewer complete  
-**Last Updated:** March 8, 2026
+**Status:** V0 complete, MeepoMind (V0.1) Phase 2-3 in progress + Sprint 3 hardening closure complete + Track B web archive viewer complete + StarStory namespace presentation pass complete  
+**Last Updated:** March 14, 2026
+
+## Namespace Doctrine
+
+- StarStory = platform
+- Chronicle = archive
+- Archivist = system role
+- Meepo = archivist character / internal codename
+
+Internal `meepo` identifiers may still remain in code, storage, env vars, and compatibility layers when they are not directly user-visible.
+
+## Current Public Discord Surface
+
+Public root:
+
+- `/starstory`
+
+Public subcommands/groups:
+
+- `awaken`
+- `showtime`
+- `settings`
+- `help`
+- `status`
+
+Not public in the Closed Alpha surface:
+
+- `sessions` removed from the public Discord surface
+- `talk` retired from the public Discord surface
+- `hush` retired from the public Discord surface
+
+Compatibility behavior:
+
+- stale `/meepo ...` invocations should redirect users toward `/starstory` or the web app
+- internal compatibility layers may still retain `meepo` naming
 
 ## P0 Boundary (Locked)
 
@@ -19,8 +53,8 @@ P0 interpretation:
 - Minimal awaken bootstrap (`awakened` + `meta_campaign_slug` + DM binding + home text channel durability).
 - Guild-scoped campaign registry for showtime workflows.
 - Durable session recording and dashboard listing.
-- Closed Alpha listen-only lifecycle: public `/meepo awaken` stays minimal, and `/meepo showtime start` joins voice ephemerally from invoker runtime context.
-- Lifecycle completion hardening: `/meepo showtime end` finalizes session and safely disconnects voice only when a connection exists.
+- Closed Alpha listen-only lifecycle: public `/starstory awaken` stays minimal, and `/starstory showtime start` joins voice ephemerally from invoker runtime context.
+- Lifecycle completion hardening: `/starstory showtime end` finalizes session and safely disconnects voice only when a connection exists.
 - Five-state dashboard onboarding guidance.
 - Web auth boundary enforcement and deny-by-default out-of-scope access.
 
@@ -28,22 +62,22 @@ P0 interpretation:
 
 Public contract:
 
-- `/meepo awaken` is minimal and deterministic for bootstrap.
-- `/meepo awaken` writes only canonical essentials:
+- `/starstory awaken` is minimal and deterministic for bootstrap.
+- `/starstory awaken` writes only canonical essentials:
   - `awakened = true`
   - `meta_campaign_slug` (if missing)
   - `dm_user_id` (if missing)
   - `home_text_channel_id` (if missing)
-- `/meepo awaken` does not configure `home_voice_channel_id` or wizard-driven voice bindings.
-- `/meepo showtime start` creates/selects campaign, starts session, joins invoker voice channel in listen-only mode, and starts receiver capture.
-- `/meepo showtime start` depends on invoker runtime voice context, not persisted voice setup.
+- `/starstory awaken` does not configure `home_voice_channel_id` or wizard-driven voice bindings.
+- `/starstory showtime start` creates/selects campaign, starts session, joins invoker voice channel in listen-only mode, and starts receiver capture.
+- `/starstory showtime start` depends on invoker runtime voice context, not persisted voice setup.
 - Closed Alpha speaking/performance remains disabled; Meepo is a silent witness.
 
 Deferred lane:
 
 - Richer ritual/onboarding setup remains under `/lab awaken` for experimentation.
 
-Minimal awaken config audit (public `/meepo awaken`):
+Minimal awaken config audit (public `/starstory awaken`):
 
 - required in Closed Alpha:
   - `awakened`
@@ -85,7 +119,7 @@ Minimal awaken config audit (public `/meepo awaken`):
 
 - Canonical naming field: `sessions.label`.
 - UI wording may render as "session title"; semantics map to the same canonical label.
-- Zero-arg `/meepo showtime start`: yes, creates campaign/session without requiring user-supplied label.
+- Zero-arg `/starstory showtime start`: yes, creates campaign/session without requiring user-supplied label.
 - Dashboard visibility rule for P0: row presence under authorized `guild_id + campaign_slug` scope.
 - Dashboard inclusion for P0: show both `active` and ended (`completed`/`interrupted`) sessions.
 
@@ -99,13 +133,13 @@ The runtime now uses a two-layer campaign scope model:
 
 Operational semantics:
 
-- `/meepo awaken` creates or confirms one durable `meta_campaign_slug` for the guild and does not regenerate it on later awakens.
-- `/meepo awaken` also seeds `dm_user_id` and `home_text_channel_id` when missing; it does not set voice config.
-- `/meepo showtime start` now requires explicit campaign intent:
+- `/starstory awaken` creates or confirms one durable `meta_campaign_slug` for the guild and does not regenerate it on later awakens.
+- `/starstory awaken` also seeds `dm_user_id` and `home_text_channel_id` when missing; it does not set voice config.
+- `/starstory showtime start` now requires explicit campaign intent:
   - reuse existing showtime campaign via `campaign`
   - create new showtime campaign via `campaign_name`
 - showtime sessions bind to explicit showtime campaign slugs (not inferred from meta scope).
-- `/meepo showtime start` is Closed Alpha listen-only by contract (runtime-derived voice join, no speaking).
+- `/starstory showtime start` is Closed Alpha listen-only by contract (runtime-derived voice join, no speaking).
 - one active session per guild remains unchanged (`idx_one_active_session_per_guild`).
 - legacy/default fallback behavior is compatibility-only; new write paths do not create `homebrew_campaign_*` style slugs.
 
@@ -171,6 +205,7 @@ Storage/materialization hardening (Phase 4):
 - Recap regenerate action and transcript/recap downloads (`.txt` and `.json`) are live on session detail.
 - Artifact-aware states are implemented for missing/unavailable recap/transcript conditions.
 - Dev bypass for local web scope overrides is available only behind explicit env gate (`DEV_WEB_BYPASS=1`) and non-production mode.
+- Web package typecheck now regenerates Next route types before `tsc` so stale `.next/types` route artifacts do not block checks after route removal or rename.
 - Known tradeoff: web lint is currently skipped during `next build` (`apps/web/next.config.ts`) to avoid a flat-config/plugin detection mismatch during this milestone checkpoint.
 
 ---
@@ -186,15 +221,12 @@ npx tsc --noEmit      # Type-check code
 ### Test in Discord
 
 ```
-/meepo awaken                            # One-time init (Dormant -> Awakened + Ambient)
-/meepo showtime start                    # Start canon showtime session (Awakened -> Showtime)
-/meepo showtime end                      # End active showtime session (Showtime -> Awakened Ambient)
-/meepo status                            # Public status + fix hints
+/starstory awaken                        # One-time init (Dormant -> Awakened + Ambient)
+/starstory showtime start                # Start canon showtime session (Awakened -> Showtime)
+/starstory showtime end                  # End active showtime session (Showtime -> Awakened Ambient)
+/starstory status                        # Public status + fix hints
 /lab doctor                              # Dev diagnostics + next actions (DEV_USER_IDS only)
-/meepo settings view                     # Show persisted setup/persona/recap defaults
-/meepo sessions list                      # List recent sessions with recap status
-/meepo sessions view session:<id>         # Session hub + artifact availability
-/meepo sessions recap session:<id> style:balanced  # Generate canon recap final pass (elevated)
+/starstory settings show                 # Show persisted setup/persona/recap defaults
 meepo: hello                             # Auto-latch responds
 <speak: "meepo, help me">               # STT → LLM → TTS closed loop
 ```
@@ -209,7 +241,9 @@ http://localhost:7777/overlay            # Browser Source for speaking indicator
 
 - GitHub Actions deployment workflow is now tracked at `.github/deploy.yml`.
 - Workflow flow: `verify` job runs `npm run ci:verify`, then `deploy` job runs remote EC2 deploy on `main`.
+- After remote deploy, the workflow now sources `/etc/meepo/meepo-bot.env` on the host and runs `npm run deploy:commands` so production slash-command schema stays aligned with the deployed code.
 - Command manifest deploy remains available locally via `npm run dev:deploy` (REST-only command registration).
+- Remaining prod verification and rollout checks are tracked in [docs/runtime/ops/PROD_COMMAND_AUTODEPLOY_HANDOFF.md](docs/runtime/ops/PROD_COMMAND_AUTODEPLOY_HANDOFF.md).
 
 ---
 
@@ -568,7 +602,13 @@ Recap      Emotion Beats         LLM Response
 - Awakening fallback/debug: `/lab awaken respond text:<...>`, `/lab awaken status`, `/lab awaken reset confirm:RESET`.
 - Runtime allowlist gate: `DEV_USER_IDS=<comma-separated-user-ids>`
 - Deploy scope gate: `/lab` is deployed only to guilds listed in `DEV_GUILD_IDS=<comma-separated-guild-ids>`.
-- Product surface: `/meepo` remains global.
+- Product surface: `/starstory` is global.
+
+For namespace rationale and acceptable residual debt, see:
+
+- [docs/product/namespace-doctrine.md](docs/product/namespace-doctrine.md)
+- [docs/product/meepo-residual-reference-audit.md](docs/product/meepo-residual-reference-audit.md)
+- [docs/product/external-cutover-handoff.md](docs/product/external-cutover-handoff.md)
 
 #### Tools (CLI)
 - `tools/ingest-media.ts` — Offline media ingestion (extract audio, transcribe, generate session)

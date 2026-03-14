@@ -52,9 +52,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return (
       <ArchiveShell section="Dashboard">
         <EmptyState
-          title="Add Meepo to a Discord server"
-          description="Add Meepo to a Discord server to begin."
-          actionLabel="Invite Meepo"
+          title="Add StarStory to a Discord server"
+          description="Add StarStory to a Discord server to begin capturing sessions."
+          actionLabel="Invite StarStory"
           actionHref={DISCORD_INVITE_URL}
         />
       </ArchiveShell>
@@ -66,7 +66,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       <ArchiveShell section="Dashboard">
         <EmptyState
           title="No sessions yet"
-          description="Start your first session in Discord: /meepo showtime start"
+          description="Start your first session in Discord with /starstory showtime start"
         />
       </ArchiveShell>
     );

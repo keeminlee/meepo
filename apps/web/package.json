@@ -8,7 +8,7 @@
     "build": "node ./scripts/run-with-app-version.mjs next build",
     "start": "node ./scripts/run-with-app-version.mjs next start -p 3000",
     "clean": "powershell -NoProfile -Command \"if (Test-Path .next) { Remove-Item -Recurse -Force .next }\"",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "lint": "next lint"
   },
   "dependencies": {

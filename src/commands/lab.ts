@@ -6,7 +6,7 @@ import {
 // NOTE(v1.1): meepoLegacy is intentionally excluded from voice-string centralization.
 // This lab-only surface is deferred and may retain inline prose until a dedicated legacy pass.
 import { meepo as meepoLegacy } from "./meepoLegacy.js";
-import { executeLabAwakenRespond, executeLabDoctor, executeLabSleep } from "./meepo.js";
+import { executeLabAwakenRespond, executeLabDoctor, executeLabSleep } from "./starstory.js";
 import { session } from "./session.js";
 import { meeps } from "./meeps.js";
 import { missions } from "./missions.js";

@@ -42,9 +42,11 @@ describe("Phase 1A command manifests", () => {
     const { meepo } = await import("../../commands/meepo.js");
     const data = meepo.data.toJSON();
 
+    expect(data.name).toBe("starstory");
+
     const options = (data.options ?? []) as any[];
     const optionNames = options.map((option) => option.name).sort();
-    expect(optionNames).toEqual(["awaken", "help", "hush", "sessions", "settings", "showtime", "status", "talk"]);
+    expect(optionNames).toEqual(["awaken", "help", "settings", "showtime", "status"]);
 
     const showtimeGroup = options.find((option) => option.name === "showtime") as any;
     expect(showtimeGroup).toBeTruthy();
