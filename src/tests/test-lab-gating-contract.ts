@@ -6,6 +6,7 @@ vi.mock("../config/env.js", () => ({
   cfg: {
     logging: { level: "warn", scopes: [], format: "pretty" },
     voice: { debug: false },
+    overlay: { port: 7777, homeVoiceChannelId: null },
     data: { root: ".", campaignsDir: "campaigns" },
     mode: "ambient",
     access: accessState,
@@ -25,7 +26,7 @@ const stubLegacyCommand = {
 };
 
 vi.mock("../commands/meepoLegacy.js", () => ({ meepo: stubLegacyCommand }));
-vi.mock("../commands/meepo.js", () => ({
+vi.mock("../commands/starstory.js", () => ({
   executeLabAwakenRespond: vi.fn(async () => {}),
   executeLabDoctor: vi.fn(async () => {}),
   executeLabSleep: vi.fn(async () => {}),

@@ -93,7 +93,7 @@ describe("/meepo wake alias behavior", () => {
     const content = String(interaction.reply.mock.calls[0]?.[0]?.content ?? "");
     expect(content).toContain("The Archive is now attentive.");
     expect(content).toContain("Guild setup is complete for Closed Alpha.");
-    expect(content).toContain("/meepo showtime start");
+    expect(content).toContain("/starstory showtime start");
     expect(getGuildAwakened("guild-1")).toBe(true);
     expect(getActiveSession("guild-1")).toBeNull();
     expect(wakeMeepoMock).toHaveBeenCalledTimes(1);

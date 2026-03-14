@@ -432,7 +432,7 @@ const wakeLab: LegacyCommand = {
 
   async execute(interaction: any): Promise<void> {
     await interaction.reply({
-      content: "Moved: use `/meepo showtime start` for session start.",
+      content: "Moved: use `/starstory showtime start` for session start.",
       ephemeral: true,
     });
   },

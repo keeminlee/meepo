@@ -15,7 +15,7 @@ const stubLegacyCommand = {
 };
 
 vi.mock("../commands/meepoLegacy.js", () => ({ meepo: stubLegacyCommand }));
-vi.mock("../commands/meepo.js", () => ({
+vi.mock("../commands/starstory.js", () => ({
   executeLabAwakenRespond: vi.fn(async () => {}),
   executeLabDoctor: vi.fn(async () => {}),
   executeLabSleep: vi.fn(async () => {}),
